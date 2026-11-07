@@ -1,0 +1,6 @@
+{
+  "name": "VibeReels - Short Video Feed",
+  "description": "Jatt VibeReels - Vertical short-video scrolling platform with full-screen snapping, interactive likes, comments, and sharing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
