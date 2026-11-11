@@ -28,7 +28,7 @@ interface MobileNavigationProps {
   onOpenTrends: () => void;
   onOpenLive: () => void;
   onOpenProCamera: () => void;
-  onQuickVideoUpload?: (file: File) => void;
+  onQuickVideoUpload?: (file: File, source?: 'live' | 'gallery') => void;
   savedCount: number;
   currentUser: UserAccount | null;
   onOpenLogin: () => void;
@@ -53,30 +53,19 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onLogout,
 }) => {
   const [isMobileProfileOpen, setIsMobileProfileOpen] = useState(false);
-  const fallbackCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const [isUploadSheetOpen, setIsUploadSheetOpen] = useState(false);
 
-  // Attempt live webcam first via getUserMedia; if blocked by browser/webview, automatically trigger native camera capture
-  const handleCameraClick = async () => {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Live mediaDevices.getUserMedia not supported in this browser or WebView');
-      }
-      // Attempt live camera access
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      // Live camera access allowed: clean up probe tracks and open Pro Camera interface
-      stream.getTracks().forEach((track) => track.stop());
-      onOpenProCamera();
-    } catch (err) {
-      console.warn('Live camera access blocked by browser or WebView:', err);
-      // Automatically trigger fallback file input (<input type="file" accept="video/*,image/*" capture="environment">)
-      fallbackCameraInputRef.current?.click();
-    }
-  };
+  // Dual upload inputs:
+  // Option 1: Record live video right now using phone camera (capture="environment")
+  const liveRecordInputRef = useRef<HTMLInputElement | null>(null);
+  // Option 2: Choose from phone mobile gallery / file manager (WITHOUT capture)
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleFallbackCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVideoFileSelected = (e: React.ChangeEvent<HTMLInputElement>, source: 'live' | 'gallery') => {
     const file = e.target.files?.[0];
     if (file) {
-      onQuickVideoUpload?.(file);
+      setIsUploadSheetOpen(false);
+      onQuickVideoUpload?.(file, source);
     }
     e.target.value = '';
   };
@@ -85,7 +74,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   return (
     <>
       {/* Mobile Top Header (Branding Header: Image Logo + Tabs + Actions) */}
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-neutral-950/90 backdrop-blur-md border-b border-neutral-800/80 px-3 py-2 flex items-center justify-between gap-2">
+      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-3 py-2 flex items-center justify-between gap-2 [transform:translateZ(0)]">
         {/* Left: Brand Image Logo Tag with placeholder src */}
         <div className="flex items-center shrink-0">
           <img
@@ -193,7 +182,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 
 
       {/* Mobile Bottom Tab Bar */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-md border-t border-neutral-800/80 px-2 py-1.5 flex items-center justify-around pb-safe">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/98 border-t border-neutral-800/80 px-2 py-1.5 flex items-center justify-around pb-safe [transform:translateZ(0)]">
         <button
           type="button"
           onClick={() => onSelectTab('foryou')}
@@ -214,24 +203,34 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           <span className="text-[10px] font-bold text-amber-300">Trends</span>
         </button>
 
-        {/* Fallback Native Camera Input (<input type="file" accept="video/*,image/*" capture="environment">) */}
+        {/* Option 1: Live Video Recording with capture="environment" */}
         <input
-          ref={fallbackCameraInputRef}
+          ref={liveRecordInputRef}
           type="file"
-          accept="video/*,image/*"
+          accept="video/*"
           capture="environment"
           className="hidden"
           style={{ display: 'none' }}
-          onChange={handleFallbackCameraCapture}
+          onChange={(e) => handleVideoFileSelected(e, 'live')}
         />
 
-        {/* Central Camera Shutter Button: Attempts live webcam first; falls back automatically to native device camera */}
+        {/* Option 2: Choose from Mobile Gallery WITHOUT capture attribute */}
+        <input
+          ref={galleryInputRef}
+          type="file"
+          accept="video/*"
+          className="hidden"
+          style={{ display: 'none' }}
+          onChange={(e) => handleVideoFileSelected(e, 'gallery')}
+        />
+
+        {/* Central Camera (+) Button: Opens clean Bottom Sheet Menu with Dual Upload Options */}
         <button
           type="button"
-          onClick={handleCameraClick}
+          onClick={() => setIsUploadSheetOpen(true)}
           className="relative flex items-center justify-center p-1 active:scale-90 transition-transform group"
-          aria-label="Launch Camera"
-          title="Open Live Camera or Native Device Camera"
+          aria-label="Upload or Record Reel"
+          title="Create Reel: Record Live Video or Choose from Gallery"
         >
           {/* Outer Breathing Neon Halo */}
           <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-pink-500/40 via-purple-600/40 to-cyan-400/40 blur-xs group-hover:scale-110 transition-transform animate-pulse" />
@@ -240,7 +239,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           <div className="relative w-12 h-9 rounded-xl bg-gradient-to-tr from-pink-600 via-rose-500 to-amber-500 p-0.5 shadow-lg shadow-pink-600/50 flex items-center justify-center border border-pink-300/40">
             <div className="w-full h-full bg-black/40 rounded-[10px] flex items-center justify-center gap-1 text-white">
               <Camera className="w-4 h-4 text-white group-hover:text-pink-200 transition-colors" />
-              <Plus className="w-3 h-3 stroke-[3] text-pink-300" />
+              <Plus className="w-3.5 h-3.5 stroke-[3] text-pink-300" />
             </div>
           </div>
         </button>
@@ -345,6 +344,126 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* DUAL UPLOAD OPTIONS BOTTOM SHEET / MODAL MENU             */}
+      {/* ========================================================= */}
+      {isUploadSheetOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end justify-center p-3 sm:p-4 animate-in fade-in duration-200"
+          onClick={() => setIsUploadSheetOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm bg-neutral-950 border border-neutral-800 rounded-3xl p-5 shadow-2xl space-y-4 animate-in slide-in-from-bottom-5 duration-200 pb-safe"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Sheet Handle & Header */}
+            <div className="flex flex-col items-center">
+              <div className="w-10 h-1 bg-neutral-700 rounded-full mb-3" />
+              <div className="w-full flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-pink-500/20 text-pink-400 border border-pink-500/30 flex items-center justify-center">
+                    <Plus className="w-4 h-4 stroke-[3]" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white">Create New Reel</h3>
+                    <p className="text-[11px] text-neutral-400">Select upload method</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsUploadSheetOpen(false)}
+                  className="p-1.5 text-neutral-400 hover:text-white rounded-xl hover:bg-neutral-800 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Two Distinct Upload Action Buttons */}
+            <div className="space-y-2.5 pt-1">
+              {/* Option 1: Record Live Video Button (capture="environment") */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUploadSheetOpen(false);
+                  liveRecordInputRef.current?.click();
+                }}
+                className="w-full p-4 rounded-2xl bg-gradient-to-r from-pink-600/20 via-rose-600/20 to-red-600/20 hover:from-pink-600/30 hover:to-red-600/30 border border-pink-500/40 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-pink-600/10"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-pink-600 to-rose-500 text-white flex items-center justify-center shadow-md shadow-pink-600/40 group-hover:scale-105 transition-transform">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-black text-white group-hover:text-pink-300 transition-colors">
+                        Record Live Video
+                      </span>
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                    </div>
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      Record a new video right now using your phone camera
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30">
+                  Live
+                </span>
+              </button>
+
+              {/* Option 2: Choose from Gallery Button (WITHOUT capture attribute) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUploadSheetOpen(false);
+                  galleryInputRef.current?.click();
+                }}
+                className="w-full p-4 rounded-2xl bg-gradient-to-r from-cyan-600/20 via-blue-600/20 to-purple-600/20 hover:from-cyan-600/30 hover:to-purple-600/30 border border-cyan-500/40 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-cyan-600/10"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 text-white flex items-center justify-center shadow-md shadow-cyan-600/40 group-hover:scale-105 transition-transform">
+                    <Film className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-black text-white group-hover:text-cyan-300 transition-colors">
+                      Choose from Gallery
+                    </span>
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      Pick already saved video from phone gallery/files
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  Gallery
+                </span>
+              </button>
+
+              {/* Heavy Pro 4K Camera Viewfinder Option */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUploadSheetOpen(false);
+                  onOpenProCamera();
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Heavy Pro 4K Studio Camera Viewfinder</span>
+              </button>
+            </div>
+
+            {/* Cancel Button */}
+            <button
+              type="button"
+              onClick={() => setIsUploadSheetOpen(false)}
+              className="w-full py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-400 text-xs font-bold transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

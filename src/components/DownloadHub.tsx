@@ -54,14 +54,25 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
   onToggleMute,
 }) => {
   const [items] = useState<DownloadItem[]>(INITIAL_DOWNLOADS);
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('jatt_hub_selected_category') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
+  const [searchQuery, setSearchQuery] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('jatt_yt_search_query') || '';
+    } catch {
+      return '';
+    }
+  });
   const [sortBy, setSortBy] = useState<'popular' | 'size_desc' | 'size_asc' | 'rating'>('popular');
   const [activeTab, setActiveTab] = useState<'marketplace' | 'my_downloads'>('marketplace');
 
   // Track download progress per item ID
   const [downloadStates, setDownloadStates] = useState<Record<string, DownloadProgressState>>(() => {
-    // Check if any were stored in session
     try {
       const stored = sessionStorage.getItem('jatt_downloads_state');
       if (stored) return JSON.parse(stored);
@@ -86,9 +97,44 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
   const [showKeyManager, setShowKeyManager] = useState<boolean>(false);
   const [apiErrorMessage, setApiErrorMessage] = useState<string | null>(null);
   const [isSearchingYouTube, setIsSearchingYouTube] = useState<boolean>(false);
-  const [youtubeLiveResults, setYoutubeLiveResults] = useState<DownloadItem[]>([]);
-  const [searchSource, setSearchSource] = useState<'catalog' | 'youtube'>('catalog');
+
+  // Instant Caching: Cache YouTube search results and thumbnails in sessionStorage for instant tab switching
+  const [youtubeLiveResults, setYoutubeLiveResults] = useState<DownloadItem[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('jatt_yt_search_results');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+
+  const [searchSource, setSearchSource] = useState<'catalog' | 'youtube'>(() => {
+    try {
+      const saved = sessionStorage.getItem('jatt_yt_search_source');
+      if (saved === 'youtube') return 'youtube';
+    } catch {
+      // ignore
+    }
+    return 'catalog';
+  });
   const [directUrlInput, setDirectUrlInput] = useState<string>('');
+
+  // Extract valid 11-char YouTube Video ID from any URL format or direct ID
+  // Decode HTML entities returned by YouTube Data API (e.g. &#39; -> ', &amp; -> &)
+  const decodeHtmlEntities = (str: string): string => {
+    if (!str) return '';
+    try {
+      const parser = new DOMParser();
+      const dom = parser.parseFromString(str, 'text/html');
+      return dom.body.textContent || str;
+    } catch {
+      return str.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    }
+  };
 
   // Extract valid 11-char YouTube Video ID from any URL format or direct ID
   const extractYouTubeId = (input: string): string | null => {
@@ -144,13 +190,18 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
       return;
     }
 
+    const activeKey =
+      apiKey.trim() ||
+      ((import.meta.env.VITE_YOUTUBE_API_KEY as string | undefined) || '').trim() ||
+      (localStorage.getItem('jatt_youtube_api_key') || '').trim();
+
     // Check if API key is missing
-    if (!apiKey.trim()) {
+    if (!activeKey) {
       setApiErrorMessage(
-        'YouTube Data API Key is missing: To search live YouTube movies, dramas, and songs, please configure VITE_YOUTUBE_API_KEY in your .env or enter your Google Cloud API key below. Meanwhile, you can stream from our verified standard YouTube embed collection or paste any YouTube URL.'
+        'YouTube Data API Key is missing: To search live YouTube movies, dramas, and songs, please configure VITE_YOUTUBE_API_KEY in your .env or enter your Google Cloud API key below. You can also stream any verified title directly or paste a direct YouTube video URL.'
       );
       setShowKeyManager(true);
-      onShowToast('YouTube Data API key is missing! Check settings.');
+      onShowToast('YouTube Data API key is missing! Enter your key below.');
       return;
     }
 
@@ -158,14 +209,41 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     setApiErrorMessage(null);
 
     try {
-      const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&type=video&q=${encodeURIComponent(
+      const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=18&type=video&q=${encodeURIComponent(
         query
-      )}&key=${encodeURIComponent(apiKey.trim())}`;
+      )}&key=${encodeURIComponent(activeKey)}`;
       const res = await fetch(endpoint);
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error?.message || `YouTube API returned status ${res.status}`);
+        const errorData = data?.error;
+        const mainMessage = errorData?.message || `YouTube API returned status ${res.status}`;
+        const reason = errorData?.errors?.[0]?.reason || '';
+
+        if (res.status === 403 || reason === 'quotaExceeded' || mainMessage.toLowerCase().includes('quota')) {
+          setApiErrorMessage(
+            'YouTube API Quota Exceeded (403): Your Google Cloud project has reached its daily YouTube Data API v3 limit (quotaExceeded). Google resets quotas daily at midnight PT. You can provide a personal API key below or stream from our verified standard YouTube embed collection.'
+          );
+          setShowKeyManager(true);
+          onShowToast('YouTube API quota reached for today.');
+          return;
+        }
+
+        if (
+          res.status === 400 ||
+          reason === 'keyInvalid' ||
+          mainMessage.toLowerCase().includes('key not valid') ||
+          mainMessage.toLowerCase().includes('api key')
+        ) {
+          setApiErrorMessage(
+            `Invalid YouTube API Key (400): ${mainMessage}. Please verify that "YouTube Data API v3" is enabled for this API key in Google Cloud Console and paste the correct key.`
+          );
+          setShowKeyManager(true);
+          onShowToast('Invalid YouTube API key.');
+          return;
+        }
+
+        throw new Error(mainMessage);
       }
 
       if (!data.items || data.items.length === 0) {
@@ -176,8 +254,8 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
           .filter((item: any) => item.id?.videoId)
           .map((item: any) => ({
             id: `yt-${item.id.videoId}`,
-            title: item.snippet.title,
-            subtitle: item.snippet.channelTitle,
+            title: decodeHtmlEntities(item.snippet.title),
+            subtitle: decodeHtmlEntities(item.snippet.channelTitle),
             category: (selectedCategory === 'all' ? 'movies' : selectedCategory) as DownloadCategory,
             categoryLabel: 'YouTube Live',
             fileSize: 'Streaming HD',
@@ -192,19 +270,19 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
             downloadsCount: 'YouTube',
             rating: 4.9,
             tags: ['YouTube Live', 'Standard Embed', 'Movie Box'],
-            description: item.snippet.description,
+            description: decodeHtmlEntities(item.snippet.description || ''),
             youtubeId: item.id.videoId,
           }));
         setYoutubeLiveResults(mapped);
         setSearchSource('youtube');
-        onShowToast(`Found ${mapped.length} live YouTube titles!`);
+        onShowToast(`Found ${mapped.length} live YouTube titles! Tap any to play 🎬`);
       }
     } catch (err: any) {
       console.error('YouTube Data API query failed:', err);
       setApiErrorMessage(
         `YouTube Data API Error: ${err.message || 'Failed to search YouTube'}. Please verify your API key and quota permissions.`
       );
-      onShowToast('YouTube API error: Key missing or invalid.');
+      onShowToast('YouTube API error: Key missing or quota exceeded.');
     } finally {
       setIsSearchingYouTube(false);
     }
@@ -240,6 +318,22 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
       // ignore
     }
   }, [downloadStates]);
+
+  // Instantly cache YouTube search results and navigation state in sessionStorage
+  useEffect(() => {
+    try {
+      if (youtubeLiveResults.length > 0) {
+        sessionStorage.setItem('jatt_yt_search_results', JSON.stringify(youtubeLiveResults));
+      } else {
+        sessionStorage.removeItem('jatt_yt_search_results');
+      }
+      sessionStorage.setItem('jatt_yt_search_query', searchQuery);
+      sessionStorage.setItem('jatt_yt_search_source', searchSource);
+      sessionStorage.setItem('jatt_hub_selected_category', selectedCategory);
+    } catch {
+      // ignore
+    }
+  }, [youtubeLiveResults, searchQuery, searchSource, selectedCategory]);
 
   // Simulate progress timer for active downloads
   useEffect(() => {
@@ -418,7 +512,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
   return (
     <div className="w-full h-full flex flex-col bg-neutral-950 text-white overflow-hidden select-none">
       {/* Top Header Bar */}
-      <div className="shrink-0 px-4 sm:px-6 py-3 bg-neutral-950/90 border-b border-neutral-800/80 backdrop-blur-md flex items-center justify-between gap-3 z-30">
+      <div className="shrink-0 px-4 sm:px-6 py-3 bg-neutral-950/95 border-b border-neutral-800/80 [transform:translateZ(0)] flex items-center justify-between gap-3 z-30">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -502,21 +596,20 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
         <div className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 space-y-4">
           {/* Top Search & Filter Bar */}
           <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-            {/* Search Input with YouTube Live Search Button */}
-            <div className="flex-1 flex flex-col sm:flex-row items-stretch gap-2">
+            {/* Search Input with YouTube Live Search Button in Form */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSearchYouTubeLive();
+              }}
+              className="flex-1 flex flex-col sm:flex-row items-stretch gap-2"
+            >
               <div className="relative flex-1">
-                <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      if (searchSource === 'youtube') {
-                        handleSearchYouTubeLive();
-                      }
-                    }
-                  }}
                   placeholder="Search Punjabi drill, apps, 4K movies, Quran tilawat..."
                   className="w-full bg-neutral-900/90 text-xs sm:text-sm text-white placeholder-neutral-500 pl-10 pr-9 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/50 transition-all shadow-inner"
                 />
@@ -536,11 +629,10 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
               {/* YouTube Live Search CTA */}
               <button
-                type="button"
-                onClick={() => handleSearchYouTubeLive()}
+                type="submit"
                 disabled={isSearchingYouTube}
-                className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-red-600/30 active:scale-95 transition-all shrink-0 border border-red-400/30"
-                title="Search Official YouTube Data API"
+                className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-red-600/30 active:scale-95 transition-all shrink-0 border border-red-400/30 cursor-pointer"
+                title="Search Official YouTube Data API v3"
               >
                 <Youtube className="w-4 h-4 fill-white" />
                 <span>{isSearchingYouTube ? 'Searching...' : 'Search YouTube'}</span>
@@ -550,7 +642,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
               <button
                 type="button"
                 onClick={() => setShowKeyManager(!showKeyManager)}
-                className={`px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all shrink-0 ${
+                className={`px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all shrink-0 cursor-pointer ${
                   apiKey.trim()
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                     : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
@@ -569,7 +661,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   </>
                 )}
               </button>
-            </div>
+            </form>
 
             {/* Sort Dropdown */}
             <div className="flex items-center gap-2 shrink-0">
@@ -792,14 +884,23 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                     setSearchQuery('');
                     setSelectedCategory('all');
                     setSearchSource('catalog');
+                    setYoutubeLiveResults([]);
+                    try {
+                      sessionStorage.removeItem('jatt_yt_search_results');
+                      sessionStorage.setItem('jatt_yt_search_query', '');
+                      sessionStorage.setItem('jatt_yt_search_source', 'catalog');
+                      sessionStorage.setItem('jatt_hub_selected_category', 'all');
+                    } catch {
+                      // ignore
+                    }
                   }}
-                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-pink-400 rounded-xl transition-colors"
+                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-pink-400 rounded-xl transition-colors cursor-pointer"
                 >
                   Reset to Catalog
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 [transform:translateZ(0)]">
                 {displayedItems.map((item) => {
                   const state = downloadStates[item.id] || {
                     progress: 0,
@@ -813,12 +914,20 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   return (
                     <div
                       key={item.id}
-                      className="group bg-neutral-900/70 hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/40 rounded-2xl p-4 transition-all duration-300 flex flex-col justify-between shadow-xl backdrop-blur-md relative overflow-hidden"
+                      onClick={() => {
+                        if (item.youtubeId) {
+                          setPreviewItem(item);
+                          onShowToast(`Playing "${item.title}" in Movie Box! 🎬🔥`);
+                        }
+                      }}
+                      className={`group bg-neutral-900/90 hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/50 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between [transform:translateZ(0)] relative overflow-hidden ${
+                        item.youtubeId ? 'cursor-pointer hover:border-pink-500/60' : ''
+                      }`}
                     >
                       {/* Top Media Info Row */}
                       <div>
                         <div className="flex gap-3.5">
-                          {/* Thumbnail with quality badge */}
+                          {/* Thumbnail with quality badge & Hover Play Overlay */}
                           <div className="relative w-22 h-22 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-neutral-800 shrink-0 border border-neutral-700/80 shadow-md group-hover:scale-102 transition-transform">
                             <img
                               src={item.thumbnailUrl}
@@ -827,11 +936,20 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                               loading="lazy"
                             />
                             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
-                            
+
                             {/* Category Icon Badge */}
                             <span className="absolute top-1.5 left-1.5 p-1 rounded-md bg-black/70 backdrop-blur-md text-pink-400 text-[10px]">
                               {renderCategoryIcon(item.category, 'w-3 h-3')}
                             </span>
+
+                            {/* Hover Play Indicator for YouTube streams */}
+                            {item.youtubeId && (
+                              <div className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity z-10 pointer-events-none">
+                                <div className="w-9 h-9 rounded-full bg-red-600/95 text-white flex items-center justify-center shadow-lg shadow-red-600/60 scale-90 group-hover:scale-100 transition-transform">
+                                  <Play className="w-4 h-4 fill-white ml-0.5" />
+                                </div>
+                              </div>
+                            )}
 
                             {/* Duration / Version Pill */}
                             <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-sm bg-black/80 text-[9px] font-bold text-neutral-200">
@@ -850,6 +968,12 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                                 <Star className="w-2.5 h-2.5 fill-amber-400" />
                                 {item.rating}
                               </span>
+                              {item.youtubeId && (
+                                <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded-md bg-red-500/20 text-red-300 border border-red-500/30 flex items-center gap-0.5">
+                                  <Youtube className="w-2.5 h-2.5 fill-red-400" />
+                                  <span>Tap to Play</span>
+                                </span>
+                              )}
                             </div>
 
                             <h3 className="text-sm font-bold text-white truncate group-hover:text-pink-400 transition-colors">
@@ -910,16 +1034,22 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => setPreviewItem(item)}
-                                className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-98 transition-all border border-emerald-400/40"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewItem(item);
+                                }}
+                                className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-98 transition-all border border-emerald-400/40 cursor-pointer"
                               >
                                 <Play className="w-3.5 h-3.5 fill-white" />
                                 <span>Open / Play File</span>
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleStartDownload(item)}
-                                className="p-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white border border-neutral-700 text-xs transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStartDownload(item);
+                                }}
+                                className="p-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white border border-neutral-700 text-xs transition-colors cursor-pointer"
                                 title="Re-download"
                               >
                                 <RotateCcw className="w-3.5 h-3.5" />
@@ -959,8 +1089,11 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                                 {state.isPaused ? (
                                   <button
                                     type="button"
-                                    onClick={() => handleResumeDownload(item)}
-                                    className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-bold flex items-center gap-1 shadow-xs"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleResumeDownload(item);
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-bold flex items-center gap-1 shadow-xs cursor-pointer"
                                   >
                                     <Play className="w-3 h-3 fill-white" />
                                     <span>Resume</span>
@@ -968,8 +1101,11 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={() => handlePauseDownload(item)}
-                                    className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-bold flex items-center gap-1"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handlePauseDownload(item);
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
                                   >
                                     <Pause className="w-3 h-3" />
                                     <span>Pause</span>
@@ -977,8 +1113,11 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                                 )}
                                 <button
                                   type="button"
-                                  onClick={() => handleRemoveDownload(item.id, item.title)}
-                                  className="p-1 text-neutral-500 hover:text-red-400 rounded-md transition-colors"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRemoveDownload(item.id, item.title);
+                                  }}
+                                  className="p-1 text-neutral-500 hover:text-red-400 rounded-md transition-colors cursor-pointer"
                                   title="Cancel download"
                                 >
                                   <X className="w-3.5 h-3.5" />
@@ -992,8 +1131,11 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             {item.youtubeId && (
                               <button
                                 type="button"
-                                onClick={() => setPreviewItem(item)}
-                                className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600/25 to-pink-600/25 hover:from-red-600/40 hover:to-pink-600/40 text-red-300 font-bold text-xs flex items-center justify-center gap-1.5 border border-red-500/40 shadow-md active:scale-98 transition-all shrink-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewItem(item);
+                                }}
+                                className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600/25 to-pink-600/25 hover:from-red-600/40 hover:to-pink-600/40 text-red-300 font-bold text-xs flex items-center justify-center gap-1.5 border border-red-500/40 shadow-md active:scale-98 transition-all shrink-0 cursor-pointer"
                                 title="Watch in official standard YouTube embed player"
                               >
                                 <Youtube className="w-3.5 h-3.5 fill-red-500 text-red-500" />
@@ -1003,8 +1145,11 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             )}
                             <button
                               type="button"
-                              onClick={() => handleStartDownload(item)}
-                              className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:via-purple-500 hover:to-cyan-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-pink-600/35 hover:shadow-cyan-500/40 active:scale-98 transition-all border border-pink-400/40 group/btn min-w-0"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartDownload(item);
+                              }}
+                              className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:via-purple-500 hover:to-cyan-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-pink-600/35 hover:shadow-cyan-500/40 active:scale-98 transition-all border border-pink-400/40 group/btn min-w-0 cursor-pointer"
                             >
                               <Download className="w-3.5 h-3.5 text-white shrink-0 group-hover/btn:translate-y-0.5 transition-transform" />
                               <span className="tracking-wide truncate">Download</span>

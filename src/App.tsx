@@ -318,33 +318,42 @@ export default function App() {
     }, 100);
   };
 
-  // Quick Mobile Gallery Video Selection Handler (HTML5 file input + URL.createObjectURL)
+  // Quick Mobile Upload Handler (Live Recording with capture="environment" or Gallery without capture)
   const handleQuickGalleryUpload = useCallback(
-    (file: File) => {
+    (file: File, source?: 'live' | 'gallery') => {
       try {
         const videoPlayableUrl = URL.createObjectURL(file);
-        const rawName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-        const cleanTitle = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+        const isLive = source === 'live';
+        const rawName = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') : 'Video';
+        const cleanTitle = isLive
+          ? `Live Video (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`
+          : rawName.charAt(0).toUpperCase() + rawName.slice(1);
 
         const newPost: VideoPost = {
-          id: `reel-gallery-${Date.now()}`,
+          id: `reel-${isLive ? 'live' : 'gallery'}-${Date.now()}`,
           title: cleanTitle,
-          description: `${cleanTitle} 🎬✨ #mobilegallery #jattswag #vibereels`,
-          hashtags: ['mobilegallery', 'vibereels', 'jattstyle', 'trending'],
+          description: isLive
+            ? `${cleanTitle} 🎥 Recorded fresh with live mobile camera #liverecord #jattswag #vibereels`
+            : `${cleanTitle} 🎬✨ Picked from device gallery #mobilegallery #jattswag #vibereels`,
+          hashtags: isLive
+            ? ['liverecord', 'camera', 'vibereels', 'jattstyle']
+            : ['mobilegallery', 'vibereels', 'jattstyle', 'trending'],
           videoUrl: videoPlayableUrl,
           posterUrl: 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=600&q=80',
-          fallbackGradient: 'from-pink-900/40 via-purple-900/30 to-black',
+          fallbackGradient: isLive
+            ? 'from-rose-900/50 via-pink-900/40 to-black'
+            : 'from-pink-900/40 via-purple-900/30 to-black',
           category: 'trending',
           creator: {
-            name: currentUser?.name || 'Local Creator',
+            name: currentUser?.name || (isLive ? 'Live Mobile Creator' : 'Local Creator'),
             username: currentUser?.username || 'user_' + Math.floor(1000 + Math.random() * 9000),
             avatar: currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
             isVerified: currentUser?.role === 'admin',
             isFollowing: false,
           },
           sound: {
-            title: `Gallery Sound - ${cleanTitle.slice(0, 24)}`,
-            artist: currentUser?.name || 'Device Audio',
+            title: isLive ? `Live Mic Audio - ${cleanTitle.slice(0, 24)}` : `Gallery Sound - ${cleanTitle.slice(0, 24)}`,
+            artist: currentUser?.name || (isLive ? 'Live Microphone' : 'Device Audio'),
             trackType: 'tokyo_drift',
           },
           stats: {
@@ -364,7 +373,9 @@ export default function App() {
                 avatar: 'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
                 isVerified: true,
               },
-              text: 'Uploaded from mobile gallery! Auto-playing live now in vertical reel mode 🔥',
+              text: isLive
+                ? 'Recorded live with phone camera! Playing now in vertical reel mode 🎥🔥'
+                : 'Uploaded from mobile gallery! Auto-playing live now in vertical reel mode 🎬🔥',
               timestamp: 'Just now',
               likes: 1,
               isLiked: false,
@@ -401,9 +412,13 @@ export default function App() {
           }
         }, 50);
 
-        showToast('Selected video from gallery! Playing now in full-screen vertical reel mode 🎬🔥');
+        showToast(
+          isLive
+            ? 'Recorded live video! Playing now in For You feed 🎥🔥'
+            : 'Selected video from gallery! Playing now in full-screen vertical reel mode 🎬🔥'
+        );
       } catch (err) {
-        console.error('Failed to create playable URL for gallery video:', err);
+        console.error('Failed to create playable URL for video:', err);
         showToast('Could not load the selected video file.');
       }
     },
@@ -600,7 +615,7 @@ export default function App() {
               )}
 
               {/* Center Vertical Reel Stage */}
-              <div className="relative w-full h-full sm:max-w-[460px] mx-auto bg-black shadow-2xl flex flex-col justify-center">
+              <div className="relative w-full h-full sm:max-w-[460px] mx-auto bg-black border-x border-neutral-900/60 flex flex-col justify-center [transform:translateZ(0)]">
                 {displayedVideos.length === 0 ? (
                   <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center">
                     <Compass className="w-12 h-12 text-neutral-600 mb-3" />
@@ -625,7 +640,7 @@ export default function App() {
                   <div
                     ref={containerRef}
                     onScroll={handleScroll}
-                    className="h-full w-full snap-container overflow-y-scroll overflow-x-hidden no-scrollbar"
+                    className="h-full w-full snap-container overflow-y-scroll overflow-x-hidden no-scrollbar [transform:translateZ(0)] [will-change:scroll-position]"
                   >
                     {displayedVideos.map((video, idx) => (
                       <VideoCard

@@ -65,12 +65,17 @@ export const VideoCard: React.FC<VideoCardProps> = ({
 
   const lastTapRef = useRef<number>(0);
 
-  // Play/pause based on active snap index
+  // Smart Video Lazy-Loading: Only load and play the single video currently visible in viewport.
+  // Pause and unload (preload='none') off-screen videos immediately so memory stays low and scrolling is 60fps.
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
 
     if (isActive) {
+      if (el.src !== video.videoUrl) {
+        el.src = video.videoUrl;
+      }
+      el.preload = 'auto';
       el.currentTime = 0;
       el.muted = isMuted;
       const playPromise = el.play();
@@ -89,14 +94,37 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           });
       }
     } else {
+      // Off-screen: pause, unload buffer, release hardware decoder
       el.pause();
       setIsPlaying(false);
+      el.removeAttribute('src');
+      el.preload = 'none';
+      try {
+        el.load(); // Forces immediate memory flush in mobile WebViews
+      } catch {
+        // ignore
+      }
     }
-  }, [isActive, isMuted, video.sound.trackType]);
+  }, [isActive, isMuted, video.videoUrl, video.sound.trackType]);
+
+  // Clean up decoder on unmount
+  useEffect(() => {
+    return () => {
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.removeAttribute('src');
+        try {
+          videoRef.current.load();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
 
   // Sync mute state
   useEffect(() => {
-    if (videoRef.current) {
+    if (videoRef.current && isActive) {
       videoRef.current.muted = isMuted;
     }
     if (isActive) {
@@ -214,16 +242,16 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         className="relative w-full h-full flex items-center justify-center cursor-pointer"
         onClick={handleVideoAreaClick}
       >
-        {/* HTML5 Video element */}
+        {/* HTML5 Video element: only mounted/buffered when active */}
         {!videoError && (
           <video
             ref={videoRef}
-            src={video.videoUrl}
+            src={isActive ? video.videoUrl : undefined}
             poster={video.posterUrl}
             playsInline
             loop
             muted={isMuted}
-            preload="auto"
+            preload={isActive ? 'auto' : 'none'}
             crossOrigin="anonymous"
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={() => {
@@ -232,17 +260,17 @@ export const VideoCard: React.FC<VideoCardProps> = ({
               }
             }}
             onError={() => {
-              setVideoError(true);
+              if (isActive) setVideoError(true);
             }}
-            className="w-full h-full object-cover sm:object-contain sm:max-w-md mx-auto"
+            className="w-full h-full object-cover sm:object-contain sm:max-w-md mx-auto [transform:translateZ(0)]"
           />
         )}
 
         {/* Fallback procedural 60fps canvas if video fails or is unsupported */}
         {videoError && (
-          <div className="relative w-full h-full flex items-center justify-center">
+          <div className="relative w-full h-full flex items-center justify-center [transform:translateZ(0)]">
             <ProceduralCanvas theme={video.category} isPlaying={isPlaying} />
-            <div className="absolute top-16 left-4 z-20 bg-neutral-900/80 backdrop-blur-md px-3 py-1.5 rounded-full border border-neutral-700/60 flex items-center gap-2">
+            <div className="absolute top-16 left-4 z-20 bg-neutral-900/90 px-3 py-1.5 rounded-full border border-neutral-700/60 flex items-center gap-2 [transform:translateZ(0)]">
               <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
               <span className="text-[11px] font-semibold text-neutral-300">Live Visual Reel</span>
             </div>
@@ -251,7 +279,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
 
         {/* Play/Pause Animated Center Icon */}
         {showPlayIcon && (
-          <div className="absolute z-30 pointer-events-none w-20 h-20 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white scale-110 transition-transform duration-200 animate-in zoom-in-50">
+          <div className="absolute z-30 pointer-events-none w-20 h-20 rounded-full bg-neutral-950/85 border border-white/20 flex items-center justify-center text-white scale-110 transition-transform duration-200 animate-in zoom-in-50 [transform:translateZ(0)]">
             {isPlaying ? (
               <Play className="w-10 h-10 fill-white translate-x-1" />
             ) : (
@@ -267,9 +295,9 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             style={{
               left: `${h.x}px`,
               top: `${h.y}px`,
-              transform: `translate(-50%, -50%) rotate(${h.rotation}deg)`,
+              transform: `translate3d(-50%, -50%, 0) rotate(${h.rotation}deg)`,
             }}
-            className="absolute z-40 pointer-events-none animate-in fade-in zoom-in-150 duration-500 ease-out flex items-center justify-center text-rose-500 filter drop-shadow-lg"
+            className="absolute z-40 pointer-events-none animate-in fade-in zoom-in-150 duration-500 ease-out flex items-center justify-center text-rose-500 filter drop-shadow-lg [transform:translateZ(0)]"
           >
             <Heart className="w-24 h-24 fill-rose-500 text-rose-500 stroke-2 animate-bounce" />
           </div>
@@ -277,7 +305,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       </div>
 
       {/* Top Scrim Bar for Controls */}
-      <div className="absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:max-w-md sm:mx-auto">
+      <div className="absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:max-w-md sm:mx-auto [transform:translateZ(0)]">
         {/* Audio Mute / Unmute Button */}
         <button
           type="button"
@@ -286,7 +314,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             onToggleMute();
             soundEngine.setMuted(!isMuted);
           }}
-          className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white hover:bg-black/70 active:scale-95 transition-all text-xs font-semibold"
+          className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white hover:bg-neutral-800 active:scale-95 transition-all text-xs font-semibold [transform:translateZ(0)]"
           aria-label={isMuted ? 'Unmute video' : 'Mute video'}
         >
           {isMuted ? (
@@ -304,12 +332,12 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       </div>
 
       {/* Right Side Overlay Action Buttons */}
-      <div className="absolute right-3 bottom-18 sm:bottom-20 z-30 flex flex-col items-center gap-4.5 sm:max-w-md pointer-events-auto">
+      <div className="absolute right-3 bottom-18 sm:bottom-20 z-30 flex flex-col items-center gap-4.5 sm:max-w-md pointer-events-auto [transform:translateZ(0)]">
         {/* Creator Avatar with Follow Button */}
         <div className="relative mb-1 flex flex-col items-center">
           <button
             type="button"
-            className="relative w-11 h-11 rounded-full p-0.5 border-2 border-white/80 overflow-hidden shadow-lg hover:scale-105 active:scale-95 transition-transform bg-neutral-900"
+            className="relative w-11 h-11 rounded-full p-0.5 border-2 border-white/80 overflow-hidden shadow-md hover:scale-105 active:scale-95 transition-transform bg-neutral-900 [transform:translateZ(0)]"
             onClick={(e) => {
               e.stopPropagation();
               onShowToast(`Viewing profile @${video.creator.username}`);
@@ -330,15 +358,15 @@ export const VideoCard: React.FC<VideoCardProps> = ({
                 onFollowToggle(video.creator.username);
                 onShowToast(`Followed @${video.creator.username}`);
               }}
-              className="absolute -bottom-2 w-5 h-5 rounded-full bg-rose-500 hover:bg-rose-400 text-white flex items-center justify-center shadow-md active:scale-90 transition-transform"
+              className="absolute -bottom-2 w-5 h-5 rounded-full bg-rose-500 hover:bg-rose-400 text-white flex items-center justify-center shadow-sm active:scale-90 transition-transform"
               aria-label="Follow creator"
             >
               <Plus className="w-3.5 h-3.5 stroke-[3]" />
             </button>
           )}
           {video.creator.isFollowing && (
-            <div className="absolute -bottom-2 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md">
-              <Check className="w-3 h-3 stroke-[3]" />
+            <div className="absolute -bottom-2 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-sm">
+              <Check className="w-3.5 h-3.5 stroke-[3]" />
             </div>
           )}
         </div>
@@ -355,10 +383,10 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           aria-label={video.isLiked ? 'Unlike' : 'Like'}
         >
           <div
-            className={`w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md transition-all ${
+            className={`w-11 h-11 rounded-full flex items-center justify-center transition-all [transform:translateZ(0)] ${
               video.isLiked
-                ? 'bg-rose-500/20 text-rose-500 shadow-lg shadow-rose-500/30'
-                : 'bg-black/40 hover:bg-black/60 text-white border border-white/10'
+                ? 'bg-rose-500/25 border border-rose-500/40 text-rose-500 shadow-md shadow-rose-500/20'
+                : 'bg-neutral-900/90 hover:bg-neutral-800 text-white border border-white/10'
             }`}
           >
             <Heart
@@ -384,7 +412,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           className="flex flex-col items-center gap-1 group active:scale-90 transition-transform"
           aria-label="Comments"
         >
-          <div className="w-11 h-11 rounded-full bg-black/40 hover:bg-black/60 text-white border border-white/10 backdrop-blur-md flex items-center justify-center transition-all group-hover:scale-105">
+          <div className="w-11 h-11 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-white border border-white/10 flex items-center justify-center transition-all group-hover:scale-105 [transform:translateZ(0)]">
             <MessageCircle className="w-6 h-6 text-white" />
           </div>
           <span className="text-[11px] font-bold text-white drop-shadow-md tabular-nums">
@@ -403,10 +431,10 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           aria-label={video.isSaved ? 'Remove from bookmarks' : 'Bookmark video'}
         >
           <div
-            className={`w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md transition-all ${
+            className={`w-11 h-11 rounded-full flex items-center justify-center transition-all [transform:translateZ(0)] ${
               video.isSaved
-                ? 'bg-amber-500/20 text-amber-400 shadow-lg shadow-amber-500/30 border border-amber-500/40'
-                : 'bg-black/40 hover:bg-black/60 text-white border border-white/10'
+                ? 'bg-amber-500/25 border border-amber-500/40 text-amber-400 shadow-md shadow-amber-500/20'
+                : 'bg-neutral-900/90 hover:bg-neutral-800 text-white border border-white/10'
             }`}
           >
             <Bookmark
@@ -432,7 +460,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           className="flex flex-col items-center gap-1 group active:scale-90 transition-transform"
           aria-label="Share reel"
         >
-          <div className="w-11 h-11 rounded-full bg-black/40 hover:bg-black/60 text-white border border-white/10 backdrop-blur-md flex items-center justify-center transition-all group-hover:scale-105">
+          <div className="w-11 h-11 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-white border border-white/10 flex items-center justify-center transition-all group-hover:scale-105 [transform:translateZ(0)]">
             <Share2 className="w-5 h-5 text-white" />
           </div>
           <span className="text-[11px] font-bold text-white drop-shadow-md tabular-nums">
