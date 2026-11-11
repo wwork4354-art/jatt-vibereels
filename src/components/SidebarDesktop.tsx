@@ -14,6 +14,7 @@ import {
   Radio,
   Download,
   Camera,
+  Film,
   User as UserIcon,
 } from 'lucide-react';
 import { FeedTab, UserAccount } from '../types';
@@ -149,7 +150,7 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             </span>
           </button>
 
-          {/* All-in-One Download Hub Tab */}
+          {/* Movie Box & Download Hub Tab */}
           <button
             type="button"
             onClick={() => onSelectTab('downloads')}
@@ -160,11 +161,11 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             }`}
           >
             <div className="flex items-center gap-3.5">
-              <Download className="w-5 h-5 shrink-0 text-cyan-400 group-hover:scale-110 transition-transform" />
-              <span>Download Hub</span>
+              <Film className="w-5 h-5 shrink-0 text-cyan-400 group-hover:scale-110 transition-transform" />
+              <span>Movie Box</span>
             </div>
             <span className="text-[10px] uppercase font-black tracking-wider bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/35">
-              All-in-1
+              Stream/DL
             </span>
           </button>
 

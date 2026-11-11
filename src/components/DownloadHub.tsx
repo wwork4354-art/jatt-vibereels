@@ -22,6 +22,10 @@ import {
   X,
   Volume2,
   VolumeX,
+  Youtube,
+  AlertTriangle,
+  Key,
+  Link2,
 } from 'lucide-react';
 import { DownloadItem, DownloadCategory, FeedTab } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
@@ -69,6 +73,164 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
   // Track media preview modal
   const [previewItem, setPreviewItem] = useState<DownloadItem | null>(null);
+
+  // YouTube Data API & Movie Box States
+  const [apiKey, setApiKey] = useState<string>(() => {
+    return (
+      (import.meta.env.VITE_YOUTUBE_API_KEY as string | undefined) ||
+      localStorage.getItem('jatt_youtube_api_key') ||
+      ''
+    );
+  });
+  const [customKeyInput, setCustomKeyInput] = useState<string>('');
+  const [showKeyManager, setShowKeyManager] = useState<boolean>(false);
+  const [apiErrorMessage, setApiErrorMessage] = useState<string | null>(null);
+  const [isSearchingYouTube, setIsSearchingYouTube] = useState<boolean>(false);
+  const [youtubeLiveResults, setYoutubeLiveResults] = useState<DownloadItem[]>([]);
+  const [searchSource, setSearchSource] = useState<'catalog' | 'youtube'>('catalog');
+  const [directUrlInput, setDirectUrlInput] = useState<string>('');
+
+  // Extract valid 11-char YouTube Video ID from any URL format or direct ID
+  const extractYouTubeId = (input: string): string | null => {
+    if (!input) return null;
+    const trimmed = input.trim();
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const shortMatch = trimmed.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+    if (shortMatch) return shortMatch[1];
+    const longMatch = trimmed.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    if (longMatch) return longMatch[1];
+    const embedMatch = trimmed.match(/(?:embed|v)\/([a-zA-Z0-9_-]{11})/);
+    if (embedMatch) return embedMatch[1];
+    return null;
+  };
+
+  // Play any custom YouTube link or video ID directly in standard embed player
+  const handlePlayDirectUrl = () => {
+    const ytid = extractYouTubeId(directUrlInput);
+    if (!ytid) {
+      onShowToast('Please enter a valid YouTube video link or 11-char ID.');
+      return;
+    }
+    const directItem: DownloadItem = {
+      id: `custom-yt-${ytid}`,
+      title: 'YouTube Custom Stream',
+      subtitle: `Official Standard Embed (ID: ${ytid})`,
+      category: 'movies',
+      categoryLabel: 'Movie Box Stream',
+      fileSize: 'Streaming 1080p',
+      sizeBytes: 150000000,
+      durationOrVersion: 'Live / HD',
+      qualityBadge: 'YouTube 1080p Embed',
+      thumbnailUrl: `https://img.youtube.com/vi/${ytid}/hqdefault.jpg`,
+      fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
+      downloadsCount: 'Stream',
+      rating: 5.0,
+      tags: ['YouTube Stream', 'Standard Embed', 'No 3rd-Party Blocks'],
+      description: 'Streamed directly using official standard YouTube iframe player (https://youtube.com/embed/...) with zero third-party blocks.',
+      youtubeId: ytid,
+    };
+    setPreviewItem(directItem);
+    setDirectUrlInput('');
+    onShowToast('Loading in standard YouTube embed player! 🎬🔥');
+  };
+
+  // Query YouTube Data API for live Movies, Dramas, and Songs
+  const handleSearchYouTubeLive = async (targetQuery?: string) => {
+    const query = (targetQuery !== undefined ? targetQuery : searchQuery).trim();
+    if (!query) {
+      onShowToast('Type a movie, drama, or song title to search YouTube.');
+      return;
+    }
+
+    // Check if API key is missing
+    if (!apiKey.trim()) {
+      setApiErrorMessage(
+        'YouTube Data API Key is missing: To search live YouTube movies, dramas, and songs, please configure VITE_YOUTUBE_API_KEY in your .env or enter your Google Cloud API key below. Meanwhile, you can stream from our verified standard YouTube embed collection or paste any YouTube URL.'
+      );
+      setShowKeyManager(true);
+      onShowToast('YouTube Data API key is missing! Check settings.');
+      return;
+    }
+
+    setIsSearchingYouTube(true);
+    setApiErrorMessage(null);
+
+    try {
+      const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&type=video&q=${encodeURIComponent(
+        query
+      )}&key=${encodeURIComponent(apiKey.trim())}`;
+      const res = await fetch(endpoint);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error?.message || `YouTube API returned status ${res.status}`);
+      }
+
+      if (!data.items || data.items.length === 0) {
+        onShowToast(`No live YouTube results found for "${query}".`);
+        setYoutubeLiveResults([]);
+      } else {
+        const mapped: DownloadItem[] = data.items
+          .filter((item: any) => item.id?.videoId)
+          .map((item: any) => ({
+            id: `yt-${item.id.videoId}`,
+            title: item.snippet.title,
+            subtitle: item.snippet.channelTitle,
+            category: (selectedCategory === 'all' ? 'movies' : selectedCategory) as DownloadCategory,
+            categoryLabel: 'YouTube Live',
+            fileSize: 'Streaming HD',
+            sizeBytes: 150000000,
+            durationOrVersion: 'YouTube Stream',
+            qualityBadge: 'YouTube 1080p Embed',
+            thumbnailUrl:
+              item.snippet.thumbnails?.high?.url ||
+              item.snippet.thumbnails?.medium?.url ||
+              `https://img.youtube.com/vi/${item.id.videoId}/hqdefault.jpg`,
+            fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
+            downloadsCount: 'YouTube',
+            rating: 4.9,
+            tags: ['YouTube Live', 'Standard Embed', 'Movie Box'],
+            description: item.snippet.description,
+            youtubeId: item.id.videoId,
+          }));
+        setYoutubeLiveResults(mapped);
+        setSearchSource('youtube');
+        onShowToast(`Found ${mapped.length} live YouTube titles!`);
+      }
+    } catch (err: any) {
+      console.error('YouTube Data API query failed:', err);
+      setApiErrorMessage(
+        `YouTube Data API Error: ${err.message || 'Failed to search YouTube'}. Please verify your API key and quota permissions.`
+      );
+      onShowToast('YouTube API error: Key missing or invalid.');
+    } finally {
+      setIsSearchingYouTube(false);
+    }
+  };
+
+  // Save or clear custom YouTube Data API key
+  const handleSaveCustomKey = () => {
+    const trimmed = customKeyInput.trim();
+    if (!trimmed) {
+      localStorage.removeItem('jatt_youtube_api_key');
+      const envKey = (import.meta.env.VITE_YOUTUBE_API_KEY as string | undefined) || '';
+      setApiKey(envKey);
+      if (!envKey) {
+        setApiErrorMessage('YouTube Data API Key is missing.');
+      } else {
+        setApiErrorMessage(null);
+      }
+      onShowToast('Custom YouTube API key cleared.');
+      return;
+    }
+    localStorage.setItem('jatt_youtube_api_key', trimmed);
+    setApiKey(trimmed);
+    setApiErrorMessage(null);
+    setShowKeyManager(false);
+    onShowToast('YouTube Data API Key saved successfully!');
+  };
 
   // Sync to session
   useEffect(() => {
@@ -210,6 +372,14 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
       });
   }, [items, selectedCategory, searchQuery, sortBy]);
 
+  // Merge live YouTube search results or catalog items
+  const displayedItems = useMemo(() => {
+    if (searchSource === 'youtube' && youtubeLiveResults.length > 0) {
+      return youtubeLiveResults;
+    }
+    return filteredItems;
+  }, [searchSource, youtubeLiveResults, filteredItems]);
+
   // Completed downloads for "My Downloads"
   const completedDownloads = useMemo(() => {
     return items.filter((it) => downloadStates[it.id]?.isCompleted);
@@ -263,14 +433,14 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 via-purple-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-pink-500/25">
-              <Download className="w-4 h-4" />
+              <Film className="w-4 h-4" />
             </div>
             <div>
               <h1 className="text-sm sm:text-base font-black tracking-tight text-white flex items-center gap-1.5">
-                All-in-One <span className="bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">Download Hub</span>
+                Movie Box & <span className="bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">Download Hub</span>
               </h1>
               <p className="text-[10px] text-neutral-400 hidden sm:block">
-                High-speed downloads for Songs, Apps, Dramas, Movies, Cartoons & Quran
+                Standard YouTube Embed Players · Stream Movies, Dramas, Songs & Tilawat with zero 3rd-party blocks
               </p>
             </div>
           </div>
@@ -329,28 +499,76 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
         /* ========================================================================= */
         /* MARKETPLACE VIEW: CATEGORIES, SEARCH, SORTS & GLOW DOWNLOAD CARDS        */
         /* ========================================================================= */
-        <div className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 space-y-5">
+        <div className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 space-y-4">
           {/* Top Search & Filter Bar */}
           <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-            {/* Search Input */}
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search Punjabi drill, apps, 4K movies, Quran tilawat..."
-                className="w-full bg-neutral-900/90 text-xs sm:text-sm text-white placeholder-neutral-500 pl-10 pr-9 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/50 transition-all shadow-inner"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
+            {/* Search Input with YouTube Live Search Button */}
+            <div className="flex-1 flex flex-col sm:flex-row items-stretch gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (searchSource === 'youtube') {
+                        handleSearchYouTubeLive();
+                      }
+                    }
+                  }}
+                  placeholder="Search Punjabi drill, apps, 4K movies, Quran tilawat..."
+                  className="w-full bg-neutral-900/90 text-xs sm:text-sm text-white placeholder-neutral-500 pl-10 pr-9 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/50 transition-all shadow-inner"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSearchSource('catalog');
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* YouTube Live Search CTA */}
+              <button
+                type="button"
+                onClick={() => handleSearchYouTubeLive()}
+                disabled={isSearchingYouTube}
+                className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-red-600/30 active:scale-95 transition-all shrink-0 border border-red-400/30"
+                title="Search Official YouTube Data API"
+              >
+                <Youtube className="w-4 h-4 fill-white" />
+                <span>{isSearchingYouTube ? 'Searching...' : 'Search YouTube'}</span>
+              </button>
+
+              {/* API Key Status / Toggle Button */}
+              <button
+                type="button"
+                onClick={() => setShowKeyManager(!showKeyManager)}
+                className={`px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all shrink-0 ${
+                  apiKey.trim()
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                    : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
+                }`}
+                title={apiKey.trim() ? 'YouTube API Key Active' : 'YouTube API Key Missing - Click to configure'}
+              >
+                {apiKey.trim() ? (
+                  <>
+                    <Key className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="hidden sm:inline">API Key Active</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    <span>API Key Missing</span>
+                  </>
+                )}
+              </button>
             </div>
 
             {/* Sort Dropdown */}
@@ -369,6 +587,156 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
               </select>
             </div>
           </div>
+
+          {/* ========================================================= */}
+          {/* CLEAR ERROR MESSAGE WHEN YOUTUBE API KEY IS MISSING       */}
+          {/* ========================================================= */}
+          {apiErrorMessage && (
+            <div className="max-w-6xl mx-auto p-4 rounded-2xl bg-amber-950/40 border-2 border-amber-500/60 text-amber-200 text-xs space-y-2.5 shadow-2xl backdrop-blur-md animate-in fade-in duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>YouTube Data API Notice</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setApiErrorMessage(null)}
+                  className="text-neutral-400 hover:text-white p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-neutral-300 leading-relaxed text-xs">
+                {apiErrorMessage}
+              </p>
+              <div className="pt-2 flex flex-col sm:flex-row items-center gap-2">
+                <input
+                  type="password"
+                  value={customKeyInput}
+                  onChange={(e) => setCustomKeyInput(e.target.value)}
+                  placeholder="Enter or paste YouTube Data API v3 Key..."
+                  className="w-full sm:flex-1 bg-black/80 border border-amber-500/40 text-xs text-white px-3.5 py-2.5 rounded-xl focus:outline-hidden focus:border-amber-400"
+                />
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={handleSaveCustomKey}
+                    className="flex-1 sm:flex-none px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs rounded-xl shadow-md transition-all active:scale-95"
+                  >
+                    Save & Test Key
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApiErrorMessage(null);
+                      setSearchSource('catalog');
+                    }}
+                    className="px-3 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs font-bold rounded-xl border border-neutral-700"
+                  >
+                    Use Verified Catalog
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Expandable Key Manager Panel */}
+          {showKeyManager && !apiErrorMessage && (
+            <div className="max-w-6xl mx-auto p-4 rounded-2xl bg-neutral-900/90 border border-neutral-800 text-xs space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <h4 className="font-bold text-white flex items-center gap-2">
+                  <Key className="w-4 h-4 text-cyan-400" />
+                  <span>Configure YouTube Data API v3 Key</span>
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setShowKeyManager(false)}
+                  className="text-neutral-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-neutral-400 text-[11px] leading-relaxed">
+                Provide your Google Cloud YouTube Data API v3 key for live search queries across YouTube.
+                Alternatively, standard verified embeds play for all movies, dramas, and songs without requiring a key.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="password"
+                  value={customKeyInput}
+                  onChange={(e) => setCustomKeyInput(e.target.value)}
+                  placeholder={apiKey ? 'API Key is currently set (paste new to replace)...' : 'Paste YouTube Data API key...'}
+                  className="flex-1 bg-black/60 border border-neutral-700 text-xs text-white px-3.5 py-2.5 rounded-xl focus:outline-hidden focus:border-cyan-400"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveCustomKey}
+                  className="px-4 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition-all active:scale-95"
+                >
+                  Save Key
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Quick Direct YouTube Video Streamer Bar */}
+          <div className="max-w-6xl mx-auto p-3 rounded-2xl bg-neutral-900/60 border border-neutral-800/80 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2 text-xs text-neutral-300">
+              <Link2 className="w-4 h-4 text-cyan-400 shrink-0" />
+              <span className="font-semibold text-[11px] sm:text-xs">
+                Stream any YouTube video in Movie Box (Zero 3rd-Party Blocks):
+              </span>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto flex-1 sm:max-w-md">
+              <input
+                type="text"
+                value={directUrlInput}
+                onChange={(e) => setDirectUrlInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handlePlayDirectUrl()}
+                placeholder="Paste YouTube link (https://youtube.com...) or Video ID"
+                className="w-full bg-black/60 text-xs text-white placeholder-neutral-500 px-3 py-1.5 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
+              />
+              <button
+                type="button"
+                onClick={handlePlayDirectUrl}
+                className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl shrink-0 active:scale-95 transition-all shadow-md"
+              >
+                Play
+              </button>
+            </div>
+          </div>
+
+          {/* Search Source Toggle Pills if live search was used */}
+          {youtubeLiveResults.length > 0 && (
+            <div className="max-w-6xl mx-auto flex items-center justify-between p-2.5 rounded-xl bg-red-950/20 border border-red-500/30 text-xs">
+              <div className="flex items-center gap-2">
+                <Youtube className="w-4 h-4 text-red-500" />
+                <span className="text-white font-bold">
+                  Showing {searchSource === 'youtube' ? 'YouTube Live Results' : 'Standard Catalog'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSearchSource('youtube')}
+                  className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
+                    searchSource === 'youtube' ? 'bg-red-600 text-white' : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  YouTube Live ({youtubeLiveResults.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSearchSource('catalog')}
+                  className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
+                    searchSource === 'catalog' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  Verified Catalog
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Categorization Pills (Songs, Apps, Dramas, Movies, Cartoons, Quran Tilawat) */}
           <div className="max-w-6xl mx-auto overflow-x-auto no-scrollbar pb-1">
@@ -410,24 +778,29 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
           {/* Marketplace Media Grid */}
           <div className="max-w-6xl mx-auto">
-            {filteredItems.length === 0 ? (
+            {displayedItems.length === 0 ? (
               <div className="py-16 text-center text-neutral-400 space-y-3">
                 <Search className="w-10 h-10 mx-auto text-neutral-600" />
-                <p className="text-sm font-bold text-neutral-300">No items matched your query</p>
+                <p className="text-sm font-bold text-neutral-300">
+                  {searchSource === 'youtube'
+                    ? 'No live YouTube results found for your query'
+                    : 'No items matched your query'}
+                </p>
                 <button
                   type="button"
                   onClick={() => {
                     setSearchQuery('');
                     setSelectedCategory('all');
+                    setSearchSource('catalog');
                   }}
                   className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-pink-400 rounded-xl transition-colors"
                 >
-                  Clear Filters
+                  Reset to Catalog
                 </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredItems.map((item) => {
+                {displayedItems.map((item) => {
                   const state = downloadStates[item.id] || {
                     progress: 0,
                     isDownloading: false,
@@ -614,18 +987,32 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             </div>
                           </div>
                         ) : (
-                          /* DEFAULT IDLE STATE: PROMINENT NEON GLOW DOWNLOAD BUTTON */
-                          <button
-                            type="button"
-                            onClick={() => handleStartDownload(item)}
-                            className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:via-purple-500 hover:to-cyan-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-pink-600/35 hover:shadow-cyan-500/40 active:scale-98 transition-all border border-pink-400/40 group/btn"
-                          >
-                            <Download className="w-4 h-4 text-white group-hover/btn:translate-y-0.5 transition-transform" />
-                            <span className="tracking-wide">Download Now</span>
-                            <span className="text-[10px] font-bold text-neutral-200/80 bg-black/30 px-1.5 py-0.2 rounded-md">
-                              {item.fileSize}
-                            </span>
-                          </button>
+                          /* DEFAULT IDLE STATE: WATCH MOVIE BOX STREAM & GLOW DOWNLOAD BUTTON */
+                          <div className="flex items-center gap-2">
+                            {item.youtubeId && (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewItem(item)}
+                                className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600/25 to-pink-600/25 hover:from-red-600/40 hover:to-pink-600/40 text-red-300 font-bold text-xs flex items-center justify-center gap-1.5 border border-red-500/40 shadow-md active:scale-98 transition-all shrink-0"
+                                title="Watch in official standard YouTube embed player"
+                              >
+                                <Youtube className="w-3.5 h-3.5 fill-red-500 text-red-500" />
+                                <span className="hidden sm:inline">Movie Box</span>
+                                <span className="sm:hidden">Play</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleStartDownload(item)}
+                              className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:via-purple-500 hover:to-cyan-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-pink-600/35 hover:shadow-cyan-500/40 active:scale-98 transition-all border border-pink-400/40 group/btn min-w-0"
+                            >
+                              <Download className="w-3.5 h-3.5 text-white shrink-0 group-hover/btn:translate-y-0.5 transition-transform" />
+                              <span className="tracking-wide truncate">Download</span>
+                              <span className="text-[10px] font-bold text-neutral-200/80 bg-black/30 px-1 py-0.2 rounded-md shrink-0">
+                                {item.fileSize}
+                              </span>
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -762,42 +1149,71 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
               </button>
             </div>
 
-            {/* Simulated Player Display */}
-            <div className="relative rounded-2xl overflow-hidden aspect-video bg-black flex items-center justify-center border border-neutral-800">
-              <img
-                src={previewItem.thumbnailUrl}
-                alt={previewItem.title}
-                className="w-full h-full object-cover opacity-60"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent flex flex-col justify-end p-4">
-                <div className="flex items-center justify-between text-xs text-neutral-200 font-bold mb-2">
-                  <span>Playing from Download Hub</span>
-                  <span className="text-cyan-400">{previewItem.qualityBadge}</span>
+            {/* Standard Embeddable YouTube Player (https://youtube.com...) */}
+            <div className="relative rounded-2xl overflow-hidden aspect-video bg-black flex items-center justify-center border border-neutral-800 shadow-2xl">
+              {previewItem.youtubeId ? (
+                <iframe
+                  src={`https://www.youtube.com/embed/${previewItem.youtubeId}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+                  title={previewItem.title}
+                  className="w-full h-full border-0 rounded-2xl"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              ) : (
+                <div className="w-full h-full relative flex flex-col items-center justify-center p-4 text-center bg-gradient-to-t from-black via-neutral-900 to-black">
+                  <img
+                    src={previewItem.thumbnailUrl}
+                    alt={previewItem.title}
+                    className="absolute inset-0 w-full h-full object-cover opacity-40"
+                  />
+                  <div className="relative z-10 flex flex-col items-center gap-2">
+                    <Film className="w-10 h-10 text-cyan-400 animate-pulse" />
+                    <p className="text-sm text-white font-bold">{previewItem.title}</p>
+                    <p className="text-xs text-neutral-400">Offline Local Storage Item</p>
+                  </div>
                 </div>
-                {/* Audio/Video Scrub Bar */}
-                <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden mb-2">
-                  <div className="w-2/5 h-full bg-gradient-to-r from-pink-500 to-cyan-400 rounded-full animate-pulse" />
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-neutral-400 tabular-nums">
-                  <span>01:14</span>
-                  <span>{previewItem.durationOrVersion}</span>
-                </div>
-              </div>
+              )}
             </div>
 
-            <div className="flex items-center justify-between pt-1">
-              <span className="text-xs text-neutral-400">File size: {previewItem.fileSize}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  onShowToast(`Exported "${previewItem.title}" to device storage!`);
-                  setPreviewItem(null);
-                }}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Export / Share</span>
-              </button>
+            {/* Official Standard YouTube Embed Trust Banner */}
+            <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-neutral-950 border border-neutral-800 text-[11px]">
+              <div className="flex items-center gap-1.5 text-neutral-300">
+                <Youtube className="w-4 h-4 text-red-500 fill-red-500" />
+                <span className="font-semibold">Official Standard Embed Player</span>
+              </div>
+              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> Web & APK Safe
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between pt-1 gap-2 flex-wrap">
+              <span className="text-xs text-neutral-400">
+                {previewItem.qualityBadge} · {previewItem.fileSize}
+              </span>
+              <div className="flex items-center gap-2">
+                {previewItem.youtubeId && (
+                  <a
+                    href={`https://www.youtube.com/watch?v=${previewItem.youtubeId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 font-bold text-xs flex items-center gap-1.5 border border-red-500/40 transition-colors"
+                  >
+                    <Youtube className="w-3.5 h-3.5 fill-red-400" />
+                    <span>Watch on YouTube</span>
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleStartDownload(previewItem);
+                    onShowToast(`Downloading "${previewItem.title}" to device...`);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Now</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

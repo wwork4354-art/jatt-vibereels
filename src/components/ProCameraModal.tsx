@@ -72,6 +72,21 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const timerIntervalRef = useRef<number | null>(null);
+  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const [cameraBlockedInWebView, setCameraBlockedInWebView] = useState<boolean>(false);
+
+  // Fallback native camera capture handler
+  const handleNativeCameraCaptured = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setRecordedClipUrl(url);
+      const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      setClipTitle(cleanName || `4K Mobile Reel #${Math.floor(Math.random() * 900 + 100)}`);
+      onShowToast('Captured from native device camera! Preview & publish below.');
+    }
+    e.target.value = '';
+  };
 
   // Initialize or teardown camera stream
   useEffect(() => {
@@ -83,6 +98,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       setIsRecording(false);
       setRecordingSeconds(0);
       setRecordedClipUrl(null);
+      setCameraBlockedInWebView(false);
       return;
     }
 
@@ -91,8 +107,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     async function setupCamera() {
       try {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          setIsSimulatedFeed(true);
-          return;
+          throw new Error('Live mediaDevices.getUserMedia not supported in this browser or WebView');
         }
 
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -111,11 +126,16 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             videoPreviewRef.current.play().catch(() => {});
           }
           setIsSimulatedFeed(false);
+          setCameraBlockedInWebView(false);
         }
-      } catch {
-        // Fallback to simulated cyber pro viewfinder
+      } catch (err) {
+        console.warn('Live camera access blocked by browser or WebView:', err);
+        // Fallback to simulated cyber pro viewfinder & automatically trigger native camera input
         if (isMounted) {
           setIsSimulatedFeed(true);
+          setCameraBlockedInWebView(true);
+          onShowToast('Live camera blocked in WebView/Browser. Opening native mobile camera...');
+          nativeCameraInputRef.current?.click();
         }
       }
     }
@@ -129,7 +149,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaStreamRef.current = null;
       }
     };
-  }, [isOpen, facingMode]);
+  }, [isOpen, facingMode, onShowToast]);
 
   // AI Motion Tracker gentle drift simulation
   useEffect(() => {
@@ -503,22 +523,45 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             ) : (
               <div
                 style={getFilterStyle()}
-                className="w-full h-full relative overflow-hidden bg-gradient-to-br from-purple-950 via-neutral-950 to-cyan-950 flex items-center justify-center"
+                className="w-full h-full relative overflow-hidden bg-gradient-to-br from-purple-950 via-neutral-950 to-cyan-950 flex items-center justify-center p-5"
               >
+                {/* Fallback Native Camera Input (<input type="file" accept="video/*,image/*" capture="environment">) */}
+                <input
+                  ref={nativeCameraInputRef}
+                  type="file"
+                  accept="video/*,image/*"
+                  capture="environment"
+                  className="hidden"
+                  style={{ display: 'none' }}
+                  onChange={handleNativeCameraCaptured}
+                />
+
                 {/* Cyberpunk Animated Studio Backing */}
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-pink-600/20 via-cyan-900/10 to-black/90 pointer-events-none" />
-                <div className="relative z-10 flex flex-col items-center gap-3 p-6 text-center">
-                  <div className="w-20 h-20 rounded-full bg-neutral-900/80 border-2 border-pink-500/50 flex items-center justify-center text-pink-400 shadow-xl shadow-pink-500/25">
-                    <Camera className="w-10 h-10 animate-pulse" />
+                <div className="relative z-10 flex flex-col items-center gap-3 max-w-xs text-center">
+                  <div className="w-18 h-18 rounded-full bg-neutral-900/80 border-2 border-pink-500/50 flex items-center justify-center text-pink-400 shadow-xl shadow-pink-500/25">
+                    <Camera className="w-9 h-9 animate-pulse" />
                   </div>
                   <div>
                     <h3 className="text-sm font-black text-white tracking-wide">
-                      PRO 4K STUDIO SENSOR
+                      {cameraBlockedInWebView ? 'LIVE WEBCAM RESTRICTED' : 'PRO 4K STUDIO SENSOR'}
                     </h3>
-                    <p className="text-xs text-cyan-400 font-semibold mt-0.5">
-                      10-bit HDR · ProRes 422 HQ Ready
+                    <p className="text-xs text-neutral-300 font-medium mt-1 leading-relaxed">
+                      {cameraBlockedInWebView
+                        ? 'Browser/APK WebView blocked live camera stream. Tap below to capture directly with your mobile phone camera app!'
+                        : '10-bit HDR · ProRes 422 HQ Ready'}
                     </p>
                   </div>
+
+                  {/* Native Camera Direct Launcher Button */}
+                  <button
+                    type="button"
+                    onClick={() => nativeCameraInputRef.current?.click()}
+                    className="mt-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:from-pink-500 hover:to-amber-400 text-white font-bold text-xs flex items-center gap-2 shadow-xl shadow-pink-600/30 active:scale-95 transition-all border border-pink-300/40"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>Open Phone Native Camera</span>
+                  </button>
                 </div>
               </div>
             )}

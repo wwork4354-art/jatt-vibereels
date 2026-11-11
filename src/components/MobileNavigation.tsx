@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Home,
   Compass,
@@ -12,6 +12,7 @@ import {
   Radio,
   Download,
   Camera,
+  Film,
   X,
   LogOut,
   Sparkles,
@@ -27,6 +28,7 @@ interface MobileNavigationProps {
   onOpenTrends: () => void;
   onOpenLive: () => void;
   onOpenProCamera: () => void;
+  onQuickVideoUpload?: (file: File) => void;
   savedCount: number;
   currentUser: UserAccount | null;
   onOpenLogin: () => void;
@@ -42,6 +44,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onOpenTrends,
   onOpenLive,
   onOpenProCamera,
+  onQuickVideoUpload,
   savedCount,
   currentUser,
   onOpenLogin,
@@ -50,6 +53,33 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onLogout,
 }) => {
   const [isMobileProfileOpen, setIsMobileProfileOpen] = useState(false);
+  const fallbackCameraInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Attempt live webcam first via getUserMedia; if blocked by browser/webview, automatically trigger native camera capture
+  const handleCameraClick = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Live mediaDevices.getUserMedia not supported in this browser or WebView');
+      }
+      // Attempt live camera access
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      // Live camera access allowed: clean up probe tracks and open Pro Camera interface
+      stream.getTracks().forEach((track) => track.stop());
+      onOpenProCamera();
+    } catch (err) {
+      console.warn('Live camera access blocked by browser or WebView:', err);
+      // Automatically trigger fallback file input (<input type="file" accept="video/*,image/*" capture="environment">)
+      fallbackCameraInputRef.current?.click();
+    }
+  };
+
+  const handleFallbackCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onQuickVideoUpload?.(file);
+    }
+    e.target.value = '';
+  };
 
 
   return (
@@ -105,19 +135,19 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           >
             For You
           </button>
-          {/* Downloads Hub Button */}
+          {/* Movie Box & Downloads Hub Button */}
           <button
             type="button"
             onClick={() => onSelectTab('downloads')}
             className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 transition-all ${
               currentTab === 'downloads'
-                ? 'bg-gradient-to-r from-pink-600 to-cyan-600 text-white shadow-md border border-cyan-400'
+                ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white shadow-md border border-cyan-400'
                 : 'bg-cyan-600/15 border border-cyan-500/30 text-cyan-300'
             }`}
-            title="Open All-in-One Download Hub"
+            title="Open Movie Box & Download Hub (Movies, Dramas, Songs, Apps, Quran)"
           >
-            <Download className="w-2.5 h-2.5 text-cyan-400" />
-            <span>Downloads</span>
+            <Film className="w-2.5 h-2.5 text-cyan-400" />
+            <span>Movie Box</span>
           </button>
         </div>
 
@@ -184,37 +214,48 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           <span className="text-[10px] font-bold text-amber-300">Trends</span>
         </button>
 
-        {/* Central "+" Shutter Button: Triggers Heavy Pro Camera Interface */}
+        {/* Fallback Native Camera Input (<input type="file" accept="video/*,image/*" capture="environment">) */}
+        <input
+          ref={fallbackCameraInputRef}
+          type="file"
+          accept="video/*,image/*"
+          capture="environment"
+          className="hidden"
+          style={{ display: 'none' }}
+          onChange={handleFallbackCameraCapture}
+        />
+
+        {/* Central Camera Shutter Button: Attempts live webcam first; falls back automatically to native device camera */}
         <button
           type="button"
-          onClick={onOpenProCamera}
+          onClick={handleCameraClick}
           className="relative flex items-center justify-center p-1 active:scale-90 transition-transform group"
-          aria-label="Launch Heavy Pro Camera"
-          title="Launch Heavy Pro 4K Camera"
+          aria-label="Launch Camera"
+          title="Open Live Camera or Native Device Camera"
         >
           {/* Outer Breathing Neon Halo */}
-          <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-pink-500/40 via-purple-600/40 to-cyan-400/40 blur-xs group-hover:scale-110 transition-transform" />
+          <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-pink-500/40 via-purple-600/40 to-cyan-400/40 blur-xs group-hover:scale-110 transition-transform animate-pulse" />
 
           {/* Heavy Bezel Shutter */}
-          <div className="relative w-12 h-9 rounded-xl bg-gradient-to-tr from-pink-600 via-rose-500 to-amber-500 p-0.5 shadow-lg shadow-pink-600/40 flex items-center justify-center border border-pink-300/40">
-            <div className="w-full h-full bg-black/40 rounded-[10px] flex items-center justify-center gap-0.5 text-white">
-              <Camera className="w-4 h-4 text-white" />
-              <Plus className="w-3.5 h-3.5 stroke-[3] text-pink-300" />
+          <div className="relative w-12 h-9 rounded-xl bg-gradient-to-tr from-pink-600 via-rose-500 to-amber-500 p-0.5 shadow-lg shadow-pink-600/50 flex items-center justify-center border border-pink-300/40">
+            <div className="w-full h-full bg-black/40 rounded-[10px] flex items-center justify-center gap-1 text-white">
+              <Camera className="w-4 h-4 text-white group-hover:text-pink-200 transition-colors" />
+              <Plus className="w-3 h-3 stroke-[3] text-pink-300" />
             </div>
           </div>
         </button>
 
-        {/* Dedicated Downloads Tab Button */}
+        {/* Dedicated Movie Box & Downloads Tab Button */}
         <button
           type="button"
           onClick={() => onSelectTab('downloads')}
           className={`flex flex-col items-center gap-0.5 min-w-[48px] min-h-[44px] justify-center transition-colors ${
             currentTab === 'downloads' ? 'text-cyan-400 font-bold' : 'text-neutral-400 hover:text-white'
           }`}
-          title="All-in-One Download Hub"
+          title="Movie Box & All-in-One Media Hub"
         >
-          <Download className="w-5 h-5 text-cyan-400" />
-          <span className="text-[10px]">Downloads</span>
+          <Film className="w-5 h-5 text-cyan-400" />
+          <span className="text-[10px]">Movie Box</span>
         </button>
 
         <button

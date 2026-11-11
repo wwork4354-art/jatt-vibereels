@@ -10,6 +10,7 @@ import {
   Radio,
   Download,
   Camera,
+  Film,
   ChevronDown,
   User,
 } from 'lucide-react';
@@ -108,7 +109,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span className="sm:hidden">Live</span>
         </button>
 
-        {/* All-in-One Download Hub Button */}
+        {/* Movie Box & Download Hub Button */}
         {onOpenDownloads && (
           <button
             type="button"
@@ -118,10 +119,10 @@ export const TopBar: React.FC<TopBarProps> = ({
                 ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white shadow-md shadow-cyan-500/25 border border-cyan-400'
                 : 'bg-neutral-900/90 hover:bg-neutral-800 text-cyan-300 border border-cyan-500/35 hover:border-cyan-400/60 shadow-xs'
             }`}
-            title="Open All-in-One Download Hub (Songs, Apps, Dramas, Movies, Cartoons, Quran)"
+            title="Open Movie Box & Download Hub (Movies, Dramas, Songs, Apps, Quran)"
           >
-            <Download className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="hidden sm:inline">Downloads</span>
+            <Film className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Movie Box</span>
             <span className="text-[9px] font-black uppercase px-1 py-0.2 rounded-sm bg-cyan-400/20 text-cyan-300 hidden md:inline">
               Hub
             </span>

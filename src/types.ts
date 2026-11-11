@@ -82,6 +82,8 @@ export interface DownloadItem {
   rating: number;
   tags: string[];
   description?: string;
+  youtubeId?: string;
+  youtubeUrl?: string;
 }
 
 export interface TrendingHashtag {

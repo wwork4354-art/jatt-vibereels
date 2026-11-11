@@ -28,6 +28,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.9,
     tags: ['Punjabi Drill', 'Bhangra Bass', 'Club Mix'],
     description: 'Heavy bass Punjabi anthem remastered in 24-bit 96kHz lossless audio studio quality.',
+    youtubeId: 'x7qKKtX_Nvg',
   },
   {
     id: 'song-2',
@@ -45,6 +46,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.8,
     tags: ['Desi Drill', 'Trap Beat', '808 Bass'],
     description: 'High energy 808 club trap with Punjabi folk acoustic elements and punchy kick drums.',
+    youtubeId: 'dCmp56tSSmA',
   },
   {
     id: 'song-3',
@@ -62,6 +64,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.95,
     tags: ['Sufi Chill', 'Harmonium', 'Soulful'],
     description: 'Deep soulful acoustic session featuring live tabla, sitar harmonics, and warm analog vocals.',
+    youtubeId: '6-n_szx2XRE',
   },
 
   // ================= APPS =================
@@ -134,6 +137,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.85,
     tags: ['Punjabi Drama', 'High Drama', 'Family Saga'],
     description: 'The critically acclaimed Punjabi serial following the clash of traditions and modern rivalry.',
+    youtubeId: 'a3p1_0N748k',
   },
   {
     id: 'drama-2',
@@ -151,6 +155,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.9,
     tags: ['Romance', 'Heartbreak', 'Viral Hit'],
     description: 'The record-breaking drama finale that shattered television ratings across South Asia.',
+    youtubeId: 'sN1JzDqQz3A',
   },
 
   // ================= MOVIES =================
@@ -170,6 +175,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.95,
     tags: ['Comedy', 'Superhit', 'Family'],
     description: 'The highest-grossing Punjabi film featuring non-stop comedy of errors, witty dialogues, and fun songs.',
+    youtubeId: 'b7C3z3wB9Fw',
   },
   {
     id: 'movie-2',
@@ -187,6 +193,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.7,
     tags: ['Action Thriller', 'Crime', 'Gangster'],
     description: 'Gripping prison drama and gangland retribution with relentless action choreography.',
+    youtubeId: '2Z3kX4fXJQE',
   },
 
   // ================= CARTOONS =================
@@ -206,6 +213,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.85,
     tags: ['Kids', 'Adventure', 'Action Anime'],
     description: 'Bheem and his friends travel to a futuristic neon world to save the sacred crystal.',
+    youtubeId: 'v1-P2i6u_qU',
   },
   {
     id: 'cartoon-2',
@@ -223,6 +231,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.75,
     tags: ['Comedy', 'Slapstick', 'Family Fun'],
     description: 'Hilarious misadventures through mustard fields and Punjabi dhabas filled with samosa feasts.',
+    youtubeId: '63i2nU0e_yM',
   },
 
   // ================= QURAN TILAWAT =================
@@ -242,6 +251,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.99,
     tags: ['Surah Rahman', 'Mishary Alafasy', 'Heart Soothing'],
     description: 'Sublime, heart-touching recitation of Surah Ar-Rahman recorded in high-definition acoustic fidelity.',
+    youtubeId: 'Vq9s8N4cQ4Q',
   },
   {
     id: 'quran-2',
@@ -259,6 +269,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.98,
     tags: ['Surah Mulk', 'Protection', 'Sudais'],
     description: 'Awe-inspiring evening recitation of Surah Al-Mulk from Masjid al-Haram, Mecca.',
+    youtubeId: '7B3Lg2mX1wY',
   },
   {
     id: 'quran-3',
@@ -276,6 +287,7 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.99,
     tags: ['Ayat al-Kursi', 'Dua', 'Peace & Protection'],
     description: 'Continuous continuous recitation for inner peace, home blessing, and spiritual tranquility.',
+    youtubeId: '1zK0_0-pAec',
   },
   {
     id: 'quran-4',
@@ -293,5 +305,6 @@ export const INITIAL_DOWNLOADS: DownloadItem[] = [
     rating: 4.99,
     tags: ['Surah Yaseen', 'Abdul Basit', 'Legendary Recitation'],
     description: 'Timeless masterpiece recitation by the golden throat of Egypt, digitally cleaned with warm tone enhancement.',
+    youtubeId: '6L5Wv8Yx9pE',
   },
 ];

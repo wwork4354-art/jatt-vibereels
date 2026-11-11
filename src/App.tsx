@@ -318,6 +318,98 @@ export default function App() {
     }, 100);
   };
 
+  // Quick Mobile Gallery Video Selection Handler (HTML5 file input + URL.createObjectURL)
+  const handleQuickGalleryUpload = useCallback(
+    (file: File) => {
+      try {
+        const videoPlayableUrl = URL.createObjectURL(file);
+        const rawName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+        const cleanTitle = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+
+        const newPost: VideoPost = {
+          id: `reel-gallery-${Date.now()}`,
+          title: cleanTitle,
+          description: `${cleanTitle} 🎬✨ #mobilegallery #jattswag #vibereels`,
+          hashtags: ['mobilegallery', 'vibereels', 'jattstyle', 'trending'],
+          videoUrl: videoPlayableUrl,
+          posterUrl: 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=600&q=80',
+          fallbackGradient: 'from-pink-900/40 via-purple-900/30 to-black',
+          category: 'trending',
+          creator: {
+            name: currentUser?.name || 'Local Creator',
+            username: currentUser?.username || 'user_' + Math.floor(1000 + Math.random() * 9000),
+            avatar: currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+            isVerified: currentUser?.role === 'admin',
+            isFollowing: false,
+          },
+          sound: {
+            title: `Gallery Sound - ${cleanTitle.slice(0, 24)}`,
+            artist: currentUser?.name || 'Device Audio',
+            trackType: 'tokyo_drift',
+          },
+          stats: {
+            likes: 1,
+            comments: 1,
+            shares: 0,
+            saves: 0,
+          },
+          isLiked: true,
+          isSaved: false,
+          commentsList: [
+            {
+              id: `comment-welc-${Date.now()}`,
+              user: {
+                name: 'Jatt VibeReels',
+                username: 'jattreels',
+                avatar: 'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
+                isVerified: true,
+              },
+              text: 'Uploaded from mobile gallery! Auto-playing live now in vertical reel mode 🔥',
+              timestamp: 'Just now',
+              likes: 1,
+              isLiked: false,
+            },
+          ],
+        };
+
+        // 1. Prepend this new video to the top of the main video feed array
+        setVideos((prev) => [newPost, ...prev]);
+
+        // 2. Switch to main vertical feed mode & reset tag filters
+        setSelectedTag(null);
+        setCurrentTab('foryou');
+        setActiveIndex(0);
+        setIsMuted(false);
+        soundEngine.setMuted(false);
+
+        // 3. Increment video count for current logged-in user
+        if (currentUser) {
+          const updatedUsers = users.map((u) =>
+            u.id === currentUser.id ? { ...u, videosCount: u.videosCount + 1 } : u
+          );
+          updateUsers(updatedUsers);
+          updateCurrentUser({ ...currentUser, videosCount: currentUser.videosCount + 1 });
+        }
+
+        // 4. Automatically scroll to top so activeIndex 0 immediately auto-plays full-screen
+        setTimeout(() => {
+          if (containerRef.current) {
+            containerRef.current.scrollTo({
+              top: 0,
+              behavior: 'smooth',
+            });
+          }
+        }, 50);
+
+        showToast('Selected video from gallery! Playing now in full-screen vertical reel mode 🎬🔥');
+      } catch (err) {
+        console.error('Failed to create playable URL for gallery video:', err);
+        showToast('Could not load the selected video file.');
+      }
+    },
+    [currentUser, users, updateUsers, updateCurrentUser, showToast]
+  );
+
   // User Management Handlers (Admin Panel)
   const handleUpdateUserRole = (userId: string, newRole: UserRole) => {
     const updated = users.map((u) => (u.id === userId ? { ...u, role: newRole } : u));
@@ -437,6 +529,7 @@ export default function App() {
             onOpenTrends={() => setIsTrendsOpen(true)}
             onOpenLive={handleOpenLive}
             onOpenProCamera={() => setIsProCameraOpen(true)}
+            onQuickVideoUpload={handleQuickGalleryUpload}
             savedCount={savedCount}
             currentUser={currentUser}
             onOpenLogin={() => {
