@@ -32,16 +32,35 @@ import { DownloadHub } from './components/DownloadHub';
 import { ProCameraModal } from './components/ProCameraModal';
 import { CreatorProfileView } from './components/CreatorProfileView';
 import { soundEngine } from './utils/soundEngine';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
+import {
+  USER_PROFILE_ID_KEY,
+  SupabasePostRow,
+  getOrCreateUserProfileId,
+  getStoredLikedPostIds,
+  saveStoredLikedPostIds,
+  fetchGlobalPosts,
+  uploadMediaToReelsBucket,
+  createGlobalPostInSupabase,
+  updatePostLikesInSupabase,
+  upsertUserProfileInSupabase,
+  mapSupabaseRowToVideoPost,
+} from './lib/supabaseService';
 
 const CREATOR_PROFILE_STORAGE_KEY = 'jatt_creator_profile';
 
 const getInitialCreatorProfile = (user: UserAccount | null): CreatorProfileData => {
+  const profileId = getOrCreateUserProfileId();
+
   try {
     const raw = localStorage.getItem(CREATOR_PROFILE_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.name === 'string' && typeof parsed.username === 'string') {
+        const resolvedId = typeof parsed.id === 'string' && parsed.id ? parsed.id : profileId;
+        localStorage.setItem(USER_PROFILE_ID_KEY, resolvedId);
         return {
+          id: resolvedId,
           name: parsed.name,
           username: parsed.username,
           bio: parsed.bio || '',
@@ -55,6 +74,7 @@ const getInitialCreatorProfile = (user: UserAccount | null): CreatorProfileData 
   }
 
   return {
+    id: profileId,
     name: user?.name || 'Jatt Creator',
     username: user?.username || 'jatt_official',
     bio: user?.bio || 'Creating neon vibes & Punjabi reels on Jatt VibeReels.',
@@ -111,15 +131,88 @@ export default function App() {
     }, 2400);
   }, []);
 
-  // Update creator profile and persist to localStorage
+  // Load global posts from Supabase and listen for real-time inserts/likes
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadGlobalFeed = async () => {
+      const globalPosts = await fetchGlobalPosts(creatorProfile.id);
+      if (isCancelled || globalPosts.length === 0) return;
+
+      setVideos((prev) => {
+        const globalIds = new Set(globalPosts.map((p) => p.id));
+        const remaining = prev.filter((v) => !globalIds.has(v.id));
+        return [...globalPosts, ...remaining];
+      });
+    };
+
+    loadGlobalFeed();
+
+    if (!supabase || !isSupabaseConfigured) {
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    const client = supabase;
+    const channel = client
+      .channel('global-posts-feed')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'posts' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' && payload.new) {
+            const row = payload.new as SupabasePostRow;
+            if (!row?.media_url) return;
+            const likedIds = getStoredLikedPostIds();
+            const mapped = mapSupabaseRowToVideoPost(row, likedIds, creatorProfile.id);
+            setVideos((prev) => {
+              if (prev.some((v) => v.id === mapped.id)) return prev;
+              return [mapped, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE' && payload.new) {
+            const row = payload.new as SupabasePostRow;
+            const rowId = String(row.id);
+            setVideos((prev) =>
+              prev.map((v) =>
+                v.id === rowId
+                  ? {
+                      ...v,
+                      description: row.caption || v.description,
+                      stats: {
+                        ...v.stats,
+                        likes:
+                          typeof row.likes_count === 'number'
+                            ? Math.max(0, row.likes_count)
+                            : v.stats.likes,
+                      },
+                    }
+                  : v
+              )
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isCancelled = true;
+      client.removeChannel(channel);
+    };
+  }, [creatorProfile.id]);
+
+  // Update creator profile and persist to localStorage + Supabase
   const handleUpdateCreatorProfile = useCallback(
     (updated: CreatorProfileData) => {
       setCreatorProfile(updated);
       try {
+        localStorage.setItem(USER_PROFILE_ID_KEY, updated.id);
         localStorage.setItem(CREATOR_PROFILE_STORAGE_KEY, JSON.stringify(updated));
       } catch {
         // ignore storage errors
       }
+
+      void upsertUserProfileInSupabase(updated);
 
       if (currentUser) {
         const updatedCurrentUser: UserAccount = {
@@ -138,7 +231,7 @@ export default function App() {
 
       setVideos((prev) =>
         prev.map((v) =>
-          v.isUserUploaded
+          v.userId === updated.id || v.isUserUploaded
             ? {
                 ...v,
                 creator: {
@@ -217,6 +310,48 @@ export default function App() {
     }
   }, [activeIndex, displayedVideos.length]);
 
+  // Like toggle (persists liked post IDs locally + updates likes_count globally in Supabase)
+  const handleLikeToggle = useCallback(
+    (id: string) => {
+      const targetVideo = videos.find((v) => v.id === id);
+      if (!targetVideo) return;
+
+      const willLike = !targetVideo.isLiked;
+      const nextLikes = Math.max(
+        0,
+        willLike ? targetVideo.stats.likes + 1 : targetVideo.stats.likes - 1
+      );
+
+      const likedIds = getStoredLikedPostIds();
+      if (willLike) {
+        likedIds.add(id);
+      } else {
+        likedIds.delete(id);
+      }
+      saveStoredLikedPostIds(likedIds);
+
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.id === id
+            ? {
+                ...v,
+                isLiked: willLike,
+                stats: {
+                  ...v.stats,
+                  likes: nextLikes,
+                },
+              }
+            : v
+        )
+      );
+
+      if (targetVideo.isSupabasePost) {
+        void updatePostLikesInSupabase(id, nextLikes);
+      }
+    },
+    [videos]
+  );
+
   // Global Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -248,27 +383,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeIndex, displayedVideos, scrollToIndex, showToast]);
-
-  // Like toggle
-  const handleLikeToggle = (id: string) => {
-    setVideos((prev) =>
-      prev.map((v) => {
-        if (v.id === id) {
-          const willLike = !v.isLiked;
-          return {
-            ...v,
-            isLiked: willLike,
-            stats: {
-              ...v.stats,
-              likes: willLike ? v.stats.likes + 1 : v.stats.likes - 1,
-            },
-          };
-        }
-        return v;
-      })
-    );
-  };
+  }, [activeIndex, displayedVideos, scrollToIndex, showToast, handleLikeToggle]);
 
   // Save/Bookmark toggle
   const handleSaveToggle = (id: string) => {
@@ -378,10 +493,10 @@ export default function App() {
 
   // Upload new post success
   const handleUploadSuccess = (newPost: VideoPost) => {
-    setVideos((prev) => [newPost, ...prev]);
+    setVideos((prev) => [newPost, ...prev.filter((v) => v.id !== newPost.id)]);
     setSelectedTag(null);
     setCurrentTab('foryou');
-    showToast('Reel published successfully!');
+    showToast('Published to global feed!');
 
     // Increment video count for current user
     if (currentUser) {
@@ -397,75 +512,97 @@ export default function App() {
     }, 100);
   };
 
-  // Quick Mobile Upload Handler (Live Recording with capture="environment" or Gallery without capture)
+  // Quick Mobile Upload Handler (Live Recording or Gallery Video/Image -> Supabase Storage + posts table)
   const handleQuickGalleryUpload = useCallback(
-    (file: File, source?: 'live' | 'gallery') => {
+    async (file: File, source?: 'live' | 'gallery') => {
       try {
-        const videoPlayableUrl = URL.createObjectURL(file);
+        const isImage = file.type.startsWith('image/');
+        const mediaType: 'video' | 'image' = isImage ? 'image' : 'video';
+        const localPreviewUrl = URL.createObjectURL(file);
         const isLive = source === 'live';
-        const rawName = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') : 'Video';
+        const rawName = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') : isImage ? 'Photo' : 'Video';
         const cleanTitle = isLive
           ? `Live Video (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`
           : rawName.charAt(0).toUpperCase() + rawName.slice(1);
 
-        const newPost: VideoPost = {
-          id: `reel-${isLive ? 'live' : 'gallery'}-${Date.now()}`,
-          title: cleanTitle,
-          description: isLive
-            ? `${cleanTitle} 🎥 Recorded fresh with live mobile camera #liverecord #jattswag #vibereels`
-            : `${cleanTitle} 🎬✨ Picked from device gallery #mobilegallery #jattswag #vibereels`,
-          hashtags: isLive
-            ? ['liverecord', 'camera', 'vibereels', 'jattstyle']
-            : ['mobilegallery', 'vibereels', 'jattstyle', 'trending'],
-          videoUrl: videoPlayableUrl,
-          posterUrl: 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=600&q=80',
-          fallbackGradient: isLive
-            ? 'from-rose-900/50 via-pink-900/40 to-black'
-            : 'from-pink-900/40 via-purple-900/30 to-black',
-          category: 'trending',
-          isUserUploaded: true,
-          creator: {
-            name: currentUser?.name || creatorProfile.name,
-            username: currentUser?.username || creatorProfile.username,
-            avatar: currentUser?.avatar || creatorProfile.avatar,
-            isVerified: currentUser?.role === 'admin',
-            isFollowing: false,
-            bio: currentUser?.bio || creatorProfile.bio,
-          },
-          sound: {
-            title: isLive ? `Live Mic Audio - ${cleanTitle.slice(0, 24)}` : `Gallery Sound - ${cleanTitle.slice(0, 24)}`,
-            artist: currentUser?.name || creatorProfile.name,
-            trackType: 'tokyo_drift',
-          },
-          stats: {
-            likes: 1,
-            comments: 1,
-            shares: 0,
-            saves: 0,
-          },
-          isLiked: true,
-          isSaved: false,
-          commentsList: [
-            {
-              id: `comment-welc-${Date.now()}`,
-              user: {
-                name: 'Jatt VibeReels',
-                username: 'jattreels',
-                avatar: 'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
-                isVerified: true,
-              },
-              text: isLive
-                ? 'Recorded live with phone camera! Playing now in vertical reel mode 🎥🔥'
-                : 'Uploaded from mobile gallery! Auto-playing live now in vertical reel mode 🎬🔥',
-              timestamp: 'Just now',
-              likes: 1,
-              isLiked: false,
-            },
-          ],
-        };
+        const captionText = isLive
+          ? `${cleanTitle} 🎥 Recorded fresh with live mobile camera #liverecord #jattswag #vibereels`
+          : isImage
+          ? `${cleanTitle} 📸 Shared on Jatt VibeReels #photo #jattswag #vibereels`
+          : `${cleanTitle} 🎬✨ Picked from device gallery #mobilegallery #jattswag #vibereels`;
 
-        // 1. Prepend this new video to the top of the main video feed array
-        setVideos((prev) => [newPost, ...prev]);
+        if (isSupabaseConfigured) {
+          showToast(`Uploading ${isImage ? 'image' : 'video'} to global feed...`);
+        }
+
+        const uploadedUrl = await uploadMediaToReelsBucket(file, 'posts', file.name);
+        const finalMediaUrl = uploadedUrl || localPreviewUrl;
+
+        const authorName = currentUser?.name || creatorProfile.name;
+        const authorUsername = currentUser?.username || creatorProfile.username;
+        const authorAvatar = currentUser?.avatar || creatorProfile.avatar;
+
+        const supabasePost = await createGlobalPostInSupabase({
+          userId: creatorProfile.id,
+          username: authorUsername,
+          displayName: authorName,
+          avatarUrl: authorAvatar,
+          mediaUrl: finalMediaUrl,
+          mediaType,
+          caption: captionText,
+        });
+
+        const finalPost: VideoPost =
+          supabasePost || {
+            id: `reel-${isLive ? 'live' : 'gallery'}-${Date.now()}`,
+            title: cleanTitle,
+            description: captionText,
+            hashtags: isLive
+              ? ['liverecord', 'camera', 'vibereels', 'jattstyle']
+              : isImage
+              ? ['photo', 'vibereels', 'jattstyle', 'trending']
+              : ['mobilegallery', 'vibereels', 'jattstyle', 'trending'],
+            videoUrl: finalMediaUrl,
+            posterUrl: isImage
+              ? finalMediaUrl
+              : 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=600&q=80',
+            fallbackGradient: isLive
+              ? 'from-rose-900/50 via-pink-900/40 to-black'
+              : 'from-pink-900/40 via-purple-900/30 to-black',
+            category: 'trending',
+            userId: creatorProfile.id,
+            mediaType,
+            isUserUploaded: true,
+            creator: {
+              name: authorName,
+              username: authorUsername,
+              avatar: authorAvatar,
+              isVerified: currentUser?.role === 'admin',
+              isFollowing: false,
+              bio: currentUser?.bio || creatorProfile.bio,
+            },
+            sound: {
+              title: isLive
+                ? `Live Mic Audio - ${cleanTitle.slice(0, 24)}`
+                : isImage
+                ? `Photo Vibe - ${cleanTitle.slice(0, 24)}`
+                : `Gallery Sound - ${cleanTitle.slice(0, 24)}`,
+              artist: authorName,
+              trackType: 'tokyo_drift',
+            },
+            stats: {
+              likes: 0,
+              comments: 0,
+              shares: 0,
+              saves: 0,
+            },
+            isLiked: false,
+            isSaved: false,
+            commentsList: [],
+          };
+
+        // 1. Prepend this new post to the top of the main feed array (deduping realtime)
+        setVideos((prev) => [finalPost, ...prev.filter((v) => v.id !== finalPost.id)]);
 
         // 2. Switch to main vertical feed mode & reset tag filters
         setSelectedTag(null);
@@ -494,13 +631,15 @@ export default function App() {
         }, 50);
 
         showToast(
-          isLive
-            ? 'Recorded live video! Playing now in For You feed 🎥🔥'
-            : 'Selected video from gallery! Playing now in full-screen vertical reel mode 🎬🔥'
+          supabasePost
+            ? `Published ${isImage ? 'photo' : 'video'} to global feed!`
+            : isLive
+            ? 'Recorded live video! Playing now in For You feed'
+            : `Selected ${isImage ? 'photo' : 'video'}! Playing now in For You feed`
         );
       } catch (err) {
-        console.error('Failed to create playable URL for video:', err);
-        showToast('Could not load the selected video file.');
+        console.error('Failed to process uploaded media:', err);
+        showToast('Could not upload the selected media file.');
       }
     },
     [currentUser, creatorProfile, users, updateUsers, updateCurrentUser, showToast]
@@ -551,11 +690,19 @@ export default function App() {
 
   // Real-time total likes & following count for Creator Profile
   const userUploadedVideos = videos.filter(
-    (v) => v.isUserUploaded || v.creator.username === creatorProfile.username
+    (v) =>
+      v.userId === creatorProfile.id ||
+      v.isUserUploaded ||
+      v.creator.username === creatorProfile.username
   );
   const userVideosLikes = userUploadedVideos.reduce((sum, v) => sum + v.stats.likes, 0);
   const likedFeedVideosCount = videos.filter(
-    (v) => !(v.isUserUploaded || v.creator.username === creatorProfile.username) && v.isLiked
+    (v) =>
+      !(
+        v.userId === creatorProfile.id ||
+        v.isUserUploaded ||
+        v.creator.username === creatorProfile.username
+      ) && v.isLiked
   ).length;
   const totalProfileLikes = userVideosLikes + likedFeedVideosCount;
   const followingCount = new Set(
@@ -918,6 +1065,7 @@ export default function App() {
         currentUser={currentUser}
         creatorProfile={creatorProfile}
         onUploadSuccess={handleUploadSuccess}
+        onShowToast={showToast}
       />
 
       {/* Heavy Pro Camera Interface (4K/60FPS, Beauty Filters, Night Mode, AI Motion Tracking) */}

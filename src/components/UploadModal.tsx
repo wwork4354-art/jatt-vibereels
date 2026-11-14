@@ -1,6 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Upload, Video, Sparkles } from 'lucide-react';
 import { VideoPost, UserAccount, CreatorProfileData } from '../types';
+import {
+  uploadMediaToReelsBucket,
+  createGlobalPostInSupabase,
+  getOrCreateUserProfileId,
+} from '../lib/supabaseService';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -8,6 +13,7 @@ interface UploadModalProps {
   currentUser: UserAccount | null;
   creatorProfile?: CreatorProfileData;
   onUploadSuccess: (newPost: VideoPost) => void;
+  onShowToast?: (msg: string) => void;
 }
 
 export const UploadModal: React.FC<UploadModalProps> = ({
@@ -16,6 +22,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   currentUser,
   creatorProfile,
   onUploadSuccess,
+  onShowToast,
 }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -26,10 +33,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [videoSourceType, setVideoSourceType] = useState<'file' | 'url'>('file');
   const [videoUrlInput, setVideoUrlInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedMediaType, setSelectedMediaType] = useState<'video' | 'image'>('video');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [category, setCategory] = useState<VideoPost['category']>('trending');
   const [soundTrack, setSoundTrack] = useState<VideoPost['sound']['trackType']>('future_bass');
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -44,8 +53,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   if (!isOpen) return null;
 
   const processFile = (file: File) => {
-    if (file && file.type.startsWith('video/')) {
+    if (file && (file.type.startsWith('video/') || file.type.startsWith('image/'))) {
       setSelectedFile(file);
+      setSelectedMediaType(file.type.startsWith('image/') ? 'image' : 'video');
       const objectUrl = URL.createObjectURL(file);
       setPreviewUrl(objectUrl);
       if (!title) {
@@ -70,65 +80,113 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalVideoUrl =
-      videoSourceType === 'file' && previewUrl
-        ? previewUrl
-        : videoUrlInput.trim() ||
-          'https://upload.wikimedia.org/wikipedia/commons/4/47/Astrophysics_Holiday_Vertical_Video_%28SVS14800_-_Fermi_YuleLog_Rotate_Reel%29.webm';
+    setIsUploading(true);
 
-    const tags = hashtagsStr
-      .split(/[\s,]+/)
-      .map((t) => t.replace(/^#/, '').trim())
-      .filter(Boolean);
+    try {
+      const urlTrimmed = videoUrlInput.trim();
+      const inferredUrlMediaType: 'video' | 'image' =
+        /\.(jpg|jpeg|png|gif|webp|avif)(\?|$)/i.test(urlTrimmed) ? 'image' : 'video';
 
-    const authorName = currentUser?.name || creatorProfile?.name || creatorName.trim() || 'Jatt Creator';
-    const authorUsername =
-      currentUser?.username ||
-      creatorProfile?.username ||
-      creatorName.toLowerCase().replace(/\s+/g, '_') ||
-      'jatt_official';
-    const authorAvatar =
-      currentUser?.avatar ||
-      creatorProfile?.avatar ||
-      `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(authorUsername)}&backgroundColor=ec4899`;
+      let mediaType: 'video' | 'image' =
+        videoSourceType === 'file' && selectedFile ? selectedMediaType : inferredUrlMediaType;
 
-    const newPost: VideoPost = {
-      id: `user-vid-${Date.now()}`,
-      title: title.trim() || 'My New Reel',
-      description: description.trim() || 'Check out my latest short clip!',
-      hashtags: tags.length ? tags : ['foryou', 'trending'],
-      videoUrl: finalVideoUrl,
-      fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
-      category: category,
-      isUserUploaded: true,
-      creator: {
-        name: authorName,
+      let finalMediaUrl =
+        videoSourceType === 'file' && previewUrl
+          ? previewUrl
+          : urlTrimmed ||
+            'https://upload.wikimedia.org/wikipedia/commons/4/47/Astrophysics_Holiday_Vertical_Video_%28SVS14800_-_Fermi_YuleLog_Rotate_Reel%29.webm';
+
+      const userId = creatorProfile?.id || currentUser?.id || getOrCreateUserProfileId();
+      const authorName = currentUser?.name || creatorProfile?.name || creatorName.trim() || 'Jatt Creator';
+      const authorUsername =
+        currentUser?.username ||
+        creatorProfile?.username ||
+        creatorName.toLowerCase().replace(/\s+/g, '_') ||
+        'jatt_official';
+      const authorAvatar =
+        currentUser?.avatar ||
+        creatorProfile?.avatar ||
+        `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(authorUsername)}&backgroundColor=ec4899`;
+
+      const tags = hashtagsStr
+        .split(/[\s,]+/)
+        .map((t) => t.replace(/^#/, '').trim())
+        .filter(Boolean);
+      const captionText = `${title.trim() || 'My New Post'}${
+        description.trim() ? ` - ${description.trim()}` : ''
+      } ${tags.map((t) => `#${t}`).join(' ')}`.trim();
+
+      if (videoSourceType === 'file' && selectedFile) {
+        onShowToast?.('Uploading media to Supabase Storage...');
+        const uploadedUrl = await uploadMediaToReelsBucket(
+          selectedFile,
+          'posts',
+          selectedFile.name
+        );
+        if (uploadedUrl) {
+          finalMediaUrl = uploadedUrl;
+        }
+      }
+
+      const supabasePost = await createGlobalPostInSupabase({
+        userId,
         username: authorUsername,
-        avatar: authorAvatar,
-        isVerified: currentUser?.role === 'admin' || currentUser?.role === 'creator',
-        isFollowing: false,
-        bio: currentUser?.bio || creatorProfile?.bio || 'Creator on VibeReels',
-      },
-      stats: {
-        likes: 1,
-        comments: 0,
-        shares: 0,
-        saves: 0,
-      },
-      isLiked: false,
-      isSaved: false,
-      sound: {
-        title: `${authorName}'s Original Audio`,
-        artist: authorName,
-        trackType: soundTrack,
-      },
-      commentsList: [],
-    };
+        displayName: authorName,
+        avatarUrl: authorAvatar,
+        mediaUrl: finalMediaUrl,
+        mediaType,
+        caption: captionText,
+      });
 
-    onUploadSuccess(newPost);
-    onClose();
+      if (supabasePost) {
+        onUploadSuccess(supabasePost);
+        onClose();
+        return;
+      }
+
+      const newPost: VideoPost = {
+        id: `user-vid-${Date.now()}`,
+        title: title.trim() || 'My New Post',
+        description: captionText,
+        hashtags: tags.length ? tags : ['foryou', 'trending'],
+        videoUrl: finalMediaUrl,
+        posterUrl: mediaType === 'image' ? finalMediaUrl : undefined,
+        fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
+        category: category,
+        userId,
+        mediaType,
+        isUserUploaded: true,
+        creator: {
+          name: authorName,
+          username: authorUsername,
+          avatar: authorAvatar,
+          isVerified: currentUser?.role === 'admin' || currentUser?.role === 'creator',
+          isFollowing: false,
+          bio: currentUser?.bio || creatorProfile?.bio || 'Creator on VibeReels',
+        },
+        stats: {
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          saves: 0,
+        },
+        isLiked: false,
+        isSaved: false,
+        sound: {
+          title: `${authorName}'s Original Audio`,
+          artist: authorName,
+          trackType: soundTrack,
+        },
+        commentsList: [],
+      };
+
+      onUploadSuccess(newPost);
+      onClose();
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   return (
@@ -188,7 +246,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="video/mp4,video/webm,video/ogg,video/quicktime"
+                accept="video/*,image/*"
                 className="hidden"
                 onChange={handleFileChange}
               />
@@ -208,25 +266,33 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               >
                 {previewUrl ? (
                   <div className="flex flex-col items-center">
-                    <video
-                      src={previewUrl}
-                      className="w-24 h-40 object-cover rounded-lg shadow-lg mb-2 border border-neutral-700"
-                      muted
-                      autoPlay
-                      loop
-                    />
+                    {selectedMediaType === 'image' ? (
+                      <img
+                        src={previewUrl}
+                        alt="Preview"
+                        className="w-24 h-40 object-cover rounded-lg shadow-lg mb-2 border border-neutral-700"
+                      />
+                    ) : (
+                      <video
+                        src={previewUrl}
+                        className="w-24 h-40 object-cover rounded-lg shadow-lg mb-2 border border-neutral-700"
+                        muted
+                        autoPlay
+                        loop
+                      />
+                    )}
                     <p className="text-xs text-pink-400 font-semibold truncate max-w-xs">
                       {selectedFile?.name}
                     </p>
-                    <p className="text-[11px] text-neutral-500">Click or drop another video to replace</p>
+                    <p className="text-[11px] text-neutral-500">Click or drop another video/image to replace</p>
                   </div>
                 ) : (
                   <>
                     <div className="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 mb-2">
                       <Video className="w-6 h-6 text-pink-400" />
                     </div>
-                    <p className="text-sm font-semibold text-white">Select video to upload from device</p>
-                    <p className="text-xs text-neutral-400 mt-1">Drag & drop or browse MP4 / WebM</p>
+                    <p className="text-sm font-semibold text-white">Select video or image to upload</p>
+                    <p className="text-xs text-neutral-400 mt-1">Drag & drop or browse MP4, WebM, JPG, PNG</p>
                   </>
                 )}
               </div>
@@ -313,10 +379,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-lg shadow-pink-600/20 active:scale-95 transition-all"
+              disabled={isUploading}
+              className="px-5 py-2.5 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 disabled:opacity-60 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-lg shadow-pink-600/20 active:scale-95 transition-all cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              Publish Reel
+              <span>{isUploading ? 'Publishing...' : 'Publish to Global Feed'}</span>
             </button>
           </div>
         </form>

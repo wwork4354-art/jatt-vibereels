@@ -211,11 +211,11 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           onChange={(e) => handleVideoFileSelected(e, 'live')}
         />
 
-        {/* Option 2: Choose from Mobile Gallery WITHOUT capture attribute */}
+        {/* Option 2: Choose Video or Image from Mobile Gallery WITHOUT capture attribute */}
         <input
           ref={galleryInputRef}
           type="file"
-          accept="video/*"
+          accept="video/*,image/*"
           className="hidden"
           style={{ display: 'none' }}
           onChange={(e) => handleVideoFileSelected(e, 'gallery')}
@@ -435,7 +435,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                 </span>
               </button>
 
-              {/* Option 2: Choose from Gallery Button (WITHOUT capture attribute) */}
+              {/* Option 2: Choose Video or Image from Gallery Button (WITHOUT capture attribute) */}
               <button
                 type="button"
                 onClick={() => {
@@ -450,16 +450,29 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                   </div>
                   <div>
                     <span className="text-sm font-black text-white group-hover:text-cyan-300 transition-colors">
-                      Choose from Gallery
+                      Choose Video or Image
                     </span>
                     <p className="text-xs text-neutral-400 mt-0.5">
-                      Pick already saved video from phone gallery/files
+                      Pick a video or photo from phone gallery to post globally
                     </p>
                   </div>
                 </div>
                 <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                   Gallery
                 </span>
+              </button>
+
+              {/* Option 3: Upload with Custom Caption Modal */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUploadSheetOpen(false);
+                  onOpenUpload();
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-pink-300 hover:text-white border border-pink-500/30 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5 text-pink-400" />
+                <span>Post Video / Image with Custom Caption</span>
               </button>
 
               {/* Heavy Pro 4K Camera Viewfinder Option */}

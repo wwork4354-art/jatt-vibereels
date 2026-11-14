@@ -39,6 +39,10 @@ export interface VideoPost {
   isLiked: boolean;
   isSaved: boolean;
   isUserUploaded?: boolean;
+  isSupabasePost?: boolean;
+  userId?: string;
+  mediaType?: 'video' | 'image';
+  createdAt?: string;
   sound: {
     title: string;
     artist: string;
@@ -64,6 +68,7 @@ export interface UserAccount {
 }
 
 export interface CreatorProfileData {
+  id: string;
   name: string;
   username: string;
   bio: string;

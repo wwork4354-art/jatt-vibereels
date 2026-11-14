@@ -69,7 +69,14 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   // Pause and unload (preload='none') off-screen videos immediately so memory stays low and scrolling is 60fps.
   useEffect(() => {
     const el = videoRef.current;
-    if (!el) return;
+    if (!el || video.mediaType === 'image') {
+      if (isActive && !isMuted) {
+        soundEngine.playTrack(video.sound.trackType);
+      } else if (!isActive) {
+        soundEngine.stopTrack();
+      }
+      return;
+    }
 
     if (isActive) {
       if (el.src !== video.videoUrl) {
@@ -105,7 +112,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         // ignore
       }
     }
-  }, [isActive, isMuted, video.videoUrl, video.sound.trackType]);
+  }, [isActive, isMuted, video.videoUrl, video.mediaType, video.sound.trackType]);
 
   // Clean up decoder on unmount
   useEffect(() => {
@@ -183,6 +190,17 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   };
 
   const togglePlayPause = () => {
+    if (video.mediaType === 'image') {
+      if (isPlaying) {
+        soundEngine.stopTrack();
+        setIsPlaying(false);
+      } else {
+        if (!isMuted) soundEngine.playTrack(video.sound.trackType);
+        setIsPlaying(true);
+      }
+      return;
+    }
+
     const el = videoRef.current;
     if (!el && !videoError) return;
 
@@ -242,39 +260,49 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         className="relative w-full h-full flex items-center justify-center cursor-pointer"
         onClick={handleVideoAreaClick}
       >
-        {/* HTML5 Video element: only mounted/buffered when active */}
-        {!videoError && (
-          <video
-            ref={videoRef}
-            src={isActive ? video.videoUrl : undefined}
-            poster={video.posterUrl}
-            playsInline
-            loop
-            muted={isMuted}
-            preload={isActive ? 'auto' : 'none'}
-            crossOrigin="anonymous"
-            onTimeUpdate={handleTimeUpdate}
-            onLoadedMetadata={() => {
-              if (videoRef.current) {
-                setDuration(videoRef.current.duration);
-              }
-            }}
-            onError={() => {
-              if (isActive) setVideoError(true);
-            }}
-            className="w-full h-full object-cover sm:object-contain sm:max-w-md mx-auto [transform:translateZ(0)]"
+        {/* Image Post OR HTML5 Video element */}
+        {video.mediaType === 'image' ? (
+          <img
+            src={video.videoUrl}
+            alt={video.title}
+            className="w-full h-full object-contain sm:max-w-md mx-auto [transform:translateZ(0)]"
           />
-        )}
+        ) : (
+          <>
+            {!videoError && (
+              <video
+                ref={videoRef}
+                src={isActive ? video.videoUrl : undefined}
+                poster={video.posterUrl}
+                playsInline
+                loop
+                muted={isMuted}
+                preload={isActive ? 'auto' : 'none'}
+                crossOrigin="anonymous"
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={() => {
+                  if (videoRef.current) {
+                    setDuration(videoRef.current.duration);
+                  }
+                }}
+                onError={() => {
+                  if (isActive) setVideoError(true);
+                }}
+                className="w-full h-full object-cover sm:object-contain sm:max-w-md mx-auto [transform:translateZ(0)]"
+              />
+            )}
 
-        {/* Fallback procedural 60fps canvas if video fails or is unsupported */}
-        {videoError && (
-          <div className="relative w-full h-full flex items-center justify-center [transform:translateZ(0)]">
-            <ProceduralCanvas theme={video.category} isPlaying={isPlaying} />
-            <div className="absolute top-16 left-4 z-20 bg-neutral-900/90 px-3 py-1.5 rounded-full border border-neutral-700/60 flex items-center gap-2 [transform:translateZ(0)]">
-              <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
-              <span className="text-[11px] font-semibold text-neutral-300">Live Visual Reel</span>
-            </div>
-          </div>
+            {/* Fallback procedural 60fps canvas if video fails or is unsupported */}
+            {videoError && (
+              <div className="relative w-full h-full flex items-center justify-center [transform:translateZ(0)]">
+                <ProceduralCanvas theme={video.category} isPlaying={isPlaying} />
+                <div className="absolute top-16 left-4 z-20 bg-neutral-900/90 px-3 py-1.5 rounded-full border border-neutral-700/60 flex items-center gap-2 [transform:translateZ(0)]">
+                  <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
+                  <span className="text-[11px] font-semibold text-neutral-300">Live Visual Reel</span>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* Play/Pause Animated Center Icon */}
@@ -559,25 +587,27 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         </div>
 
         {/* Video Scrubber / Progress Bar */}
-        <div
-          ref={progressBarRef}
-          onClick={(e) => {
-            e.stopPropagation();
-            handleScrub(e);
-          }}
-          onMouseDown={() => setIsScrubbing(true)}
-          onMouseUp={() => setIsScrubbing(false)}
-          className="pointer-events-auto group mt-3 w-full h-2.5 flex items-end cursor-pointer py-1"
-        >
-          <div className="relative w-full h-1 bg-white/20 rounded-full overflow-hidden group-hover:h-1.5 transition-all">
-            <div
-              style={{ width: `${progressPercent}%` }}
-              className="h-full bg-pink-500 rounded-full transition-all duration-75 relative"
-            >
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white opacity-0 group-hover:opacity-100 shadow-md" />
+        {video.mediaType !== 'image' && (
+          <div
+            ref={progressBarRef}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleScrub(e);
+            }}
+            onMouseDown={() => setIsScrubbing(true)}
+            onMouseUp={() => setIsScrubbing(false)}
+            className="pointer-events-auto group mt-3 w-full h-2.5 flex items-end cursor-pointer py-1"
+          >
+            <div className="relative w-full h-1 bg-white/20 rounded-full overflow-hidden group-hover:h-1.5 transition-all">
+              <div
+                style={{ width: `${progressPercent}%` }}
+                className="h-full bg-pink-500 rounded-full transition-all duration-75 relative"
+              >
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white opacity-0 group-hover:opacity-100 shadow-md" />
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

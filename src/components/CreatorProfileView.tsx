@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { CreatorProfileData, VideoPost } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
+import { uploadMediaToReelsBucket } from '../lib/supabaseService';
 
 interface CreatorProfileViewProps {
   profile: CreatorProfileData;
@@ -57,11 +58,16 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   const [editUsername, setEditUsername] = useState(profile.username);
   const [editBio, setEditBio] = useState(profile.bio);
   const [editAvatar, setEditAvatar] = useState(profile.avatar);
+  const [pendingAvatarBlob, setPendingAvatarBlob] = useState<Blob | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const userVideos = videos.filter(
-    (v) => v.isUserUploaded || v.creator.username === profile.username
+    (v) =>
+      v.userId === profile.id ||
+      v.isUserUploaded ||
+      v.creator.username === profile.username
   );
   const likedVideos = videos.filter((v) => v.isLiked);
   const savedVideos = videos.filter((v) => v.isSaved);
@@ -78,6 +84,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
     setEditUsername(profile.username);
     setEditBio(profile.bio);
     setEditAvatar(profile.avatar);
+    setPendingAvatarBlob(null);
     setIsEditing(true);
   };
 
@@ -104,6 +111,15 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
             ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
             const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.78);
             setEditAvatar(compressedDataUrl);
+            canvas.toBlob(
+              (blob) => {
+                if (blob) {
+                  setPendingAvatarBlob(blob);
+                }
+              },
+              'image/jpeg',
+              0.8
+            );
             onShowToast('Profile picture compressed & ready!');
             return;
           }
@@ -111,9 +127,11 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
           // fallback below
         }
         setEditAvatar(reader.result as string);
+        setPendingAvatarBlob(file);
       };
       img.onerror = () => {
         setEditAvatar(reader.result as string);
+        setPendingAvatarBlob(file);
       };
       img.src = reader.result;
     };
@@ -121,25 +139,43 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
     e.target.value = '';
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanUsername = editUsername
-      .trim()
-      .replace(/^@+/, '')
-      .replace(/\s+/g, '_')
-      .toLowerCase();
+    setIsSavingProfile(true);
+    try {
+      const cleanUsername = editUsername
+        .trim()
+        .replace(/^@+/, '')
+        .replace(/\s+/g, '_')
+        .toLowerCase();
 
-    const updated: CreatorProfileData = {
-      ...profile,
-      name: editName.trim() || 'Jatt Creator',
-      username: cleanUsername || 'jatt_official',
-      bio: editBio.trim(),
-      avatar: editAvatar.trim() || NEON_AVATAR_PRESETS[0],
-    };
+      let finalAvatarUrl = editAvatar.trim() || NEON_AVATAR_PRESETS[0];
+      if (pendingAvatarBlob) {
+        const uploadedUrl = await uploadMediaToReelsBucket(
+          pendingAvatarBlob,
+          'avatars',
+          `${cleanUsername || 'avatar'}.jpg`
+        );
+        if (uploadedUrl) {
+          finalAvatarUrl = uploadedUrl;
+        }
+      }
 
-    onUpdateProfile(updated);
-    setIsEditing(false);
-    onShowToast('Creator profile saved!');
+      const updated: CreatorProfileData = {
+        ...profile,
+        name: editName.trim() || 'Jatt Creator',
+        username: cleanUsername || 'jatt_official',
+        bio: editBio.trim(),
+        avatar: finalAvatarUrl,
+      };
+
+      onUpdateProfile(updated);
+      setIsEditing(false);
+      setPendingAvatarBlob(null);
+      onShowToast('Profile saved & synced!');
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   return (
@@ -337,9 +373,9 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 onClick={() => onPlayVideo(vid.id)}
                 className="group relative aspect-[9/16] rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 hover:border-pink-500/60 transition-all text-left cursor-pointer [transform:translateZ(0)]"
               >
-                {vid.posterUrl ? (
+                {vid.mediaType === 'image' || vid.posterUrl ? (
                   <img
-                    src={vid.posterUrl}
+                    src={vid.mediaType === 'image' ? vid.videoUrl : vid.posterUrl}
                     alt={vid.title}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     loading="lazy"
@@ -542,10 +578,11 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:to-cyan-500 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
+                  disabled={isSavingProfile}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:to-cyan-500 disabled:opacity-60 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  <span>Save Changes</span>
+                  <span>{isSavingProfile ? 'Saving...' : 'Save Changes'}</span>
                 </button>
               </div>
             </form>
