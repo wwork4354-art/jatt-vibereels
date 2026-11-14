@@ -464,8 +464,8 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
       // Tier 3: Guaranteed local curated fallback so search never fails or errors out
       if (mappedResults.length === 0) {
         const qLower = query.toLowerCase();
-        const curatedKey = Object.keys(CURATED_FALLBACK_VIDEOS).find((k) =>
-          qLower.includes(k.toLowerCase()) || k.toLowerCase().includes(qLower)
+        const curatedKey = Object.keys(CURATED_FALLBACK_VIDEOS).find(
+          (k) => qLower.includes(k.toLowerCase()) || k.toLowerCase().includes(qLower)
         );
         const catalogMatches = INITIAL_DOWNLOADS.filter(
           (it) =>
@@ -480,7 +480,12 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
           ...(curatedKey ? CURATED_FALLBACK_VIDEOS[curatedKey] : []),
           ...catalogMatches,
           ...(!curatedKey && catalogMatches.length === 0 ? allCatalogYoutube : []),
-        ].slice(0, 12);
+        ]
+          .slice(0, 12)
+          .map((it) => ({
+            ...it,
+            id: it.id.startsWith('yt-') ? it.id : `yt-${it.youtubeId}`,
+          }));
       }
 
       setYoutubeLiveResults(mappedResults);
@@ -772,342 +777,337 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
       {activeTab === 'marketplace' ? (
         /* ========================================================================= */
-        /* MARKETPLACE VIEW: CATEGORIES, SEARCH, PLAYER SCREEN & VIDEO CARDS        */
+        /* MARKETPLACE VIEW: TOP VIDEO PLAYER + SEARCH + IMMEDIATE VIDEO RESULTS GRID */
         /* ========================================================================= */
-        <div
-          ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 space-y-4 pb-20 lg:pb-8"
-        >
+        <div className="flex-1 flex flex-col overflow-hidden">
           {/* ========================================================================= */}
-          {/* RESPONSIVE VIDEO PLAYER SCREEN AT THE TOP WHEN VIDEO SELECTED             */}
+          {/* PINNED RESPONSIVE YOUTUBE VIDEO PLAYER AT THE TOP OF THE SCREEN           */}
           {/* ========================================================================= */}
           {previewItem && (
-            <div className="max-w-6xl mx-auto bg-neutral-900 border border-pink-500/40 rounded-2xl sm:rounded-3xl p-3 sm:p-4 shadow-2xl space-y-3 animate-in fade-in duration-200">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="p-1.5 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 shrink-0">
-                    <Youtube className="w-4 h-4 fill-red-500" />
-                  </span>
-                  <div className="min-w-0">
-                    <h2 className="text-xs sm:text-sm font-black text-white truncate">
-                      {previewItem.title}
-                    </h2>
-                    <p className="text-[11px] text-neutral-400 truncate">
-                      {previewItem.subtitle}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setPreviewItem(null)}
-                  className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                  <span>Close Player</span>
-                </button>
-              </div>
-
-              <div className="relative w-full aspect-video max-h-[460px] rounded-xl sm:rounded-2xl overflow-hidden bg-black border border-neutral-800">
-                {previewItem.youtubeId ? (
-                  <iframe
-                    key={previewItem.youtubeId}
-                    src={`https://www.youtube-nocookie.com/embed/${previewItem.youtubeId}?autoplay=1&rel=0&playsinline=1`}
-                    title={previewItem.title}
-                    className="w-full h-full border-0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-                ) : (
-                  <div className="w-full h-full relative flex flex-col items-center justify-center p-4 text-center">
-                    <img
-                      src={previewItem.thumbnailUrl}
-                      alt={previewItem.title}
-                      className="absolute inset-0 w-full h-full object-cover opacity-40"
-                    />
-                    <div className="relative z-10 flex flex-col items-center gap-2">
-                      <Film className="w-10 h-10 text-cyan-400" />
-                      <p className="text-sm text-white font-bold">{previewItem.title}</p>
+            <div className="shrink-0 bg-neutral-950 border-b border-pink-500/40 px-3 sm:px-6 py-3 shadow-2xl z-20">
+              <div className="max-w-5xl mx-auto space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="p-1.5 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 shrink-0">
+                      <Youtube className="w-4 h-4 fill-red-500" />
+                    </span>
+                    <div className="min-w-0">
+                      <h2 className="text-xs sm:text-sm font-black text-white truncate">
+                        {previewItem.title}
+                      </h2>
+                      <p className="text-[11px] text-neutral-400 truncate">
+                        {previewItem.subtitle}
+                      </p>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Top Search & Filter Bar */}
-          <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-            {/* Search Input with Search CTA Button in Form */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSearchYouTubeLive();
-              }}
-              className="flex-1 flex flex-col sm:flex-row items-stretch gap-2"
-            >
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search Trending Movies, Punjabi Songs, Pakistani Dramas..."
-                  className="w-full bg-neutral-900/90 text-xs sm:text-sm text-white placeholder-neutral-500 pl-10 pr-9 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/50 transition-all shadow-inner"
-                />
-                {searchQuery && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setSearchQuery('');
-                      setSearchSource('catalog');
-                    }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
+                    onClick={() => setPreviewItem(null)}
+                    className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
                   >
                     <X className="w-4 h-4" />
+                    <span>Close</span>
                   </button>
-                )}
-              </div>
+                </div>
 
-              {/* YouTube Live Search CTA */}
-              <button
-                type="submit"
-                disabled={isSearchingYouTube}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-red-600/30 active:scale-95 transition-all shrink-0 border border-red-400/30 cursor-pointer"
-              >
-                <Youtube className="w-4 h-4 fill-white" />
-                <span>{isSearchingYouTube ? 'Searching...' : 'Search'}</span>
-              </button>
-            </form>
-
-            {/* Sort Dropdown */}
-            <div className="flex items-center gap-2 shrink-0">
-              <SlidersHorizontal className="w-4 h-4 text-neutral-400" />
-              <span className="text-xs text-neutral-400 font-semibold hidden sm:inline">Sort:</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="bg-neutral-900 text-xs text-white border border-neutral-800 rounded-xl px-3 py-2.5 focus:outline-hidden focus:border-cyan-500 transition-colors"
-              >
-                <option value="popular">Most Popular</option>
-                <option value="rating">Highest Rated</option>
-                <option value="size_desc">Largest File Size</option>
-                <option value="size_asc">Smallest File Size</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Quick Movie Box YouTube Search Category Chips */}
-          <div className="max-w-6xl mx-auto flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
-            <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider shrink-0">
-              Quick Search:
-            </span>
-            {QUICK_MOVIEBOX_CHIPS.map((chip) => {
-              const isChipActive =
-                searchSource === 'youtube' &&
-                searchQuery.trim().toLowerCase() === chip.toLowerCase();
-              return (
-                <button
-                  key={chip}
-                  type="button"
-                  onClick={() => handleSearchYouTubeLive(chip)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition-all cursor-pointer active:scale-95 ${
-                    isChipActive
-                      ? 'bg-gradient-to-r from-red-600 to-pink-600 text-white border-red-400 shadow-md shadow-red-600/25'
-                      : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border-neutral-800 hover:border-pink-500/40'
-                  }`}
-                >
-                  {chip}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Quick Direct YouTube Video Streamer Bar */}
-          <div className="max-w-6xl mx-auto p-3 rounded-2xl bg-neutral-900/60 border border-neutral-800/80 flex flex-col sm:flex-row items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2 text-xs text-neutral-300">
-              <Link2 className="w-4 h-4 text-cyan-400 shrink-0" />
-              <span className="font-semibold text-[11px] sm:text-xs">
-                Stream any YouTube video in Movie Box (Zero 3rd-Party Blocks):
-              </span>
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto flex-1 sm:max-w-md">
-              <input
-                type="text"
-                value={directUrlInput}
-                onChange={(e) => setDirectUrlInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handlePlayDirectUrl()}
-                placeholder="Paste YouTube link (https://youtube.com...) or Video ID"
-                className="w-full bg-black/60 text-xs text-white placeholder-neutral-500 px-3 py-1.5 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
-              />
-              <button
-                type="button"
-                onClick={handlePlayDirectUrl}
-                className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl shrink-0 active:scale-95 transition-all shadow-md"
-              >
-                Play
-              </button>
-            </div>
-          </div>
-
-          {/* Search Source Toggle Pills if live search was used */}
-          {youtubeLiveResults.length > 0 && (
-            <div className="max-w-6xl mx-auto flex items-center justify-between p-2.5 rounded-xl bg-red-950/20 border border-red-500/30 text-xs">
-              <div className="flex items-center gap-2">
-                <Youtube className="w-4 h-4 text-red-500" />
-                <span className="text-white font-bold">
-                  Showing {searchSource === 'youtube' ? 'YouTube Live Results' : 'Standard Catalog'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSearchSource('youtube')}
-                  className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
-                    searchSource === 'youtube' ? 'bg-red-600 text-white' : 'text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  YouTube Live ({youtubeLiveResults.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSearchSource('catalog')}
-                  className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
-                    searchSource === 'catalog' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  Verified Catalog
-                </button>
+                <div className="relative w-full aspect-video max-h-[36vh] sm:max-h-[340px] mx-auto rounded-xl sm:rounded-2xl overflow-hidden bg-black border border-neutral-800">
+                  {previewItem.youtubeId ? (
+                    <iframe
+                      key={previewItem.youtubeId}
+                      src={`https://www.youtube-nocookie.com/embed/${previewItem.youtubeId}?autoplay=1&rel=0&playsinline=1`}
+                      title={previewItem.title}
+                      className="w-full h-full border-0"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  ) : (
+                    <div className="w-full h-full relative flex flex-col items-center justify-center p-4 text-center">
+                      <img
+                        src={previewItem.thumbnailUrl}
+                        alt={previewItem.title}
+                        className="absolute inset-0 w-full h-full object-cover opacity-40"
+                      />
+                      <div className="relative z-10 flex flex-col items-center gap-2">
+                        <Film className="w-10 h-10 text-cyan-400" />
+                        <p className="text-sm text-white font-bold">{previewItem.title}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
 
-          {/* Categorization Pills (Songs, Apps, Dramas, Movies, Cartoons, Quran Tilawat) */}
-          <div className="max-w-6xl mx-auto overflow-x-auto no-scrollbar pb-1">
-            <div className="flex items-center gap-2 min-w-max">
-              {DOWNLOAD_CATEGORIES.map((cat) => {
-                const isSelected = selectedCategory === cat.id;
-                const count =
-                  cat.id === 'all'
-                    ? items.length
-                    : items.filter((it) => it.category === cat.id).length;
+          {/* Scrollable Search & Video Cards Area */}
+          <div
+            ref={scrollContainerRef}
+            className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 space-y-4 pb-24 lg:pb-8"
+          >
+            {/* Top Search & Filter Bar */}
+            <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              {/* Search Input with Search CTA Button in Form */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSearchYouTubeLive();
+                }}
+                className="flex-1 flex flex-col sm:flex-row items-stretch gap-2"
+              >
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search Trending Movies, Punjabi Songs, Pakistani Dramas..."
+                    className="w-full bg-neutral-900/90 text-xs sm:text-sm text-white placeholder-neutral-500 pl-10 pr-9 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/50 transition-all shadow-inner"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSearchSource('catalog');
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
 
+                {/* YouTube Live Search CTA */}
+                <button
+                  type="submit"
+                  disabled={isSearchingYouTube}
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-red-600/30 active:scale-95 transition-all shrink-0 border border-red-400/30 cursor-pointer"
+                >
+                  <Youtube className="w-4 h-4 fill-white" />
+                  <span>{isSearchingYouTube ? 'Searching...' : 'Search'}</span>
+                </button>
+              </form>
+
+              {/* Sort Dropdown (Catalog view) */}
+              {searchSource !== 'youtube' && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <SlidersHorizontal className="w-4 h-4 text-neutral-400" />
+                  <span className="text-xs text-neutral-400 font-semibold hidden sm:inline">Sort:</span>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                    className="bg-neutral-900 text-xs text-white border border-neutral-800 rounded-xl px-3 py-2.5 focus:outline-hidden focus:border-cyan-500 transition-colors"
+                  >
+                    <option value="popular">Most Popular</option>
+                    <option value="rating">Highest Rated</option>
+                    <option value="size_desc">Largest File Size</option>
+                    <option value="size_asc">Smallest File Size</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Movie Box YouTube Search Category Chips */}
+            <div className="max-w-6xl mx-auto flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+              <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider shrink-0">
+                Quick Search:
+              </span>
+              {QUICK_MOVIEBOX_CHIPS.map((chip) => {
+                const isChipActive =
+                  searchSource === 'youtube' &&
+                  searchQuery.trim().toLowerCase() === chip.toLowerCase();
                 return (
                   <button
-                    key={cat.id}
+                    key={chip}
                     type="button"
-                    onClick={() => setSelectedCategory(cat.id)}
-                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all border ${
-                      isSelected
-                        ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white border-pink-400/60 shadow-lg shadow-pink-600/30 scale-102'
-                        : 'bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border-neutral-800'
+                    onClick={() => handleSearchYouTubeLive(chip)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition-all cursor-pointer active:scale-95 ${
+                      isChipActive
+                        ? 'bg-gradient-to-r from-red-600 to-pink-600 text-white border-red-400 shadow-md shadow-red-600/25'
+                        : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border-neutral-800 hover:border-pink-500/40'
                     }`}
                   >
-                    {renderCategoryIcon(cat.id, 'w-3.5 h-3.5')}
-                    <span>{cat.label}</span>
-                    <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                        isSelected
-                          ? 'bg-black/40 text-white'
-                          : 'bg-neutral-800 text-neutral-400'
-                      }`}
-                    >
-                      {count}
-                    </span>
+                    {chip}
                   </button>
                 );
               })}
             </div>
-          </div>
 
-          {/* Marketplace Media Grid */}
-          <div className="max-w-6xl mx-auto">
-            {displayedItems.length === 0 ? (
-              <div className="py-16 text-center text-neutral-400 space-y-3">
-                <Search className="w-10 h-10 mx-auto text-neutral-600" />
-                <p className="text-sm font-bold text-neutral-300">
-                  {searchSource === 'youtube'
-                    ? 'No live YouTube results found for your query'
-                    : 'No items matched your query'}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setSelectedCategory('all');
-                    setSearchSource('catalog');
-                    setYoutubeLiveResults([]);
-                    try {
-                      sessionStorage.removeItem('jatt_yt_search_results');
-                      sessionStorage.setItem('jatt_yt_search_query', '');
-                      sessionStorage.setItem('jatt_yt_search_source', 'catalog');
-                      sessionStorage.setItem('jatt_hub_selected_category', 'all');
-                    } catch {
-                      // ignore
-                    }
-                  }}
-                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-pink-400 rounded-xl transition-colors cursor-pointer"
-                >
-                  Reset to Catalog
-                </button>
+            {/* Inline Status Header: Directly Above the Grid */}
+            {searchSource === 'youtube' && youtubeLiveResults.length > 0 && (
+              <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-red-950/25 border border-red-500/35 text-xs">
+                <div className="flex items-center gap-2">
+                  <Youtube className="w-4 h-4 text-red-500 shrink-0" />
+                  <span className="text-white font-bold">
+                    Showing {youtubeLiveResults.length} playable videos
+                    {searchQuery.trim() ? ` for "${searchQuery.trim()}"` : ''}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSearchSource('youtube')}
+                    className="px-2.5 py-1 rounded-lg font-bold text-[11px] bg-red-600 text-white"
+                  >
+                    Playable Videos ({youtubeLiveResults.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSearchSource('catalog')}
+                    className="px-2.5 py-1 rounded-lg font-bold text-[11px] text-neutral-300 hover:text-white bg-neutral-900 border border-neutral-800 cursor-pointer"
+                  >
+                    Catalog
+                  </button>
+                </div>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 [transform:translateZ(0)]">
-                {displayedItems.map((item) => {
-                  const state = downloadStates[item.id] || {
-                    progress: 0,
-                    isDownloading: false,
-                    isPaused: false,
-                    isCompleted: false,
-                    speed: '',
-                    downloadedBytes: 0,
-                  };
+            )}
 
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => {
-                        if (item.youtubeId) {
-                          openVideoPlayer(item);
-                          onShowToast(`Playing "${item.title}" in Movie Box! 🎬🔥`);
-                        }
-                      }}
-                      className={`group bg-neutral-900/90 hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/50 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between [transform:translateZ(0)] relative overflow-hidden ${
-                        item.youtubeId ? 'cursor-pointer hover:border-pink-500/60' : ''
-                      }`}
+            {/* Catalog Category Pills (only when viewing Catalog mode so YouTube results appear directly below "Showing X playable videos") */}
+            {searchSource !== 'youtube' && (
+              <div className="max-w-6xl mx-auto overflow-x-auto no-scrollbar pb-1">
+                <div className="flex items-center gap-2 min-w-max">
+                  {youtubeLiveResults.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchSource('youtube')}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/40 cursor-pointer"
                     >
-                      {/* Top Media Info Row: Prominent 16:9 Widescreen Clickable Thumbnail for YouTube Live results */}
-                      <div>
-                        {item.id.startsWith('yt-') && item.youtubeId ? (
-                          <div className="space-y-2.5">
-                            <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-neutral-800 group-hover:border-red-500/60 transition-colors">
-                              <img
-                                src={item.thumbnailUrl}
-                                alt={item.title}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                loading="lazy"
-                                decoding="async"
-                              />
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent pointer-events-none" />
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="w-12 h-12 rounded-full bg-red-600/95 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                  <Play className="w-5 h-5 fill-white ml-0.5" />
-                                </div>
-                              </div>
-                              <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-red-600/90 text-[10px] font-black text-white uppercase flex items-center gap-1">
-                                <Youtube className="w-3 h-3 fill-white" />
-                                <span>YouTube</span>
-                              </span>
-                            </div>
+                      <Youtube className="w-3.5 h-3.5 fill-red-400" />
+                      <span>YouTube Results ({youtubeLiveResults.length})</span>
+                    </button>
+                  )}
+                  {DOWNLOAD_CATEGORIES.map((cat) => {
+                    const isSelected = selectedCategory === cat.id;
+                    const count =
+                      cat.id === 'all'
+                        ? items.length
+                        : items.filter((it) => it.category === cat.id).length;
 
-                            <div className="min-w-0">
-                              <h3 className="text-sm font-bold text-white line-clamp-2 group-hover:text-pink-400 transition-colors">
-                                {item.title}
-                              </h3>
-                              <p className="text-xs text-neutral-400 truncate mt-0.5">
-                                {item.subtitle}
-                              </p>
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setSelectedCategory(cat.id)}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                          isSelected
+                            ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white border-pink-400/60 shadow-lg shadow-pink-600/30 scale-102'
+                            : 'bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border-neutral-800'
+                        }`}
+                      >
+                        {renderCategoryIcon(cat.id, 'w-3.5 h-3.5')}
+                        <span>{cat.label}</span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                            isSelected
+                              ? 'bg-black/40 text-white'
+                              : 'bg-neutral-800 text-neutral-400'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Marketplace / Fetched Videos Grid (Directly below "Showing X playable videos") */}
+            <div className="max-w-6xl mx-auto">
+              {displayedItems.length === 0 ? (
+                <div className="py-16 text-center text-neutral-400 space-y-3">
+                  <Search className="w-10 h-10 mx-auto text-neutral-600" />
+                  <p className="text-sm font-bold text-neutral-300">
+                    {searchSource === 'youtube'
+                      ? 'No live YouTube results found for your query'
+                      : 'No items matched your query'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSelectedCategory('all');
+                      setSearchSource('catalog');
+                      setYoutubeLiveResults([]);
+                      try {
+                        sessionStorage.removeItem('jatt_yt_search_results');
+                        sessionStorage.setItem('jatt_yt_search_query', '');
+                        sessionStorage.setItem('jatt_yt_search_source', 'catalog');
+                        sessionStorage.setItem('jatt_hub_selected_category', 'all');
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-pink-400 rounded-xl transition-colors cursor-pointer"
+                  >
+                    Reset to Catalog
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 [transform:translateZ(0)]">
+                  {displayedItems.map((item) => {
+                    const state = downloadStates[item.id] || {
+                      progress: 0,
+                      isDownloading: false,
+                      isPaused: false,
+                      isCompleted: false,
+                      speed: '',
+                      downloadedBytes: 0,
+                    };
+                    const isCurrentlyPlaying = previewItem?.id === item.id;
+                    const isYouTubeCard =
+                      Boolean(item.youtubeId) && (searchSource === 'youtube' || item.id.startsWith('yt-'));
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => {
+                          if (item.youtubeId) {
+                            openVideoPlayer(item);
+                            onShowToast(`Playing "${item.title}"`);
+                          }
+                        }}
+                        className={`group bg-neutral-900/90 hover:bg-neutral-900 border rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between [transform:translateZ(0)] relative overflow-hidden ${
+                          isCurrentlyPlaying
+                            ? 'border-red-500 ring-1 ring-red-500/40'
+                            : item.youtubeId
+                            ? 'border-neutral-800 hover:border-pink-500/60 cursor-pointer'
+                            : 'border-neutral-800 hover:border-pink-500/50'
+                        }`}
+                      >
+                        {/* Top Media Info Row: Prominent 16:9 Widescreen Clickable Thumbnail for YouTube results */}
+                        <div>
+                          {isYouTubeCard ? (
+                            <div className="space-y-2.5">
+                              <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-neutral-800 group-hover:border-red-500/60 transition-colors">
+                                <img
+                                  src={item.thumbnailUrl}
+                                  alt={item.title}
+                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                  loading="lazy"
+                                  decoding="async"
+                                />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent pointer-events-none" />
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                  <div className="w-12 h-12 rounded-full bg-red-600/95 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                                    <Play className="w-5 h-5 fill-white ml-0.5" />
+                                  </div>
+                                </div>
+                                <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-red-600/90 text-[10px] font-black text-white uppercase flex items-center gap-1">
+                                  <Youtube className="w-3 h-3 fill-white" />
+                                  <span>{isCurrentlyPlaying ? 'Playing' : 'YouTube'}</span>
+                                </span>
+                              </div>
+
+                              <div className="min-w-0">
+                                <h3 className="text-sm font-bold text-white line-clamp-2 group-hover:text-pink-400 transition-colors">
+                                  {item.title}
+                                </h3>
+                                <p className="text-xs text-neutral-400 truncate mt-0.5">
+                                  {item.subtitle}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
+                          ) : (
                           <>
                             <div className="flex gap-3.5">
                               {/* Thumbnail with quality badge & Hover Play Overlay */}
@@ -1352,7 +1352,35 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
               </div>
             )}
           </div>
+
+          {/* Direct YouTube Link Streamer Bar (placed cleanly below results so fetched cards come first) */}
+          <div className="max-w-6xl mx-auto p-3 rounded-2xl bg-neutral-900/60 border border-neutral-800/80 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2 text-xs text-neutral-300">
+              <Link2 className="w-4 h-4 text-cyan-400 shrink-0" />
+              <span className="font-semibold text-[11px] sm:text-xs">
+                Paste any YouTube link or Video ID to play:
+              </span>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto flex-1 sm:max-w-md">
+              <input
+                type="text"
+                value={directUrlInput}
+                onChange={(e) => setDirectUrlInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handlePlayDirectUrl()}
+                placeholder="Paste YouTube link (https://youtube.com...) or Video ID"
+                className="w-full bg-black/60 text-xs text-white placeholder-neutral-500 px-3 py-1.5 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
+              />
+              <button
+                type="button"
+                onClick={handlePlayDirectUrl}
+                className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl shrink-0 active:scale-95 transition-all shadow-md cursor-pointer"
+              >
+                Play
+              </button>
+            </div>
+          </div>
         </div>
+      </div>
       ) : (
         /* ========================================================================= */
         /* "MY DOWNLOADS" SESSION MANAGER VIEW                                       */
