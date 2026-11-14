@@ -385,20 +385,20 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           <div
             className={`w-11 h-11 rounded-full flex items-center justify-center transition-all [transform:translateZ(0)] ${
               video.isLiked
-                ? 'bg-rose-500/25 border border-rose-500/40 text-rose-500 shadow-md shadow-rose-500/20'
+                ? 'bg-red-500/25 border border-red-500/40 text-red-500 shadow-md shadow-red-500/20'
                 : 'bg-neutral-900/90 hover:bg-neutral-800 text-white border border-white/10'
             }`}
           >
             <Heart
               className={`w-6 h-6 transition-all ${
                 video.isLiked
-                  ? 'fill-rose-500 text-rose-500 scale-110'
+                  ? 'fill-red-500 text-red-500 scale-110'
                   : 'text-white group-hover:scale-110'
               }`}
             />
           </div>
           <span className="text-[11px] font-bold text-white drop-shadow-md tabular-nums">
-            {formatCount(video.stats.likes)}
+            {video.stats.likes.toLocaleString()}
           </span>
         </button>
 
@@ -416,7 +416,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             <MessageCircle className="w-6 h-6 text-white" />
           </div>
           <span className="text-[11px] font-bold text-white drop-shadow-md tabular-nums">
-            {formatCount(video.stats.comments)}
+            {video.stats.comments.toLocaleString()}
           </span>
         </button>
 

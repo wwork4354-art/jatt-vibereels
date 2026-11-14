@@ -38,6 +38,7 @@ export interface VideoPost {
   };
   isLiked: boolean;
   isSaved: boolean;
+  isUserUploaded?: boolean;
   sound: {
     title: string;
     artist: string;
@@ -62,7 +63,15 @@ export interface UserAccount {
   bio?: string;
 }
 
-export type FeedTab = 'foryou' | 'following' | 'trending' | 'saved' | 'live' | 'downloads';
+export interface CreatorProfileData {
+  name: string;
+  username: string;
+  bio: string;
+  avatar: string;
+  baseFollowers: number;
+}
+
+export type FeedTab = 'foryou' | 'following' | 'trending' | 'saved' | 'live' | 'downloads' | 'profile';
 
 export type DownloadCategory = 'songs' | 'apps' | 'dramas' | 'movies' | 'cartoons' | 'quran';
 

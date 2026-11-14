@@ -1,3 +1,4 @@
+import React from 'react';
 import {
   Compass,
   Home,
@@ -7,12 +8,10 @@ import {
   Volume2,
   VolumeX,
   Keyboard,
-  Sparkles,
   Shield,
   LogIn,
   Flame,
   Radio,
-  Download,
   Camera,
   Film,
   User as UserIcon,
@@ -189,6 +188,19 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             )}
           </button>
 
+          <button
+            type="button"
+            onClick={() => onSelectTab('profile')}
+            className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl font-bold text-sm transition-all ${
+              currentTab === 'profile'
+                ? 'bg-neutral-800 text-pink-400 shadow-xs border border-pink-500/30'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
+            }`}
+          >
+            <UserIcon className="w-5 h-5 shrink-0" />
+            <span>Profile</span>
+          </button>
+
           {/* Admin Console Item */}
           {currentUser?.role === 'admin' && (
             <button
@@ -260,7 +272,12 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
 
         {/* User Account Quick Card in Sidebar */}
         {currentUser ? (
-          <div className="p-2.5 rounded-xl bg-neutral-900/60 border border-neutral-800 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => onSelectTab('profile')}
+            className="w-full p-2.5 rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/40 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+            title="Open Creator Profile"
+          >
             <div className="flex items-center gap-2 min-w-0">
               <img
                 src={currentUser.avatar}
@@ -283,7 +300,7 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             >
               {currentUser.role}
             </span>
-          </div>
+          </button>
         ) : (
           <button
             type="button"

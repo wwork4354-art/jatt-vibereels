@@ -3,14 +3,9 @@ import {
   Home,
   Compass,
   Plus,
-  Bookmark,
   User,
   Shield,
-  LogIn,
-  Upload,
-  Flame,
   Radio,
-  Download,
   Camera,
   Film,
   X,
@@ -31,6 +26,7 @@ interface MobileNavigationProps {
   onQuickVideoUpload?: (file: File, source?: 'live' | 'gallery') => void;
   savedCount: number;
   currentUser: UserAccount | null;
+  creatorAvatar?: string;
   onOpenLogin: () => void;
   onOpenRegister: () => void;
   onOpenAdmin: () => void;
@@ -47,6 +43,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onQuickVideoUpload,
   savedCount,
   currentUser,
+  creatorAvatar,
   onOpenLogin,
   onOpenRegister,
   onOpenAdmin,
@@ -259,15 +256,27 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 
         <button
           type="button"
-          onClick={() => onSelectTab('saved')}
+          onClick={() => onSelectTab('profile')}
           className={`relative flex flex-col items-center gap-0.5 min-w-[48px] min-h-[44px] justify-center transition-colors ${
-            currentTab === 'saved' ? 'text-amber-400 font-bold' : 'text-neutral-400 hover:text-white'
+            currentTab === 'profile' ? 'text-pink-400 font-bold' : 'text-neutral-400 hover:text-white'
           }`}
+          title="Creator Profile & Uploaded Videos"
         >
-          <Bookmark className="w-5 h-5" />
-          <span className="text-[10px]">Saved</span>
-          {savedCount > 0 && (
-            <span className="absolute top-1 right-2 w-2 h-2 rounded-full bg-amber-400" />
+          {creatorAvatar || currentUser?.avatar ? (
+            <img
+              src={currentUser?.avatar || creatorAvatar}
+              alt="Profile"
+              className={`w-5 h-5 rounded-full object-cover border ${
+                currentTab === 'profile' ? 'border-pink-400 ring-2 ring-pink-500/30' : 'border-neutral-600'
+              }`}
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <User className="w-5 h-5" />
+          )}
+          <span className="text-[10px]">Profile</span>
+          {savedCount > 0 && currentTab !== 'profile' && (
+            <span className="absolute top-1 right-2 w-1.5 h-1.5 rounded-full bg-pink-500" />
           )}
         </button>
       </nav>
@@ -317,6 +326,17 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 
             {/* Actions */}
             <div className="pt-1 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileProfileOpen(false);
+                  onSelectTab('profile');
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center justify-center gap-2"
+              >
+                <User className="w-4 h-4" />
+                <span>Open Creator Profile</span>
+              </button>
               {currentUser.role === 'admin' && (
                 <button
                   type="button"

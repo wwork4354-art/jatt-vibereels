@@ -19,13 +19,14 @@ import {
   ArrowRight,
   Eye,
 } from 'lucide-react';
-import { VideoPost, UserAccount } from '../types';
+import { VideoPost, UserAccount, CreatorProfileData } from '../types';
 import { soundEngine } from '../utils/soundEngine';
 
 interface ProCameraModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserAccount | null;
+  creatorProfile?: CreatorProfileData;
   onRecordSuccess: (newPost: VideoPost) => void;
   onSwitchToUploadFile: () => void;
   onShowToast: (msg: string) => void;
@@ -38,6 +39,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   isOpen,
   onClose,
   currentUser,
+  creatorProfile,
   onRecordSuccess,
   onSwitchToUploadFile,
   onShowToast,
@@ -303,10 +305,13 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
 
   // Publish newly captured reel
   const handlePublishReel = () => {
-    if (!currentUser) {
-      onShowToast('Please log in first to publish your recorded reel!');
-      return;
-    }
+    const authorName = currentUser?.name || creatorProfile?.name || 'Jatt Creator';
+    const authorUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
+    const authorAvatar =
+      currentUser?.avatar ||
+      creatorProfile?.avatar ||
+      'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+    const authorBio = currentUser?.bio || creatorProfile?.bio || 'VibeReels Pro Creator';
 
     const newPost: VideoPost = {
       id: `pro-reel-${Date.now()}`,
@@ -316,13 +321,14 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       videoUrl: recordedClipUrl || '',
       fallbackGradient: 'from-pink-900 via-purple-900 to-black',
       category: 'trending',
+      isUserUploaded: true,
       creator: {
-        name: currentUser.name,
-        username: currentUser.username,
-        avatar: currentUser.avatar,
+        name: authorName,
+        username: authorUsername,
+        avatar: authorAvatar,
         isVerified: true,
         isFollowing: true,
-        bio: currentUser.bio || 'VibeReels Pro Creator',
+        bio: authorBio,
       },
       stats: {
         likes: 1,
@@ -334,7 +340,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       isSaved: false,
       sound: {
         title: 'Original Pro Studio Audio',
-        artist: currentUser.name,
+        artist: authorName,
         trackType: 'future_bass',
       },
       commentsList: [],

@@ -5,10 +5,8 @@ import {
   UserPlus,
   Shield,
   LogOut,
-  Sparkles,
   Flame,
   Radio,
-  Download,
   Camera,
   Film,
   ChevronDown,
@@ -33,6 +31,7 @@ interface TopBarProps {
   onOpenDownloads?: () => void;
   onOpenProCamera?: () => void;
   onOpenAdmin: () => void;
+  onOpenProfile?: () => void;
   onLogout: () => void;
   currentTab?: string;
 }
@@ -47,6 +46,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenDownloads,
   onOpenProCamera,
   onOpenAdmin,
+  onOpenProfile,
   onLogout,
   currentTab,
 }) => {
@@ -271,6 +271,19 @@ export const TopBar: React.FC<TopBarProps> = ({
 
                 {/* Menu Actions */}
                 <div className="pt-1 flex flex-col gap-1.5">
+                  {onOpenProfile && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false);
+                        onOpenProfile();
+                      }}
+                      className="w-full py-2 px-3 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center gap-2 transition-colors"
+                    >
+                      <User className="w-4 h-4" />
+                      <span>Creator Profile & Videos</span>
+                    </button>
+                  )}
                   {currentUser.role === 'admin' && (
                     <button
                       type="button"

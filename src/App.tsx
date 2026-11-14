@@ -15,7 +15,7 @@ import {
   getStoredCurrentUser,
   saveStoredCurrentUser,
 } from './data/mockUsers';
-import { VideoPost, FeedTab, UserAccount, UserRole, UserStatus } from './types';
+import { VideoPost, FeedTab, UserAccount, UserRole, UserStatus, CreatorProfileData } from './types';
 import { VideoCard } from './components/VideoCard';
 import { CommentsDrawer } from './components/CommentsDrawer';
 import { ShareModal } from './components/ShareModal';
@@ -30,12 +30,46 @@ import { LiveStreamModal } from './components/LiveStreamModal';
 import { LiveStreamMainView } from './components/LiveStreamMainView';
 import { DownloadHub } from './components/DownloadHub';
 import { ProCameraModal } from './components/ProCameraModal';
+import { CreatorProfileView } from './components/CreatorProfileView';
 import { soundEngine } from './utils/soundEngine';
+
+const CREATOR_PROFILE_STORAGE_KEY = 'jatt_creator_profile';
+
+const getInitialCreatorProfile = (user: UserAccount | null): CreatorProfileData => {
+  try {
+    const raw = localStorage.getItem(CREATOR_PROFILE_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.name === 'string' && typeof parsed.username === 'string') {
+        return {
+          name: parsed.name,
+          username: parsed.username,
+          bio: parsed.bio || '',
+          avatar: parsed.avatar || 'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
+          baseFollowers: typeof parsed.baseFollowers === 'number' ? parsed.baseFollowers : 12400,
+        };
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  return {
+    name: user?.name || 'Jatt Creator',
+    username: user?.username || 'jatt_official',
+    bio: user?.bio || 'Creating neon vibes & Punjabi reels on Jatt VibeReels.',
+    avatar: user?.avatar || 'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
+    baseFollowers: 12400,
+  };
+};
 
 export default function App() {
   const [videos, setVideos] = useState<VideoPost[]>(INITIAL_VIDEOS);
   const [users, setUsers] = useState<UserAccount[]>(getStoredUsers);
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(getStoredCurrentUser);
+  const [creatorProfile, setCreatorProfile] = useState<CreatorProfileData>(() =>
+    getInitialCreatorProfile(getStoredCurrentUser())
+  );
 
   const [currentTab, setCurrentTab] = useState<FeedTab>('foryou');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -77,9 +111,54 @@ export default function App() {
     }, 2400);
   }, []);
 
+  // Update creator profile and persist to localStorage
+  const handleUpdateCreatorProfile = useCallback(
+    (updated: CreatorProfileData) => {
+      setCreatorProfile(updated);
+      try {
+        localStorage.setItem(CREATOR_PROFILE_STORAGE_KEY, JSON.stringify(updated));
+      } catch {
+        // ignore storage errors
+      }
+
+      if (currentUser) {
+        const updatedCurrentUser: UserAccount = {
+          ...currentUser,
+          name: updated.name,
+          username: updated.username,
+          bio: updated.bio,
+          avatar: updated.avatar,
+        };
+        updateCurrentUser(updatedCurrentUser);
+        const updatedUsers = users.map((u) =>
+          u.id === currentUser.id ? updatedCurrentUser : u
+        );
+        updateUsers(updatedUsers);
+      }
+
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.isUserUploaded
+            ? {
+                ...v,
+                creator: {
+                  ...v.creator,
+                  name: updated.name,
+                  username: updated.username,
+                  avatar: updated.avatar,
+                  bio: updated.bio,
+                },
+              }
+            : v
+        )
+      );
+    },
+    [currentUser, users, updateCurrentUser, updateUsers]
+  );
+
   // Filter videos based on current tab and selected tag
   const displayedVideos = videos.filter((v) => {
-    if (currentTab === 'live' || currentTab === 'downloads') {
+    if (currentTab === 'live' || currentTab === 'downloads' || currentTab === 'profile') {
       return false;
     }
     if (selectedTag) {
@@ -344,16 +423,18 @@ export default function App() {
             ? 'from-rose-900/50 via-pink-900/40 to-black'
             : 'from-pink-900/40 via-purple-900/30 to-black',
           category: 'trending',
+          isUserUploaded: true,
           creator: {
-            name: currentUser?.name || (isLive ? 'Live Mobile Creator' : 'Local Creator'),
-            username: currentUser?.username || 'user_' + Math.floor(1000 + Math.random() * 9000),
-            avatar: currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+            name: currentUser?.name || creatorProfile.name,
+            username: currentUser?.username || creatorProfile.username,
+            avatar: currentUser?.avatar || creatorProfile.avatar,
             isVerified: currentUser?.role === 'admin',
             isFollowing: false,
+            bio: currentUser?.bio || creatorProfile.bio,
           },
           sound: {
             title: isLive ? `Live Mic Audio - ${cleanTitle.slice(0, 24)}` : `Gallery Sound - ${cleanTitle.slice(0, 24)}`,
-            artist: currentUser?.name || (isLive ? 'Live Microphone' : 'Device Audio'),
+            artist: currentUser?.name || creatorProfile.name,
             trackType: 'tokyo_drift',
           },
           stats: {
@@ -422,7 +503,7 @@ export default function App() {
         showToast('Could not load the selected video file.');
       }
     },
-    [currentUser, users, updateUsers, updateCurrentUser, showToast]
+    [currentUser, creatorProfile, users, updateUsers, updateCurrentUser, showToast]
   );
 
   // User Management Handlers (Admin Panel)
@@ -468,6 +549,38 @@ export default function App() {
   const savedCount = videos.filter((v) => v.isSaved).length;
   const currentActiveVideo = displayedVideos[activeIndex];
 
+  // Real-time total likes & following count for Creator Profile
+  const userUploadedVideos = videos.filter(
+    (v) => v.isUserUploaded || v.creator.username === creatorProfile.username
+  );
+  const userVideosLikes = userUploadedVideos.reduce((sum, v) => sum + v.stats.likes, 0);
+  const likedFeedVideosCount = videos.filter(
+    (v) => !(v.isUserUploaded || v.creator.username === creatorProfile.username) && v.isLiked
+  ).length;
+  const totalProfileLikes = userVideosLikes + likedFeedVideosCount;
+  const followingCount = new Set(
+    videos.filter((v) => v.creator.isFollowing).map((v) => v.creator.username)
+  ).size;
+
+  // Play video from Creator Profile grid in full-screen vertical feed
+  const handlePlayVideoFromProfile = useCallback(
+    (videoId: string) => {
+      const targetIdx = videos.findIndex((v) => v.id === videoId);
+      setSelectedTag(null);
+      setCurrentTab('foryou');
+      if (targetIdx >= 0) {
+        setActiveIndex(targetIdx);
+        setTimeout(() => {
+          if (containerRef.current) {
+            const targetY = targetIdx * containerRef.current.clientHeight;
+            containerRef.current.scrollTo({ top: targetY, behavior: 'smooth' });
+          }
+        }, 60);
+      }
+    },
+    [videos]
+  );
+
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-neutral-950 text-white overflow-hidden select-none">
       {/* Top Bar with Registration, Login, Video Upload, Go Live & Admin Panel */}
@@ -487,6 +600,10 @@ export default function App() {
         onOpenDownloads={handleOpenDownloads}
         onOpenProCamera={() => setIsProCameraOpen(true)}
         onOpenAdmin={() => setIsAdminPanelOpen(true)}
+        onOpenProfile={() => {
+          setSelectedTag(null);
+          setCurrentTab('profile');
+        }}
         onLogout={handleLogout}
         currentTab={currentTab}
       />
@@ -547,6 +664,7 @@ export default function App() {
             onQuickVideoUpload={handleQuickGalleryUpload}
             savedCount={savedCount}
             currentUser={currentUser}
+            creatorAvatar={creatorProfile.avatar}
             onOpenLogin={() => {
               setAuthMode('login');
               setIsAuthOpen(true);
@@ -596,6 +714,22 @@ export default function App() {
                   return next;
                 });
               }}
+            />
+          ) : currentTab === 'profile' ? (
+            /* TIKTOK-STYLE CREATOR PROFILE TAB */
+            <CreatorProfileView
+              profile={creatorProfile}
+              onUpdateProfile={handleUpdateCreatorProfile}
+              videos={videos}
+              totalProfileLikes={totalProfileLikes}
+              followingCount={followingCount}
+              onPlayVideo={handlePlayVideoFromProfile}
+              onOpenUpload={() => setIsUploadOpen(true)}
+              onBackToFeed={() => {
+                setSelectedTag(null);
+                setCurrentTab('foryou');
+              }}
+              onShowToast={showToast}
             />
           ) : (
             <>
@@ -782,6 +916,7 @@ export default function App() {
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
         currentUser={currentUser}
+        creatorProfile={creatorProfile}
         onUploadSuccess={handleUploadSuccess}
       />
 
@@ -790,6 +925,7 @@ export default function App() {
         isOpen={isProCameraOpen}
         onClose={() => setIsProCameraOpen(false)}
         currentUser={currentUser}
+        creatorProfile={creatorProfile}
         onRecordSuccess={(newPost) => {
           setVideos((prev) => [newPost, ...prev]);
           setSelectedTag(null);

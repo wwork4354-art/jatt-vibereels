@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Upload, Video, Sparkles, Music, Film, CheckCircle2 } from 'lucide-react';
-import { VideoPost, UserAccount } from '../types';
+import { X, Upload, Video, Sparkles } from 'lucide-react';
+import { VideoPost, UserAccount, CreatorProfileData } from '../types';
 
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserAccount | null;
+  creatorProfile?: CreatorProfileData;
   onUploadSuccess: (newPost: VideoPost) => void;
 }
 
@@ -13,12 +14,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   isOpen,
   onClose,
   currentUser,
+  creatorProfile,
   onUploadSuccess,
 }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [hashtagsStr, setHashtagsStr] = useState('#foryou #viral #aesthetic');
-  const [creatorName, setCreatorName] = useState(currentUser?.name || 'You');
+  const [creatorName, setCreatorName] = useState(
+    currentUser?.name || creatorProfile?.name || 'Jatt Creator'
+  );
   const [videoSourceType, setVideoSourceType] = useState<'file' | 'url'>('file');
   const [videoUrlInput, setVideoUrlInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -32,8 +36,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   useEffect(() => {
     if (currentUser) {
       setCreatorName(currentUser.name);
+    } else if (creatorProfile) {
+      setCreatorName(creatorProfile.name);
     }
-  }, [currentUser]);
+  }, [currentUser, creatorProfile]);
 
   if (!isOpen) return null;
 
@@ -77,10 +83,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       .map((t) => t.replace(/^#/, '').trim())
       .filter(Boolean);
 
-    const authorName = currentUser?.name || creatorName.trim() || 'You';
-    const authorUsername = currentUser?.username || creatorName.toLowerCase().replace(/\s+/g, '_') || 'creator';
+    const authorName = currentUser?.name || creatorProfile?.name || creatorName.trim() || 'Jatt Creator';
+    const authorUsername =
+      currentUser?.username ||
+      creatorProfile?.username ||
+      creatorName.toLowerCase().replace(/\s+/g, '_') ||
+      'jatt_official';
     const authorAvatar =
       currentUser?.avatar ||
+      creatorProfile?.avatar ||
       `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(authorUsername)}&backgroundColor=ec4899`;
 
     const newPost: VideoPost = {
@@ -91,13 +102,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       videoUrl: finalVideoUrl,
       fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
       category: category,
+      isUserUploaded: true,
       creator: {
         name: authorName,
         username: authorUsername,
         avatar: authorAvatar,
         isVerified: currentUser?.role === 'admin' || currentUser?.role === 'creator',
         isFollowing: false,
-        bio: currentUser?.bio || 'Creator on VibeReels',
+        bio: currentUser?.bio || creatorProfile?.bio || 'Creator on VibeReels',
       },
       stats: {
         likes: 1,
