@@ -24,23 +24,140 @@ import {
   VolumeX,
   Youtube,
   Link2,
+  Bookmark,
+  Globe,
 } from 'lucide-react';
 import { DownloadItem, DownloadCategory } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
 import { soundEngine } from '../utils/soundEngine';
 
+const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
+
+interface GlobalHubTab {
+  id: 'all' | 'hollywood_english' | 'english_dubbed' | 'dramas' | 'songs' | 'viral';
+  label: string;
+  query: string;
+}
+
+const GLOBAL_HUB_TABS: GlobalHubTab[] = [
+  { id: 'all', label: 'All', query: '' },
+  {
+    id: 'hollywood_english',
+    label: 'Hollywood & English',
+    query: 'Hollywood English full action adventure movies clean HD',
+  },
+  {
+    id: 'english_dubbed',
+    label: 'English Dubbed Movies',
+    query: 'English dubbed full action sci-fi fantasy movies HD',
+  },
+  {
+    id: 'dramas',
+    label: 'Dramas',
+    query: 'Pakistani Turkish family dramas full episodes HD',
+  },
+  {
+    id: 'songs',
+    label: 'Trending Songs',
+    query: 'Trending Punjabi English hit songs official music video',
+  },
+  {
+    id: 'viral',
+    label: 'Viral Videos',
+    query: 'viral trending sports comedy nature clean videos HD',
+  },
+];
+
 const QUICK_MOVIEBOX_CHIPS = [
+  'Hollywood & English',
+  'English Dubbed Movies',
   'Trending Movies',
   'Punjabi Songs',
   'Pakistani Dramas',
-  'Action Movies',
+  'Viral Videos',
 ];
 
 const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
+  'Hollywood & English': [
+    {
+      id: 'yt-R6MlUcmOul8',
+      title: 'Tears of Steel - English Sci-Fi Action Short Film 4K',
+      subtitle: 'Blender Foundation Studio',
+      category: 'movies',
+      categoryLabel: 'Hollywood & English',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 180000000,
+      durationOrVersion: 'Movie 4K',
+      qualityBadge: '4K Stream',
+      thumbnailUrl: 'https://i.ytimg.com/vi/R6MlUcmOul8/hqdefault.jpg',
+      fallbackGradient: 'from-cyan-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Hollywood & English', 'Sci-Fi', '4K'],
+      description: 'Clean English sci-fi action short film in 4K UHD.',
+      youtubeId: 'R6MlUcmOul8',
+    },
+    {
+      id: 'yt-YE7VzlLtp-4',
+      title: 'Big Buck Bunny - Full Family Animated Adventure 4K 60fps',
+      subtitle: 'Blender Foundation',
+      category: 'movies',
+      categoryLabel: 'Hollywood & English',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 150000000,
+      durationOrVersion: '4K 60FPS',
+      qualityBadge: '4K Stream',
+      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/hqdefault.jpg',
+      fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Hollywood & English', 'Family', '4K'],
+      description: 'Award-winning family animated comedy film.',
+      youtubeId: 'YE7VzlLtp-4',
+    },
+  ],
+  'English Dubbed Movies': [
+    {
+      id: 'yt-eRsGyueVLvQ',
+      title: 'Sintel - English Fantasy Adventure Movie HD',
+      subtitle: 'Cinema Fantasy Studio',
+      category: 'movies',
+      categoryLabel: 'English Dubbed',
+      fileSize: 'Streaming HD',
+      sizeBytes: 125000000,
+      durationOrVersion: 'English HD',
+      qualityBadge: 'English Dubbed',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['English Dubbed', 'Fantasy', 'HD'],
+      description: 'Full dramatic fantasy adventure feature in English.',
+      youtubeId: 'eRsGyueVLvQ',
+    },
+    {
+      id: 'yt-aqz-KE-bpKQ',
+      title: 'Cosmos & Action Showcase - Open Cinema 4K 60FPS',
+      subtitle: 'Open Movie Channel',
+      category: 'movies',
+      categoryLabel: 'English Dubbed',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 160000000,
+      durationOrVersion: '4K 60FPS',
+      qualityBadge: 'English Dubbed',
+      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
+      fallbackGradient: 'from-indigo-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.8,
+      tags: ['English Dubbed', 'Action', '4K'],
+      description: 'High frame-rate cinematic showcase.',
+      youtubeId: 'aqz-KE-bpKQ',
+    },
+  ],
   'Trending Movies': [
     {
-      id: 'yt-q6T0wOMHKDU',
-      title: 'Action Blockbuster Full Movie in HD | Sci-Fi Thriller',
+      id: 'yt-aqz-KE-bpKQ',
+      title: 'Action Blockbuster Showcase | Open Movie 4K 60fps',
       subtitle: 'Cinema Central',
       category: 'movies',
       categoryLabel: 'YouTube Live',
@@ -81,7 +198,7 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       title: 'Top Punjabi Hit Tracks & Bhangra Bass Mix',
       subtitle: 'Punjabi Beats Official',
       category: 'songs',
-      categoryLabel: 'YouTube Live',
+      categoryLabel: 'Trending Songs',
       fileSize: 'Streaming HD',
       sizeBytes: 12000000,
       durationOrVersion: 'Audio/Video HD',
@@ -90,8 +207,28 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
       downloadsCount: 'YouTube',
       rating: 4.9,
-      tags: ['Punjabi Songs', 'Trending'],
+      tags: ['Punjabi Songs', 'Trending Songs'],
       description: 'Non-stop Punjabi music stream.',
+      youtubeId: '6MgsHSAcI9k',
+    },
+  ],
+  'Trending Songs': [
+    {
+      id: 'yt-6MgsHSAcI9k',
+      title: 'Global Top Music Mix & Punjabi Bass Hits HD',
+      subtitle: 'Vibe Music Global',
+      category: 'songs',
+      categoryLabel: 'Trending Songs',
+      fileSize: 'Streaming HD',
+      sizeBytes: 12000000,
+      durationOrVersion: 'Music HD',
+      qualityBadge: 'YouTube HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/6MgsHSAcI9k/hqdefault.jpg',
+      fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Trending Songs', 'Music'],
+      description: 'Clean trending global and Punjabi hits.',
       youtubeId: '6MgsHSAcI9k',
     },
   ],
@@ -101,7 +238,7 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       title: 'Sintel - Award Winning Fantasy Drama Short Film',
       subtitle: 'Blender Studio',
       category: 'dramas',
-      categoryLabel: 'YouTube Live',
+      categoryLabel: 'Dramas',
       fileSize: 'Streaming HD',
       sizeBytes: 85000000,
       durationOrVersion: 'Drama HD',
@@ -110,9 +247,49 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
       rating: 4.9,
-      tags: ['Pakistani Dramas', 'HD'],
+      tags: ['Dramas', 'HD'],
       description: 'Full dramatic feature stream.',
       youtubeId: 'eRsGyueVLvQ',
+    },
+  ],
+  Dramas: [
+    {
+      id: 'yt-eRsGyueVLvQ',
+      title: 'Epic Family & Fantasy Drama Showcase HD',
+      subtitle: 'Drama Central Global',
+      category: 'dramas',
+      categoryLabel: 'Dramas',
+      fileSize: 'Streaming HD',
+      sizeBytes: 85000000,
+      durationOrVersion: 'Drama HD',
+      qualityBadge: 'YouTube HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Dramas', 'HD'],
+      description: 'Clean family drama showcase.',
+      youtubeId: 'eRsGyueVLvQ',
+    },
+  ],
+  'Viral Videos': [
+    {
+      id: 'yt-aqz-KE-bpKQ',
+      title: 'Amazing 4K 60FPS Nature & Viral Shorts Compilation',
+      subtitle: 'Global Viral Hub',
+      category: 'movies',
+      categoryLabel: 'Viral Videos',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 95000000,
+      durationOrVersion: '4K 60FPS',
+      qualityBadge: 'Viral HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
+      fallbackGradient: 'from-emerald-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Viral Videos', '4K'],
+      description: 'Clean trending viral clips & highlights.',
+      youtubeId: 'aqz-KE-bpKQ',
     },
   ],
   'Action Movies': [
@@ -218,6 +395,30 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     }
     return 'catalog';
   });
+  const [activeGlobalTab, setActiveGlobalTab] = useState<GlobalHubTab['id']>(() => {
+    try {
+      const saved = sessionStorage.getItem('jatt_hub_global_tab') as GlobalHubTab['id'] | null;
+      if (saved && GLOBAL_HUB_TABS.some((t) => t.id === saved)) return saved;
+    } catch {
+      // ignore
+    }
+    return 'all';
+  });
+
+  // Offline Watchlist saved in localStorage
+  const [offlineWatchlist, setOfflineWatchlist] = useState<DownloadItem[]>(() => {
+    try {
+      const raw = localStorage.getItem(OFFLINE_WATCHLIST_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+
   const [directUrlInput, setDirectUrlInput] = useState<string>('');
 
   // Extract valid 11-char YouTube Video ID from any URL format or direct ID
@@ -287,14 +488,80 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     onShowToast('Playing in Movie Box! 🎬🔥');
   };
 
-  // Bulletproof multi-tier search: YouTube Data API v3 -> Public Invidious/Piped APIs -> Verified Local Fallback
-  const handleSearchYouTubeLive = async (targetQuery?: string) => {
+  // Toggle Offline Watchlist / Cache thumbnail locally for YouTube-sourced movies & videos
+  const handleToggleWatchlist = (item: DownloadItem) => {
+    setOfflineWatchlist((prev) => {
+      const exists = prev.some((w) => w.id === item.id);
+      const next = exists ? prev.filter((w) => w.id !== item.id) : [item, ...prev];
+      try {
+        localStorage.setItem(OFFLINE_WATCHLIST_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore quota errors
+      }
+      if (!exists && typeof caches !== 'undefined' && item.thumbnailUrl) {
+        caches
+          .open('jatt-watchlist-v1')
+          .then((cache) => cache.add(item.thumbnailUrl))
+          .catch(() => {});
+      }
+      if (!exists) {
+        soundEngine.playDownloadComplete();
+        onShowToast(`Saved "${item.title}" to Offline Watchlist!`);
+      } else {
+        onShowToast(`Removed "${item.title}" from Offline Watchlist`);
+      }
+      return next;
+    });
+  };
+
+  // Switch between Global Content Hub category tabs with instant sessionStorage cache
+  const handleSelectGlobalTab = (tab: GlobalHubTab) => {
+    setActiveGlobalTab(tab.id);
+    try {
+      sessionStorage.setItem('jatt_hub_global_tab', tab.id);
+    } catch {
+      // ignore
+    }
+
+    if (tab.id === 'all') {
+      setSearchSource('catalog');
+      setSelectedCategory('all');
+      setSearchQuery('');
+      return;
+    }
+
+    // Check sessionStorage per-tab cache first for instant switching
+    try {
+      const rawCache = sessionStorage.getItem('jatt_yt_tab_cache');
+      if (rawCache) {
+        const parsed = JSON.parse(rawCache) as Record<string, DownloadItem[]>;
+        if (Array.isArray(parsed?.[tab.id]) && parsed[tab.id].length > 0) {
+          setYoutubeLiveResults(parsed[tab.id]);
+          setSearchQuery(tab.label);
+          setSearchSource('youtube');
+          return;
+        }
+      }
+    } catch {
+      // ignore cache errors
+    }
+
+    setSearchQuery(tab.label);
+    void handleSearchYouTubeLive(tab.query, tab.id, tab.label);
+  };
+
+  // Bulletproof multi-tier search: YouTube Data API v3 (safeSearch=strict) -> Public Invidious/Piped -> Verified Local Fallback
+  const handleSearchYouTubeLive = async (
+    targetQuery?: string,
+    tabCacheKey?: GlobalHubTab['id'],
+    displayLabel?: string
+  ) => {
     const query = (targetQuery !== undefined ? targetQuery : searchQuery).trim();
     if (!query) {
       onShowToast('Type a movie, drama, or song title to search.');
       return;
     }
-    if (targetQuery !== undefined) {
+    if (targetQuery !== undefined && displayLabel === undefined) {
       setSearchQuery(targetQuery);
     }
 
@@ -319,10 +586,10 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     try {
       let mappedResults: DownloadItem[] = [];
 
-      // Tier 1: Official YouTube Data API v3 (only if key is configured)
+      // Tier 1: Official YouTube Data API v3 (safeSearch=strict for clean, family-friendly global results)
       if (effectiveKey) {
         try {
-          const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=18&type=video&q=${encodeURIComponent(
+          const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=18&type=video&safeSearch=strict&q=${encodeURIComponent(
             query
           )}&key=${encodeURIComponent(effectiveKey)}`;
           const res = await fetchWithTimeout(endpoint, 6000);
@@ -463,16 +730,16 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
       // Tier 3: Guaranteed local curated fallback so search never fails or errors out
       if (mappedResults.length === 0) {
-        const qLower = query.toLowerCase();
+        const lookupText = (displayLabel || query).toLowerCase();
         const curatedKey = Object.keys(CURATED_FALLBACK_VIDEOS).find(
-          (k) => qLower.includes(k.toLowerCase()) || k.toLowerCase().includes(qLower)
+          (k) => lookupText.includes(k.toLowerCase()) || k.toLowerCase().includes(lookupText)
         );
         const catalogMatches = INITIAL_DOWNLOADS.filter(
           (it) =>
             Boolean(it.youtubeId) &&
-            (it.title.toLowerCase().includes(qLower) ||
-              it.subtitle.toLowerCase().includes(qLower) ||
-              it.tags.some((t) => t.toLowerCase().includes(qLower)))
+            (it.title.toLowerCase().includes(lookupText) ||
+              it.subtitle.toLowerCase().includes(lookupText) ||
+              it.tags.some((t) => t.toLowerCase().includes(lookupText)))
         );
         const allCatalogYoutube = INITIAL_DOWNLOADS.filter((it) => Boolean(it.youtubeId));
 
@@ -488,9 +755,22 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
           }));
       }
 
+      if (tabCacheKey && mappedResults.length > 0) {
+        try {
+          const rawCache = sessionStorage.getItem('jatt_yt_tab_cache');
+          const parsed = rawCache ? JSON.parse(rawCache) : {};
+          parsed[tabCacheKey] = mappedResults;
+          sessionStorage.setItem('jatt_yt_tab_cache', JSON.stringify(parsed));
+        } catch {
+          // ignore
+        }
+      }
+
       setYoutubeLiveResults(mappedResults);
       setSearchSource('youtube');
-      onShowToast(`Showing ${mappedResults.length} playable videos for "${query}" 🎬`);
+      onShowToast(
+        `Showing ${mappedResults.length} playable videos${displayLabel ? ` in ${displayLabel}` : ` for "${query}"`}`
+      );
     } finally {
       setIsSearchingYouTube(false);
     }
@@ -750,10 +1030,10 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
               }`}
             >
               <HardDrive className="w-3.5 h-3.5" />
-              <span>My Downloads</span>
-              {completedDownloads.length > 0 && (
+              <span>Saved & Downloads</span>
+              {(completedDownloads.length + offlineWatchlist.length) > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-cyan-400 text-black text-[10px] font-black">
-                  {completedDownloads.length}
+                  {completedDownloads.length + offlineWatchlist.length}
                 </span>
               )}
             </button>
@@ -777,7 +1057,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
       {activeTab === 'marketplace' ? (
         /* ========================================================================= */
-        /* MARKETPLACE VIEW: TOP VIDEO PLAYER + SEARCH + IMMEDIATE VIDEO RESULTS GRID */
+        /* MARKETPLACE VIEW: TOP VIDEO PLAYER + GLOBAL HUB TABS + VIDEO GRID          */
         /* ========================================================================= */
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* ========================================================================= */}
@@ -786,8 +1066,8 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
           {previewItem && (
             <div className="shrink-0 bg-neutral-950 border-b border-pink-500/40 px-3 sm:px-6 py-3 shadow-2xl z-20">
               <div className="max-w-5xl mx-auto space-y-2.5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className="p-1.5 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 shrink-0">
                       <Youtube className="w-4 h-4 fill-red-500" />
                     </span>
@@ -800,14 +1080,47 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewItem(null)}
-                    className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                    <span>Close</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleWatchlist(previewItem)}
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer transition-colors ${
+                        offlineWatchlist.some((w) => w.id === previewItem.id)
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                          : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-200'
+                      }`}
+                    >
+                      <Bookmark
+                        className={`w-3.5 h-3.5 ${
+                          offlineWatchlist.some((w) => w.id === previewItem.id) ? 'fill-amber-400 text-amber-400' : ''
+                        }`}
+                      />
+                      <span className="hidden sm:inline">
+                        {offlineWatchlist.some((w) => w.id === previewItem.id) ? 'Saved' : 'Offline Watchlist'}
+                      </span>
+                    </button>
+
+                    {previewItem.youtubeId && (
+                      <a
+                        href={`https://www.youtube.com/watch?v=${previewItem.youtubeId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-1.5 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 text-xs font-bold flex items-center gap-1.5"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Download Helper</span>
+                      </a>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setPreviewItem(null)}
+                      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                      <span>Close</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="relative w-full aspect-video max-h-[36vh] sm:max-h-[340px] mx-auto rounded-xl sm:rounded-2xl overflow-hidden bg-black border border-neutral-800">
@@ -904,6 +1217,31 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   </select>
                 </div>
               )}
+            </div>
+
+            {/* Global Content Hub Dedicated Category Tabs */}
+            <div className="max-w-6xl mx-auto flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+              <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider shrink-0 flex items-center gap-1">
+                <Globe className="w-3.5 h-3.5" />
+                Global Hub:
+              </span>
+              {GLOBAL_HUB_TABS.map((tab) => {
+                const isTabActive = activeGlobalTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => handleSelectGlobalTab(tab)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition-all cursor-pointer active:scale-95 ${
+                      isTabActive
+                        ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white border-cyan-400 shadow-md shadow-pink-600/20'
+                        : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800 hover:border-pink-500/40'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Quick Movie Box YouTube Search Category Chips */}
@@ -1312,38 +1650,77 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             </div>
                           </div>
                         ) : (
-                          /* DEFAULT IDLE STATE: WATCH MOVIE BOX STREAM & GLOW DOWNLOAD BUTTON */
-                          <div className="flex items-center gap-2">
-                            {item.youtubeId && (
+                          /* DEFAULT IDLE STATE: WATCHLIST / DOWNLOAD HELPER / DIRECT DOWNLOAD */
+                          item.youtubeId ? (
+                            <div className="flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openVideoPlayer(item);
                                 }}
-                                className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600/25 to-pink-600/25 hover:from-red-600/40 hover:to-pink-600/40 text-red-300 font-bold text-xs flex items-center justify-center gap-1.5 border border-red-500/40 shadow-md active:scale-98 transition-all shrink-0 cursor-pointer"
-                                title="Watch in official standard YouTube embed player"
+                                className="py-2 px-3 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all shrink-0 cursor-pointer"
+                                title="Play in Movie Box Embed Player"
                               >
-                                <Youtube className="w-3.5 h-3.5 fill-red-500 text-red-500" />
-                                <span className="hidden sm:inline">Movie Box</span>
-                                <span className="sm:hidden">Play</span>
+                                <Play className="w-3.5 h-3.5 fill-white" />
+                                <span>Play</span>
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleStartDownload(item);
-                              }}
-                              className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:via-purple-500 hover:to-cyan-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-pink-600/35 hover:shadow-cyan-500/40 active:scale-98 transition-all border border-pink-400/40 group/btn min-w-0 cursor-pointer"
-                            >
-                              <Download className="w-3.5 h-3.5 text-white shrink-0 group-hover/btn:translate-y-0.5 transition-transform" />
-                              <span className="tracking-wide truncate">Download</span>
-                              <span className="text-[10px] font-bold text-neutral-200/80 bg-black/30 px-1 py-0.2 rounded-md shrink-0">
-                                {item.fileSize}
-                              </span>
-                            </button>
-                          </div>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleWatchlist(item);
+                                }}
+                                className={`flex-1 py-2 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border transition-all active:scale-98 cursor-pointer min-w-0 ${
+                                  offlineWatchlist.some((w) => w.id === item.id)
+                                    ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                                    : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200'
+                                }`}
+                                title="Save to Offline Watchlist"
+                              >
+                                <Bookmark
+                                  className={`w-3.5 h-3.5 shrink-0 ${
+                                    offlineWatchlist.some((w) => w.id === item.id)
+                                      ? 'fill-amber-400 text-amber-400'
+                                      : ''
+                                  }`}
+                                />
+                                <span className="truncate">
+                                  {offlineWatchlist.some((w) => w.id === item.id) ? 'Saved' : 'Watchlist'}
+                                </span>
+                              </button>
+
+                              <a
+                                href={`https://www.youtube.com/watch?v=${item.youtubeId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="py-2 px-2.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 font-bold text-xs flex items-center justify-center gap-1 shrink-0"
+                                title="External YouTube / Download Helper Link"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">Save / Link</span>
+                              </a>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStartDownload(item);
+                                }}
+                                className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:via-purple-500 hover:to-cyan-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-pink-600/35 hover:shadow-cyan-500/40 active:scale-98 transition-all border border-pink-400/40 group/btn min-w-0 cursor-pointer"
+                              >
+                                <Download className="w-3.5 h-3.5 text-white shrink-0 group-hover/btn:translate-y-0.5 transition-transform" />
+                                <span className="tracking-wide truncate">Download</span>
+                                <span className="text-[10px] font-bold text-neutral-200/80 bg-black/30 px-1 py-0.2 rounded-md shrink-0">
+                                  {item.fileSize}
+                                </span>
+                              </button>
+                            </div>
+                          )
                         )}
                       </div>
                     </div>
@@ -1394,44 +1771,110 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   <HardDrive className="w-6 h-6" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-white">Local App Storage</h2>
+                  <h2 className="text-base font-bold text-white">Offline Watchlist & Local Downloads</h2>
                   <p className="text-xs text-neutral-400">
-                    {completedDownloads.length} item(s) saved in this session · {totalDownloadedSizeStr} downloaded
+                    {offlineWatchlist.length} watchlist video(s) · {completedDownloads.length} downloaded file(s) ({totalDownloadedSizeStr})
                   </p>
                 </div>
               </div>
 
-              {completedDownloads.length > 0 && (
+              {(completedDownloads.length > 0 || offlineWatchlist.length > 0) && (
                 <button
                   type="button"
                   onClick={() => {
                     setDownloadStates({});
-                    onShowToast('Cleared all local downloads');
+                    setOfflineWatchlist([]);
+                    try {
+                      localStorage.removeItem(OFFLINE_WATCHLIST_STORAGE_KEY);
+                    } catch {
+                      // ignore
+                    }
+                    onShowToast('Cleared all saved watchlist items & local downloads');
                   }}
                   className="px-3.5 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/40 text-xs font-bold transition-all flex items-center gap-1.5"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  <span>Clear Storage</span>
+                  <span>Clear All</span>
                 </button>
               )}
             </div>
 
-            {completedDownloads.length === 0 ? (
+            {/* Saved YouTube Offline Watchlist Section */}
+            {offlineWatchlist.length > 0 && (
+              <div className="space-y-2.5">
+                <h3 className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                  <Bookmark className="w-3.5 h-3.5 fill-amber-400" />
+                  <span>Offline Watchlist ({offlineWatchlist.length})</span>
+                </h3>
+                {offlineWatchlist.map((item) => (
+                  <div
+                    key={`wl-${item.id}`}
+                    className="p-3.5 rounded-2xl bg-neutral-900/90 border border-amber-500/30 flex items-center justify-between gap-3 shadow-md"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={item.thumbnailUrl}
+                        alt={item.title}
+                        loading="lazy"
+                        decoding="async"
+                        className="w-16 h-11 rounded-xl object-cover border border-neutral-700 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-bold text-white truncate">{item.title}</h4>
+                        <p className="text-xs text-neutral-400 truncate">{item.subtitle}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openVideoPlayer(item)}
+                        className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-white" />
+                        <span>Play</span>
+                      </button>
+                      {item.youtubeId && (
+                        <a
+                          href={`https://www.youtube.com/watch?v=${item.youtubeId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-cyan-300 border border-neutral-700"
+                          title="Open External Watch / Download Helper"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleWatchlist(item)}
+                        className="p-2 text-neutral-400 hover:text-red-400 hover:bg-neutral-800 rounded-xl transition-colors cursor-pointer"
+                        title="Remove from watchlist"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {completedDownloads.length === 0 && offlineWatchlist.length === 0 ? (
               <div className="p-12 text-center text-neutral-400 rounded-2xl border border-dashed border-neutral-800 space-y-3">
                 <Download className="w-10 h-10 mx-auto text-neutral-600" />
-                <h3 className="text-sm font-bold text-neutral-300">No media downloaded yet</h3>
+                <h3 className="text-sm font-bold text-neutral-300">No saved videos or downloads yet</h3>
                 <p className="text-xs text-neutral-500 max-w-sm mx-auto">
-                  Browse the marketplace to download your favorite Punjabi songs, Android apps, 4K movies, or Quran recitations.
+                  Browse the Global Content Hub to save Hollywood movies, English dubbed films, dramas, or trending songs to your watchlist.
                 </p>
                 <button
                   type="button"
                   onClick={() => setActiveTab('marketplace')}
                   className="px-4 py-2 bg-gradient-to-r from-pink-600 to-purple-600 text-white text-xs font-bold rounded-xl shadow-md transition-all active:scale-95"
                 >
-                  Explore Marketplace
+                  Explore Global Hub
                 </button>
               </div>
-            ) : (
+            ) : completedDownloads.length > 0 ? (
               <div className="space-y-2.5">
                 {completedDownloads.map((item) => (
                   <div
@@ -1442,6 +1885,8 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                       <img
                         src={item.thumbnailUrl}
                         alt={item.title}
+                        loading="lazy"
+                        decoding="async"
                         className="w-14 h-14 rounded-xl object-cover border border-neutral-700 shrink-0"
                       />
                       <div className="min-w-0">
@@ -1478,7 +1923,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       )}

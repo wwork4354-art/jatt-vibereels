@@ -11,6 +11,7 @@ import {
   Film,
   ChevronDown,
   User,
+  Bell,
 } from 'lucide-react';
 import { UserAccount } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
@@ -32,6 +33,8 @@ interface TopBarProps {
   onOpenProCamera?: () => void;
   onOpenAdmin: () => void;
   onOpenProfile?: () => void;
+  onOpenActivity?: () => void;
+  unreadActivityCount?: number;
   onLogout: () => void;
   currentTab?: string;
 }
@@ -47,6 +50,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenProCamera,
   onOpenAdmin,
   onOpenProfile,
+  onOpenActivity,
+  unreadActivityCount = 0,
   onLogout,
   currentTab,
 }) => {
@@ -66,7 +71,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-40 bg-neutral-950/85 backdrop-blur-md border-b border-neutral-800/80 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4">
+    <header className="fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4 [transform:translateZ(0)]">
       {/* Brand Zone: Replaced text with Image Logo Tag */}
       <div className="flex items-center shrink-0">
         <img
@@ -153,6 +158,28 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span className="hidden sm:inline">Upload Video</span>
           <span className="sm:hidden">Upload</span>
         </button>
+
+        {/* Notifications / Creator Activity Button */}
+        {onOpenActivity && (
+          <button
+            type="button"
+            onClick={onOpenActivity}
+            className={`relative p-2 rounded-xl border transition-all active:scale-95 shadow-sm ${
+              currentTab === 'activity'
+                ? 'bg-pink-600/25 border-pink-500/50 text-pink-300'
+                : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700/80 text-neutral-300 hover:text-white'
+            }`}
+            title="Notifications, Activity & Post Insights"
+            aria-label="Creator Activity"
+          >
+            <Bell className="w-4 h-4" />
+            {unreadActivityCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-pink-500 text-white text-[9px] font-black flex items-center justify-center">
+                {unreadActivityCount > 9 ? '9+' : unreadActivityCount}
+              </span>
+            )}
+          </button>
+        )}
 
 
         {/* If Logged Out */}
@@ -244,7 +271,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
             {/* Interactive User Profile Menu Dropdown */}
             {isProfileMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-neutral-950 border border-neutral-800 rounded-2xl p-4 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in slide-in-from-top-2 duration-150 space-y-3.5">
+              <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-neutral-950 border border-neutral-800 rounded-2xl p-4 shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 duration-150 space-y-3.5 [transform:translateZ(0)]">
                 {/* User Info Header */}
                 <div className="flex items-center gap-3 pb-3 border-b border-neutral-800">
                   <img

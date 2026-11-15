@@ -12,14 +12,19 @@ import {
   Check,
   Music,
   CheckCircle2,
+  Download,
+  Eye,
 } from 'lucide-react';
 import { VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
 import { ProceduralCanvas } from './ProceduralCanvas';
+import { formatRelativeTime } from '../lib/supabaseService';
 
 interface VideoCardProps {
   video: VideoPost;
   isActive: boolean;
+  isNext?: boolean;
+  isNearViewport?: boolean;
   isMuted: boolean;
   onToggleMute: () => void;
   onLikeToggle: (id: string) => void;
@@ -27,6 +32,8 @@ interface VideoCardProps {
   onFollowToggle: (creatorUsername: string) => void;
   onOpenComments: (video: VideoPost) => void;
   onOpenShare: (video: VideoPost) => void;
+  onViewTracked?: (id: string) => void;
+  onDownloadTracked?: (id: string) => void;
   onHashtagClick?: (tag: string) => void;
   onShowToast: (msg: string) => void;
 }
@@ -38,9 +45,11 @@ interface FloatingHeart {
   rotation: number;
 }
 
-export const VideoCard: React.FC<VideoCardProps> = ({
+const VideoCardComponent: React.FC<VideoCardProps> = ({
   video,
   isActive,
+  isNext = false,
+  isNearViewport = true,
   isMuted,
   onToggleMute,
   onLikeToggle,
@@ -48,6 +57,8 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   onFollowToggle,
   onOpenComments,
   onOpenShare,
+  onViewTracked,
+  onDownloadTracked,
   onHashtagClick,
   onShowToast,
 }) => {
@@ -62,14 +73,40 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [floatingHearts, setFloatingHearts] = useState<FloatingHeart[]>([]);
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  const [isDownloadingReel, setIsDownloadingReel] = useState(false);
 
   const lastTapRef = useRef<number>(0);
+  const viewRecordedForActiveRef = useRef<boolean>(false);
 
-  // Smart Video Lazy-Loading: Only load and play the single video currently visible in viewport.
-  // Pause and unload (preload='none') off-screen videos immediately so memory stays low and scrolling is 60fps.
+  // Increment real-time post view count once the reel has been actively watched for 1.2s
   useEffect(() => {
-    const el = videoRef.current;
-    if (!el || video.mediaType === 'image') {
+    if (!isActive) {
+      viewRecordedForActiveRef.current = false;
+      return;
+    }
+    if (viewRecordedForActiveRef.current) return;
+
+    const timer = window.setTimeout(() => {
+      if (!viewRecordedForActiveRef.current) {
+        viewRecordedForActiveRef.current = true;
+        onViewTracked?.(video.id);
+      }
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [isActive, video.id, onViewTracked]);
+
+  // Smart Video Preloading & Lazy-Loading:
+  // 1) Active reel: plays immediately at 60fps
+  // 2) Next reel (isNext): preloads/buffers silently so scrolling feels instantaneous
+  // 3) Far off-screen reels: pause & flush buffer immediately to keep memory low
+  useEffect(() => {
+    if (video.mediaType === 'image') {
+      if (isNext && video.videoUrl) {
+        const prefetch = new Image();
+        prefetch.decoding = 'async';
+        prefetch.src = video.videoUrl;
+      }
       if (isActive && !isMuted) {
         soundEngine.playTrack(video.sound.trackType);
       } else if (!isActive) {
@@ -78,12 +115,14 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       return;
     }
 
+    const el = videoRef.current;
+    if (!el) return;
+
     if (isActive) {
       if (el.src !== video.videoUrl) {
         el.src = video.videoUrl;
       }
       el.preload = 'auto';
-      el.currentTime = 0;
       el.muted = isMuted;
       const playPromise = el.play();
       if (playPromise !== undefined) {
@@ -96,23 +135,38 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             }
           })
           .catch(() => {
-            // Autoplay policy or format error
             setIsPlaying(false);
           });
+      }
+    } else if (isNext) {
+      // Pre-buffer next reel silently for instant zero-lag swipe
+      el.pause();
+      setIsPlaying(false);
+      el.muted = true;
+      el.preload = 'auto';
+      if (video.videoUrl && el.src !== video.videoUrl) {
+        el.src = video.videoUrl;
+        try {
+          el.load();
+        } catch {
+          // ignore
+        }
       }
     } else {
       // Off-screen: pause, unload buffer, release hardware decoder
       el.pause();
       setIsPlaying(false);
-      el.removeAttribute('src');
-      el.preload = 'none';
-      try {
-        el.load(); // Forces immediate memory flush in mobile WebViews
-      } catch {
-        // ignore
+      if (el.hasAttribute('src')) {
+        el.removeAttribute('src');
+        el.preload = 'none';
+        try {
+          el.load();
+        } catch {
+          // ignore
+        }
       }
     }
-  }, [isActive, isMuted, video.videoUrl, video.mediaType, video.sound.trackType]);
+  }, [isActive, isNext, isMuted, video.videoUrl, video.mediaType, video.sound.trackType]);
 
   // Clean up decoder on unmount
   useEffect(() => {
@@ -251,7 +305,84 @@ export const VideoCard: React.FC<VideoCardProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
+  // Direct download to device gallery for videos/images in the feed
+  const handleDownloadMedia = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!video.videoUrl || isDownloadingReel) return;
+
+    const cleanName = (video.title || 'JattVibeReels_Media')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .slice(0, 40);
+    const ext =
+      video.mediaType === 'image'
+        ? 'jpg'
+        : video.videoUrl.toLowerCase().includes('.webm')
+        ? 'webm'
+        : 'mp4';
+    const filename = `${cleanName}_${Date.now()}.${ext}`;
+
+    setIsDownloadingReel(true);
+    soundEngine.playDownloadStart();
+    onShowToast('Saving to device gallery...');
+
+    try {
+      let downloadHref = video.videoUrl;
+      let createdObjectUrl: string | null = null;
+
+      if (!video.videoUrl.startsWith('blob:') && !video.videoUrl.startsWith('data:')) {
+        try {
+          const response = await fetch(video.videoUrl);
+          if (response.ok) {
+            const blob = await response.blob();
+            createdObjectUrl = URL.createObjectURL(blob);
+            downloadHref = createdObjectUrl;
+          }
+        } catch {
+          // Cross-origin fallback: let browser anchor handle download/open
+        }
+      }
+
+      const link = document.createElement('a');
+      link.href = downloadHref;
+      link.download = filename;
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      if (createdObjectUrl) {
+        setTimeout(() => URL.revokeObjectURL(createdObjectUrl!), 8000);
+      }
+
+      onDownloadTracked?.(video.id);
+      soundEngine.playDownloadComplete();
+      onShowToast('Downloaded! Check your phone Gallery / Downloads.');
+    } catch {
+      onDownloadTracked?.(video.id);
+      onShowToast('Download triggered (check browser downloads).');
+    } finally {
+      setIsDownloadingReel(false);
+    }
+  };
+
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  // Lightweight virtualized placeholder when far off-screen to keep scroll container at 60fps
+  if (!isNearViewport && !isActive && !isNext) {
+    return (
+      <div className="relative w-full h-[100dvh] snap-item bg-neutral-950 flex items-center justify-center overflow-hidden">
+        {video.posterUrl && (
+          <img
+            src={video.posterUrl}
+            alt={video.title}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-cover sm:object-contain sm:max-w-md opacity-60"
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full h-[100dvh] snap-item flex items-center justify-center bg-black select-none overflow-hidden">
@@ -265,6 +396,8 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           <img
             src={video.videoUrl}
             alt={video.title}
+            loading={isActive || isNext ? 'eager' : 'lazy'}
+            decoding="async"
             className="w-full h-full object-contain sm:max-w-md mx-auto [transform:translateZ(0)]"
           />
         ) : (
@@ -272,12 +405,12 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             {!videoError && (
               <video
                 ref={videoRef}
-                src={isActive ? video.videoUrl : undefined}
+                src={isActive || isNext ? video.videoUrl : undefined}
                 poster={video.posterUrl}
                 playsInline
                 loop
-                muted={isMuted}
-                preload={isActive ? 'auto' : 'none'}
+                muted={isMuted || !isActive}
+                preload={isActive || isNext ? 'auto' : 'none'}
                 crossOrigin="anonymous"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={() => {
@@ -357,6 +490,15 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             </>
           )}
         </button>
+
+        {/* Live View Counter Pill */}
+        <div
+          className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white text-[11px] font-bold tabular-nums [transform:translateZ(0)]"
+          title="Total Views"
+        >
+          <Eye className="w-3.5 h-3.5 text-cyan-400" />
+          <span>{formatCount(video.stats.views)}</span>
+        </div>
       </div>
 
       {/* Right Side Overlay Action Buttons */}
@@ -374,6 +516,8 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             <img
               src={video.creator.avatar}
               alt={video.creator.name}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full rounded-full object-cover"
               referrerPolicy="no-referrer"
             />
@@ -496,6 +640,23 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           </span>
         </button>
 
+        {/* Direct Download / Save to Gallery Button */}
+        <button
+          type="button"
+          disabled={isDownloadingReel}
+          onClick={handleDownloadMedia}
+          className="flex flex-col items-center gap-1 group active:scale-90 transition-transform disabled:opacity-60"
+          aria-label="Download or save to gallery"
+          title="Download / Save to Device Gallery"
+        >
+          <div className="w-11 h-11 rounded-full bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-300 border border-cyan-400/40 flex items-center justify-center transition-all group-hover:scale-105 [transform:translateZ(0)]">
+            <Download className={`w-5 h-5 text-cyan-300 ${isDownloadingReel ? 'animate-bounce' : ''}`} />
+          </div>
+          <span className="text-[11px] font-bold text-cyan-300 drop-shadow-md tabular-nums">
+            {isDownloadingReel ? 'Saving' : formatCount(video.stats.downloads)}
+          </span>
+        </button>
+
         {/* Spinning Vinyl Record with Floating Musical Notes */}
         <div
           className="relative mt-1 cursor-pointer"
@@ -538,7 +699,9 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             {video.creator.isVerified && (
               <CheckCircle2 className="w-4 h-4 text-sky-400 fill-sky-400/20" />
             )}
-            <span className="text-xs text-neutral-400 font-medium">· 1d ago</span>
+            <span className="text-xs text-neutral-400 font-medium">
+              · {video.createdAt ? formatRelativeTime(video.createdAt) : '1d ago'}
+            </span>
           </div>
 
           {/* Caption with Expand/Collapse */}
@@ -612,3 +775,5 @@ export const VideoCard: React.FC<VideoCardProps> = ({
     </div>
   );
 };
+
+export const VideoCard = React.memo(VideoCardComponent);

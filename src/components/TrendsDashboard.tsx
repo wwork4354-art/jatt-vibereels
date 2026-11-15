@@ -118,7 +118,7 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-5 overflow-y-auto animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2 sm:p-5 overflow-y-auto animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
@@ -323,6 +323,8 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                           <img
                             src={video.creator.avatar}
                             alt={video.creator.name}
+                            loading="lazy"
+                            decoding="async"
                             className="w-9 h-9 rounded-xl object-cover bg-neutral-800 shrink-0 border border-neutral-700/60"
                             referrerPolicy="no-referrer"
                           />
@@ -477,6 +479,8 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                       <img
                         src={video.creator.avatar}
                         alt={video.creator.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-11 h-11 rounded-xl object-cover bg-neutral-800 shrink-0 border border-neutral-700"
                         referrerPolicy="no-referrer"
                       />

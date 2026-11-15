@@ -15,6 +15,7 @@ import {
   Camera,
   Film,
   User as UserIcon,
+  Bell,
 } from 'lucide-react';
 import { FeedTab, UserAccount } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
@@ -31,6 +32,7 @@ interface SidebarDesktopProps {
   isMuted: boolean;
   onToggleMute: () => void;
   savedCount: number;
+  unreadActivityCount?: number;
   currentUser: UserAccount | null;
   onOpenAdmin: () => void;
   onOpenLogin: () => void;
@@ -47,6 +49,7 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
   isMuted,
   onToggleMute,
   savedCount,
+  unreadActivityCount = 0,
   currentUser,
   onOpenAdmin,
   onOpenLogin,
@@ -199,6 +202,26 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
           >
             <UserIcon className="w-5 h-5 shrink-0" />
             <span>Profile</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSelectTab('activity')}
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl font-bold text-sm transition-all ${
+              currentTab === 'activity'
+                ? 'bg-neutral-800 text-pink-400 shadow-xs border border-pink-500/30'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
+            }`}
+          >
+            <div className="flex items-center gap-3.5">
+              <Bell className="w-5 h-5 shrink-0" />
+              <span>Activity &amp; Insights</span>
+            </div>
+            {unreadActivityCount > 0 && (
+              <span className="text-[10px] bg-pink-500 px-2 py-0.5 rounded-full text-white font-black tabular-nums">
+                {unreadActivityCount > 99 ? '99+' : unreadActivityCount}
+              </span>
+            )}
           </button>
 
           {/* Admin Console Item */}

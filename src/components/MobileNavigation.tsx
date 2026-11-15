@@ -11,6 +11,7 @@ import {
   X,
   LogOut,
   Sparkles,
+  Bell,
 } from 'lucide-react';
 import { FeedTab, UserAccount } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
@@ -25,6 +26,7 @@ interface MobileNavigationProps {
   onOpenProCamera: () => void;
   onQuickVideoUpload?: (file: File, source?: 'live' | 'gallery') => void;
   savedCount: number;
+  unreadActivityCount?: number;
   currentUser: UserAccount | null;
   creatorAvatar?: string;
   onOpenLogin: () => void;
@@ -42,6 +44,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onOpenProCamera,
   onQuickVideoUpload,
   savedCount,
+  unreadActivityCount = 0,
   currentUser,
   creatorAvatar,
   onOpenLogin,
@@ -137,8 +140,27 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           </button>
         </div>
 
-        {/* Right Auth / Admin */}
+        {/* Right Activity Bell & Auth / Admin */}
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onSelectTab('activity')}
+            className={`relative p-1.5 rounded-lg border transition-colors ${
+              currentTab === 'activity'
+                ? 'bg-pink-600/25 border-pink-500/50 text-pink-300'
+                : 'bg-neutral-900 border-neutral-800 text-neutral-300'
+            }`}
+            title="Notifications & Activity"
+            aria-label="Activity"
+          >
+            <Bell className="w-4 h-4" />
+            {unreadActivityCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center">
+                {unreadActivityCount > 9 ? '9+' : unreadActivityCount}
+              </span>
+            )}
+          </button>
+
           {!currentUser ? (
             <button
               type="button"
@@ -284,7 +306,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
       {/* Mobile Profile & Developer Attribution Modal */}
       {isMobileProfileOpen && currentUser && (
         <div
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-end sm:items-center justify-center p-3 animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-black/90 flex items-end sm:items-center justify-center p-3 animate-in fade-in duration-150"
           onClick={() => setIsMobileProfileOpen(false)}
         >
           <div
@@ -369,15 +391,15 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* DUAL UPLOAD OPTIONS BOTTOM SHEET / MODAL MENU             */}
+      {/* UPLOAD & CAMERA OPTIONS BOTTOM SHEET MENU                 */}
       {/* ========================================================= */}
       {isUploadSheetOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end justify-center p-3 sm:p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-black/85 flex items-end justify-center p-3 sm:p-4 animate-in fade-in duration-150"
           onClick={() => setIsUploadSheetOpen(false)}
         >
           <div
-            className="w-full max-w-sm bg-neutral-950 border border-neutral-800 rounded-3xl p-5 shadow-2xl space-y-4 animate-in slide-in-from-bottom-5 duration-200 pb-safe"
+            className="w-full max-w-sm bg-neutral-950 border border-neutral-800 rounded-3xl p-5 shadow-2xl space-y-4 animate-in slide-in-from-bottom-5 duration-150 pb-safe [transform:translateZ(0)]"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Sheet Handle & Header */}
@@ -390,7 +412,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                   </div>
                   <div>
                     <h3 className="text-sm font-black text-white">Create New Reel</h3>
-                    <p className="text-[11px] text-neutral-400">Select upload method</p>
+                    <p className="text-[11px] text-neutral-400">Record HD 60fps with filters or upload</p>
                   </div>
                 </div>
                 <button
@@ -403,35 +425,35 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
               </div>
             </div>
 
-            {/* Two Distinct Upload Action Buttons */}
+            {/* Distinct Upload & Camera Action Buttons */}
             <div className="space-y-2.5 pt-1">
-              {/* Option 1: Record Live Video Button (capture="environment") */}
+              {/* Option 1: Live 4K/1080p 60FPS Camera with Live Canvas Filters */}
               <button
                 type="button"
                 onClick={() => {
                   setIsUploadSheetOpen(false);
-                  liveRecordInputRef.current?.click();
+                  onOpenProCamera();
                 }}
-                className="w-full p-4 rounded-2xl bg-gradient-to-r from-pink-600/20 via-rose-600/20 to-red-600/20 hover:from-pink-600/30 hover:to-red-600/30 border border-pink-500/40 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-pink-600/10"
+                className="w-full p-4 rounded-2xl bg-gradient-to-r from-pink-600/20 via-rose-600/20 to-amber-500/20 hover:from-pink-600/30 hover:to-amber-500/30 border border-pink-500/45 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-pink-600/10"
               >
                 <div className="flex items-center gap-3.5">
-                  <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-pink-600 to-rose-500 text-white flex items-center justify-center shadow-md shadow-pink-600/40 group-hover:scale-105 transition-transform">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-pink-600 to-amber-500 text-white flex items-center justify-center shadow-md shadow-pink-600/40 group-hover:scale-105 transition-transform">
                     <Camera className="w-5 h-5" />
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-black text-white group-hover:text-pink-300 transition-colors">
-                        Record Live Video
+                        Record Video & Live Filters
                       </span>
                       <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
                     </div>
                     <p className="text-xs text-neutral-400 mt-0.5">
-                      Record a new video right now using your phone camera
+                      4K/1080p 60fps live camera with Noir, Neon & Glow filters
                     </p>
                   </div>
                 </div>
-                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30">
-                  Live
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/35">
+                  HD 60fps
                 </span>
               </button>
 
@@ -475,17 +497,17 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                 <span>Post Video / Image with Custom Caption</span>
               </button>
 
-              {/* Heavy Pro 4K Camera Viewfinder Option */}
+              {/* Option 4: Direct Native Phone Camera Capture (fallback for APK WebViews) */}
               <button
                 type="button"
                 onClick={() => {
                   setIsUploadSheetOpen(false);
-                  onOpenProCamera();
+                  liveRecordInputRef.current?.click();
                 }}
                 className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Heavy Pro 4K Studio Camera Viewfinder</span>
+                <span>Quick Record via Phone Native Camera</span>
               </button>
             </div>
 

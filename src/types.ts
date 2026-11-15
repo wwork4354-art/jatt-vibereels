@@ -9,6 +9,7 @@ export interface CommentItem {
   };
   text: string;
   timestamp: string;
+  createdAt?: string;
   likes: number;
   isLiked: boolean;
 }
@@ -31,10 +32,12 @@ export interface VideoPost {
     bio?: string;
   };
   stats: {
+    views: number;
     likes: number;
     comments: number;
     shares: number;
     saves: number;
+    downloads: number;
   };
   isLiked: boolean;
   isSaved: boolean;
@@ -49,6 +52,25 @@ export interface VideoPost {
     trackType: 'ambient_lofi' | 'future_bass' | 'chill_synth' | 'cosmic_pulse' | 'tokyo_drift';
   };
   commentsList: CommentItem[];
+}
+
+export type InteractionType = 'like' | 'comment' | 'save' | 'download' | 'view' | 'follow';
+
+export interface ActivityEvent {
+  id: string;
+  postId: string;
+  postTitle: string;
+  postThumbnail?: string;
+  postMediaType?: 'video' | 'image';
+  postOwnerId?: string;
+  postOwnerUsername?: string;
+  actorId: string;
+  actorName: string;
+  actorUsername: string;
+  actorAvatar: string;
+  type: InteractionType;
+  commentText?: string;
+  createdAt: string;
 }
 
 export type UserRole = 'admin' | 'creator' | 'user';
@@ -76,7 +98,7 @@ export interface CreatorProfileData {
   baseFollowers: number;
 }
 
-export type FeedTab = 'foryou' | 'following' | 'trending' | 'saved' | 'live' | 'downloads' | 'profile';
+export type FeedTab = 'foryou' | 'following' | 'trending' | 'saved' | 'live' | 'downloads' | 'profile' | 'activity';
 
 export type DownloadCategory = 'songs' | 'apps' | 'dramas' | 'movies' | 'cartoons' | 'quran';
 

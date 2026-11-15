@@ -1,9 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import {
   ChevronUp,
   ChevronDown,
-  Volume2,
-  VolumeX,
   Sparkles,
   Music,
   Compass,
@@ -15,36 +13,93 @@ import {
   getStoredCurrentUser,
   saveStoredCurrentUser,
 } from './data/mockUsers';
-import { VideoPost, FeedTab, UserAccount, UserRole, UserStatus, CreatorProfileData } from './types';
+import { VideoPost, FeedTab, UserAccount, UserRole, UserStatus, CreatorProfileData, ActivityEvent, CommentItem } from './types';
 import { VideoCard } from './components/VideoCard';
-import { CommentsDrawer } from './components/CommentsDrawer';
-import { ShareModal } from './components/ShareModal';
-import { UploadModal } from './components/UploadModal';
 import { SidebarDesktop } from './components/SidebarDesktop';
 import { MobileNavigation } from './components/MobileNavigation';
 import { TopBar } from './components/TopBar';
-import { AuthModal } from './components/AuthModal';
-import { AdminPanel } from './components/AdminPanel';
-import { TrendsDashboard } from './components/TrendsDashboard';
-import { LiveStreamModal } from './components/LiveStreamModal';
-import { LiveStreamMainView } from './components/LiveStreamMainView';
-import { DownloadHub } from './components/DownloadHub';
-import { ProCameraModal } from './components/ProCameraModal';
-import { CreatorProfileView } from './components/CreatorProfileView';
 import { soundEngine } from './utils/soundEngine';
+
+// Lazy-load offscreen tabs and modals so initial page load is fast
+const CommentsDrawer = lazy(() =>
+  import('./components/CommentsDrawer').then((m) => ({ default: m.CommentsDrawer }))
+);
+const ShareModal = lazy(() =>
+  import('./components/ShareModal').then((m) => ({ default: m.ShareModal }))
+);
+const UploadModal = lazy(() =>
+  import('./components/UploadModal').then((m) => ({ default: m.UploadModal }))
+);
+const AuthModal = lazy(() =>
+  import('./components/AuthModal').then((m) => ({ default: m.AuthModal }))
+);
+const AdminPanel = lazy(() =>
+  import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel }))
+);
+const TrendsDashboard = lazy(() =>
+  import('./components/TrendsDashboard').then((m) => ({ default: m.TrendsDashboard }))
+);
+const LiveStreamModal = lazy(() =>
+  import('./components/LiveStreamModal').then((m) => ({ default: m.LiveStreamModal }))
+);
+const LiveStreamMainView = lazy(() =>
+  import('./components/LiveStreamMainView').then((m) => ({ default: m.LiveStreamMainView }))
+);
+const DownloadHub = lazy(() =>
+  import('./components/DownloadHub').then((m) => ({ default: m.DownloadHub }))
+);
+const ProCameraModal = lazy(() =>
+  import('./components/ProCameraModal').then((m) => ({ default: m.ProCameraModal }))
+);
+const CreatorProfileView = lazy(() =>
+  import('./components/CreatorProfileView').then((m) => ({ default: m.CreatorProfileView }))
+);
+const CreatorActivityView = lazy(() =>
+  import('./components/CreatorActivityView').then((m) => ({ default: m.CreatorActivityView }))
+);
+
+const LazyTabFallback = () => (
+  <div className="w-full h-full flex flex-col items-center justify-center bg-neutral-950 text-neutral-400 gap-2">
+    <div className="w-8 h-8 rounded-full border-2 border-pink-500 border-t-transparent animate-spin" />
+    <span className="text-xs font-bold tracking-wide text-neutral-400">Loading...</span>
+  </div>
+);
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import {
   USER_PROFILE_ID_KEY,
   SupabasePostRow,
+  SupabaseCommentRow,
+  SupabaseInteractionRow,
   getOrCreateUserProfileId,
   getStoredLikedPostIds,
   saveStoredLikedPostIds,
+  getStoredSavedPostIds,
+  saveStoredSavedPostIds,
+  getStoredFollowedUsernames,
+  saveStoredFollowedUsernames,
+  getStoredLocalPosts,
+  saveLocalPostRecord,
+  getStoredPostMetrics,
+  getStoredPostComments,
+  savePostCommentsForPost,
+  getStoredActivityEvents,
+  getActivityLastReadAt,
+  setActivityLastReadAt,
+  fileToPersistentDataUrl,
   fetchGlobalPosts,
+  fetchPostsByUser,
+  fetchUserProfileFromSupabase,
+  fetchCommentsFromSupabase,
+  fetchActivityEventsFromSupabase,
   uploadMediaToReelsBucket,
   createGlobalPostInSupabase,
-  updatePostLikesInSupabase,
+  updatePostMetricsInSupabase,
+  createCommentInSupabase,
+  recordActivityEventInSupabase,
   upsertUserProfileInSupabase,
   mapSupabaseRowToVideoPost,
+  mapSupabaseCommentRow,
+  mapSupabaseInteractionRow,
 } from './lib/supabaseService';
 
 const CREATOR_PROFILE_STORAGE_KEY = 'jatt_creator_profile';
@@ -83,13 +138,85 @@ const getInitialCreatorProfile = (user: UserAccount | null): CreatorProfileData 
   };
 };
 
+function mergeCommentsLists(baseList: CommentItem[], extraList: CommentItem[]): CommentItem[] {
+  if (!extraList || extraList.length === 0) return baseList;
+  const seen = new Set(baseList.map((c) => c.id));
+  const merged = [...baseList];
+  for (const item of extraList) {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      merged.unshift(item);
+    }
+  }
+  return merged;
+}
+
+function hydrateVideosFromStorage(
+  baseList: VideoPost[],
+  currentUserId: string,
+  currentUsername: string
+): VideoPost[] {
+  const likedIds = getStoredLikedPostIds();
+  const savedIds = getStoredSavedPostIds();
+  const followedUsernames = getStoredFollowedUsernames();
+  const localPosts = getStoredLocalPosts();
+  const metricsMap = getStoredPostMetrics();
+  const commentsMap = getStoredPostComments();
+
+  const seenIds = new Set<string>();
+  const combined = [...localPosts, ...baseList].filter((v) => {
+    if (seenIds.has(v.id)) return false;
+    seenIds.add(v.id);
+    return true;
+  });
+
+  return combined.map((v) => {
+    const m = metricsMap[v.id];
+    const extraComments = commentsMap[v.id] || [];
+    const mergedComments = mergeCommentsLists(v.commentsList || [], extraComments);
+    const isMine =
+      v.userId === currentUserId ||
+      Boolean(v.isUserUploaded) ||
+      v.creator.username.toLowerCase() === currentUsername.toLowerCase();
+
+    return {
+      ...v,
+      isUserUploaded: isMine,
+      isLiked: likedIds.has(v.id) ? true : v.isLiked && m?.likes === undefined ? v.isLiked : likedIds.has(v.id),
+      isSaved: savedIds.has(v.id) ? true : v.isSaved && m?.saves === undefined ? v.isSaved : savedIds.has(v.id),
+      creator: {
+        ...v.creator,
+        isFollowing: followedUsernames.has(v.creator.username) || v.creator.isFollowing,
+      },
+      commentsList: mergedComments,
+      stats: {
+        views: m?.views !== undefined ? Math.max(v.stats.views, m.views) : v.stats.views,
+        likes: m?.likes !== undefined ? m.likes : v.stats.likes,
+        comments: Math.max(
+          m?.comments !== undefined ? m.comments : v.stats.comments,
+          mergedComments.length
+        ),
+        shares: m?.shares !== undefined ? Math.max(v.stats.shares, m.shares) : v.stats.shares,
+        saves: m?.saves !== undefined ? m.saves : v.stats.saves,
+        downloads:
+          m?.downloads !== undefined ? Math.max(v.stats.downloads, m.downloads) : v.stats.downloads,
+      },
+    };
+  });
+}
+
 export default function App() {
-  const [videos, setVideos] = useState<VideoPost[]>(INITIAL_VIDEOS);
   const [users, setUsers] = useState<UserAccount[]>(getStoredUsers);
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(getStoredCurrentUser);
   const [creatorProfile, setCreatorProfile] = useState<CreatorProfileData>(() =>
     getInitialCreatorProfile(getStoredCurrentUser())
   );
+  const [videos, setVideos] = useState<VideoPost[]>(() => {
+    const initialProf = getInitialCreatorProfile(getStoredCurrentUser());
+    return hydrateVideosFromStorage(INITIAL_VIDEOS, initialProf.id, initialProf.username);
+  });
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>(getStoredActivityEvents);
+  const [lastReadActivityAt, setLastReadActivityAt] = useState<string>(getActivityLastReadAt);
 
   const [currentTab, setCurrentTab] = useState<FeedTab>('foryou');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -131,22 +258,73 @@ export default function App() {
     }, 2400);
   }, []);
 
-  // Load global posts from Supabase and listen for real-time inserts/likes
+  // Load global posts, user's own posts, comments & activity from Supabase + listen for real-time changes
   useEffect(() => {
     let isCancelled = false;
 
-    const loadGlobalFeed = async () => {
-      const globalPosts = await fetchGlobalPosts(creatorProfile.id);
-      if (isCancelled || globalPosts.length === 0) return;
+    const loadCloudData = async () => {
+      const [globalPosts, myCloudPosts, cloudProfile, commentsMap, cloudEvents] =
+        await Promise.all([
+          fetchGlobalPosts(creatorProfile.id, creatorProfile.username),
+          fetchPostsByUser(creatorProfile.id, creatorProfile.username, creatorProfile.id),
+          fetchUserProfileFromSupabase({ id: creatorProfile.id }),
+          fetchCommentsFromSupabase(),
+          fetchActivityEventsFromSupabase(),
+        ]);
 
-      setVideos((prev) => {
-        const globalIds = new Set(globalPosts.map((p) => p.id));
-        const remaining = prev.filter((v) => !globalIds.has(v.id));
-        return [...globalPosts, ...remaining];
-      });
+      if (isCancelled) return;
+
+      if (cloudProfile && cloudProfile.id === creatorProfile.id) {
+        setCreatorProfile((prev) => ({
+          ...prev,
+          name: cloudProfile.name || prev.name,
+          username: cloudProfile.username || prev.username,
+          bio: cloudProfile.bio || prev.bio,
+          avatar: cloudProfile.avatar || prev.avatar,
+        }));
+      }
+
+      if (cloudEvents.length > 0) {
+        setActivityEvents(cloudEvents);
+      }
+
+      const combinedCloud = [...myCloudPosts, ...globalPosts];
+      if (combinedCloud.length > 0 || Object.keys(commentsMap).length > 0) {
+        setVideos((prev) => {
+          const cloudMap = new Map<string, VideoPost>();
+          for (const p of combinedCloud) {
+            if (!cloudMap.has(p.id)) cloudMap.set(p.id, p);
+          }
+          const mergedRemote = Array.from(cloudMap.values()).map((p) => {
+            const cList = mergeCommentsLists(p.commentsList, commentsMap[p.id] || []);
+            return {
+              ...p,
+              commentsList: cList,
+              stats: {
+                ...p.stats,
+                comments: Math.max(p.stats.comments, cList.length),
+              },
+            };
+          });
+          const remaining = prev
+            .filter((v) => !cloudMap.has(v.id))
+            .map((v) => {
+              const cList = mergeCommentsLists(v.commentsList, commentsMap[v.id] || []);
+              return {
+                ...v,
+                commentsList: cList,
+                stats: {
+                  ...v.stats,
+                  comments: Math.max(v.stats.comments, cList.length),
+                },
+              };
+            });
+          return [...mergedRemote, ...remaining];
+        });
+      }
     };
 
-    loadGlobalFeed();
+    void loadCloudData();
 
     if (!supabase || !isSupabaseConfigured) {
       return () => {
@@ -165,7 +343,16 @@ export default function App() {
             const row = payload.new as SupabasePostRow;
             if (!row?.media_url) return;
             const likedIds = getStoredLikedPostIds();
-            const mapped = mapSupabaseRowToVideoPost(row, likedIds, creatorProfile.id);
+            const savedIds = getStoredSavedPostIds();
+            const followedUsernames = getStoredFollowedUsernames();
+            const mapped = mapSupabaseRowToVideoPost(
+              row,
+              likedIds,
+              creatorProfile.id,
+              savedIds,
+              followedUsernames,
+              creatorProfile.username
+            );
             setVideos((prev) => {
               if (prev.some((v) => v.id === mapped.id)) return prev;
               return [mapped, ...prev];
@@ -181,10 +368,26 @@ export default function App() {
                       description: row.caption || v.description,
                       stats: {
                         ...v.stats,
+                        views:
+                          typeof row.views_count === 'number'
+                            ? Math.max(v.stats.views, row.views_count)
+                            : v.stats.views,
                         likes:
                           typeof row.likes_count === 'number'
                             ? Math.max(0, row.likes_count)
                             : v.stats.likes,
+                        comments:
+                          typeof row.comments_count === 'number'
+                            ? Math.max(v.stats.comments, row.comments_count)
+                            : v.stats.comments,
+                        saves:
+                          typeof row.saves_count === 'number'
+                            ? Math.max(0, row.saves_count)
+                            : v.stats.saves,
+                        downloads:
+                          typeof row.downloads_count === 'number'
+                            ? Math.max(v.stats.downloads, row.downloads_count)
+                            : v.stats.downloads,
                       },
                     }
                   : v
@@ -193,13 +396,49 @@ export default function App() {
           }
         }
       )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'post_comments' },
+        (payload) => {
+          if (!payload.new) return;
+          const row = payload.new as SupabaseCommentRow;
+          const postId = String(row.post_id);
+          const mappedComment = mapSupabaseCommentRow(row);
+          setVideos((prev) =>
+            prev.map((v) => {
+              if (v.id !== postId) return v;
+              if (v.commentsList.some((c) => c.id === mappedComment.id)) return v;
+              const nextList = [mappedComment, ...v.commentsList];
+              savePostCommentsForPost(postId, nextList);
+              return {
+                ...v,
+                commentsList: nextList,
+                stats: { ...v.stats, comments: Math.max(v.stats.comments + 1, nextList.length) },
+              };
+            })
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'post_interactions' },
+        (payload) => {
+          if (!payload.new) return;
+          const row = payload.new as SupabaseInteractionRow;
+          const mappedEvent = mapSupabaseInteractionRow(row);
+          setActivityEvents((prev) => {
+            if (prev.some((ev) => ev.id === mappedEvent.id)) return prev;
+            return [mappedEvent, ...prev].slice(0, 200);
+          });
+        }
+      )
       .subscribe();
 
     return () => {
       isCancelled = true;
       client.removeChannel(channel);
     };
-  }, [creatorProfile.id]);
+  }, [creatorProfile.id, creatorProfile.username]);
 
   // Update creator profile and persist to localStorage + Supabase
   const handleUpdateCreatorProfile = useCallback(
@@ -231,9 +470,12 @@ export default function App() {
 
       setVideos((prev) =>
         prev.map((v) =>
-          v.userId === updated.id || v.isUserUploaded
+          v.userId === updated.id ||
+          v.isUserUploaded ||
+          v.creator.username.toLowerCase() === updated.username.toLowerCase()
             ? {
                 ...v,
+                isUserUploaded: true,
                 creator: {
                   ...v.creator,
                   name: updated.name,
@@ -249,25 +491,75 @@ export default function App() {
     [currentUser, users, updateCurrentUser, updateUsers]
   );
 
-  // Filter videos based on current tab and selected tag
-  const displayedVideos = videos.filter((v) => {
-    if (currentTab === 'live' || currentTab === 'downloads' || currentTab === 'profile') {
-      return false;
+  // Cross-device Profile & Posts Sync by @username
+  const handleSyncProfileByUsername = useCallback(
+    async (rawUsername: string): Promise<boolean> => {
+      const clean = rawUsername.trim().replace(/^@+/, '').toLowerCase();
+      if (!clean) return false;
+
+      const foundProfile = await fetchUserProfileFromSupabase({ username: clean });
+      if (!foundProfile) {
+        showToast(`No cloud profile found for @${clean} yet.`);
+        return false;
+      }
+
+      setCreatorProfile(foundProfile);
+      try {
+        localStorage.setItem(USER_PROFILE_ID_KEY, foundProfile.id);
+        localStorage.setItem(CREATOR_PROFILE_STORAGE_KEY, JSON.stringify(foundProfile));
+      } catch {
+        // ignore
+      }
+
+      const cloudUserPosts = await fetchPostsByUser(
+        foundProfile.id,
+        foundProfile.username,
+        foundProfile.id
+      );
+      if (cloudUserPosts.length > 0) {
+        setVideos((prev) => {
+          const map = new Map(cloudUserPosts.map((p) => [p.id, p]));
+          const rest = prev.filter((v) => !map.has(v.id));
+          return [...cloudUserPosts, ...rest];
+        });
+      }
+
+      showToast(
+        `Synced @${foundProfile.username} (${cloudUserPosts.length} ${
+          cloudUserPosts.length === 1 ? 'post' : 'posts'
+        } loaded)!`
+      );
+      return true;
+    },
+    [showToast]
+  );
+
+  // Filter videos based on current tab and selected tag (memoized for 60fps scroll & instant tab switching)
+  const displayedVideos = useMemo(() => {
+    if (
+      currentTab === 'live' ||
+      currentTab === 'downloads' ||
+      currentTab === 'profile' ||
+      currentTab === 'activity'
+    ) {
+      return [];
     }
-    if (selectedTag) {
-      return v.hashtags.includes(selectedTag);
-    }
-    if (currentTab === 'saved') {
-      return v.isSaved;
-    }
-    if (currentTab === 'following') {
-      return v.creator.isFollowing;
-    }
-    if (currentTab === 'trending') {
-      return v.stats.likes > 100000;
-    }
-    return true; // 'foryou'
-  });
+    return videos.filter((v) => {
+      if (selectedTag) {
+        return v.hashtags.includes(selectedTag);
+      }
+      if (currentTab === 'saved') {
+        return v.isSaved;
+      }
+      if (currentTab === 'following') {
+        return v.creator.isFollowing;
+      }
+      if (currentTab === 'trending') {
+        return v.stats.likes > 100000;
+      }
+      return true; // 'foryou'
+    });
+  }, [videos, currentTab, selectedTag]);
 
   // Switch dynamically to TikTok Live Stream view
   const handleOpenLive = useCallback(() => {
@@ -310,7 +602,53 @@ export default function App() {
     }
   }, [activeIndex, displayedVideos.length]);
 
-  // Like toggle (persists liked post IDs locally + updates likes_count globally in Supabase)
+  // Helper to get active actor info for activity logging & comments
+  const getActiveActor = useCallback(
+    () => ({
+      actorId: currentUser?.id || creatorProfile.id,
+      actorName: currentUser?.name || creatorProfile.name,
+      actorUsername: currentUser?.username || creatorProfile.username,
+      actorAvatar: currentUser?.avatar || creatorProfile.avatar,
+    }),
+    [currentUser, creatorProfile]
+  );
+
+  // Log engagement event to activity feed + Supabase
+  const logActivity = useCallback(
+    (
+      targetVideo: VideoPost,
+      type: ActivityEvent['type'],
+      commentText?: string
+    ) => {
+      const actor = getActiveActor();
+      void recordActivityEventInSupabase({
+        postId: targetVideo.id,
+        postTitle: targetVideo.title,
+        postThumbnail:
+          targetVideo.mediaType === 'image'
+            ? targetVideo.videoUrl
+            : targetVideo.posterUrl,
+        postMediaType: targetVideo.mediaType,
+        postOwnerId: targetVideo.userId,
+        postOwnerUsername: targetVideo.creator.username,
+        ...actor,
+        type,
+        commentText,
+      }).then((created) => {
+        setActivityEvents((prev) => [created, ...prev.filter((e) => e.id !== created.id)].slice(0, 200));
+      });
+    },
+    [getActiveActor]
+  );
+
+  // Mark notifications/activity read
+  const handleMarkActivityRead = useCallback(() => {
+    const now = new Date().toISOString();
+    setLastReadActivityAt(now);
+    setActivityLastReadAt(now);
+  }, []);
+
+  // Like toggle (persists liked post IDs locally + updates likes_count globally in Supabase + logs activity)
   const handleLikeToggle = useCallback(
     (id: string) => {
       const targetVideo = videos.find((v) => v.id === id);
@@ -345,11 +683,17 @@ export default function App() {
         )
       );
 
-      if (targetVideo.isSupabasePost) {
-        void updatePostLikesInSupabase(id, nextLikes);
+      void updatePostMetricsInSupabase(
+        id,
+        { likes: nextLikes },
+        targetVideo.isSupabasePost
+      );
+
+      if (willLike) {
+        logActivity(targetVideo, 'like');
       }
     },
-    [videos]
+    [videos, logActivity]
   );
 
   // Global Keyboard shortcuts
@@ -385,29 +729,136 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeIndex, displayedVideos, scrollToIndex, showToast, handleLikeToggle]);
 
-  // Save/Bookmark toggle
-  const handleSaveToggle = (id: string) => {
-    setVideos((prev) =>
-      prev.map((v) => {
-        if (v.id === id) {
-          const willSave = !v.isSaved;
-          showToast(willSave ? 'Saved to bookmarks!' : 'Removed from bookmarks');
-          return {
-            ...v,
-            isSaved: willSave,
-            stats: {
-              ...v.stats,
-              saves: willSave ? v.stats.saves + 1 : v.stats.saves - 1,
-            },
-          };
-        }
-        return v;
-      })
-    );
-  };
+  // Stable mute handler for VideoCard memoization
+  const handleToggleMute = useCallback(() => {
+    setIsMuted((prev) => {
+      const next = !prev;
+      soundEngine.setMuted(next);
+      return next;
+    });
+  }, []);
 
-  // Follow toggle
-  const handleFollowToggle = (username: string) => {
+  // Save/Bookmark toggle (persisted + logged)
+  const handleSaveToggle = useCallback(
+    (id: string) => {
+      const targetVideo = videos.find((v) => v.id === id);
+      if (!targetVideo) return;
+
+      const willSave = !targetVideo.isSaved;
+      const nextSaves = Math.max(
+        0,
+        willSave ? targetVideo.stats.saves + 1 : targetVideo.stats.saves - 1
+      );
+
+      const savedIds = getStoredSavedPostIds();
+      if (willSave) {
+        savedIds.add(id);
+      } else {
+        savedIds.delete(id);
+      }
+      saveStoredSavedPostIds(savedIds);
+
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.id === id
+            ? {
+                ...v,
+                isSaved: willSave,
+                stats: {
+                  ...v.stats,
+                  saves: nextSaves,
+                },
+              }
+            : v
+        )
+      );
+
+      showToast(willSave ? 'Saved to Profile Saved Videos!' : 'Removed from Saved Videos');
+      void updatePostMetricsInSupabase(
+        id,
+        { saves: nextSaves },
+        targetVideo.isSupabasePost
+      );
+
+      if (willSave) {
+        logActivity(targetVideo, 'save');
+      }
+    },
+    [videos, showToast, logActivity]
+  );
+
+  // Track real-time views when watched
+  const handleViewTracked = useCallback(
+    (id: string) => {
+      const targetVideo = videos.find((v) => v.id === id);
+      if (!targetVideo) return;
+      const nextViews = (targetVideo.stats.views || 0) + 1;
+
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.id === id
+            ? {
+                ...v,
+                stats: {
+                  ...v.stats,
+                  views: nextViews,
+                },
+              }
+            : v
+        )
+      );
+
+      void updatePostMetricsInSupabase(
+        id,
+        { views: nextViews },
+        targetVideo.isSupabasePost
+      );
+    },
+    [videos]
+  );
+
+  // Track real-time downloads + log creator activity
+  const handleDownloadTracked = useCallback(
+    (id: string) => {
+      const targetVideo = videos.find((v) => v.id === id);
+      if (!targetVideo) return;
+      const nextDownloads = (targetVideo.stats.downloads || 0) + 1;
+
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.id === id
+            ? {
+                ...v,
+                stats: {
+                  ...v.stats,
+                  downloads: nextDownloads,
+                },
+              }
+            : v
+        )
+      );
+
+      void updatePostMetricsInSupabase(
+        id,
+        { downloads: nextDownloads },
+        targetVideo.isSupabasePost
+      );
+      logActivity(targetVideo, 'download');
+    },
+    [videos, logActivity]
+  );
+
+  // Follow toggle (persisted)
+  const handleFollowToggle = useCallback((username: string) => {
+    const followed = getStoredFollowedUsernames();
+    const isCurrentlyFollowing = followed.has(username);
+    if (isCurrentlyFollowing) {
+      followed.delete(username);
+    } else {
+      followed.add(username);
+    }
+    saveStoredFollowedUsernames(followed);
+
     setVideos((prev) =>
       prev.map((v) => {
         if (v.creator.username === username) {
@@ -422,40 +873,50 @@ export default function App() {
         return v;
       })
     );
-  };
+  }, []);
 
-  // Add comment
+  const handleOpenComments = useCallback((vid: VideoPost) => setCommentsVideo(vid), []);
+  const handleOpenShare = useCallback((vid: VideoPost) => setShareVideo(vid), []);
+  const handleHashtagClick = useCallback((tag: string) => setSelectedTag(tag), []);
+
+  // Add comment (real username + ISO timestamp + persistent DB/local sync + activity log)
   const handleAddComment = (text: string) => {
     if (!commentsVideo) return;
-    const authorName = currentUser?.name || 'You';
-    const authorUsername = currentUser?.username || 'you';
-    const authorAvatar =
-      currentUser?.avatar ||
-      'https://api.dicebear.com/7.x/bottts/svg?seed=YouUser&backgroundColor=ec4899';
+    const actor = getActiveActor();
+    const nowIso = new Date().toISOString();
 
-    const newComment = {
-      id: `comm-${Date.now()}`,
+    const newComment: CommentItem = {
+      id: `comm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       user: {
-        name: authorName,
-        username: authorUsername,
-        avatar: authorAvatar,
-        isCreator: currentUser?.role === 'creator',
+        name: actor.actorName,
+        username: actor.actorUsername,
+        avatar: actor.actorAvatar,
+        isCreator:
+          currentUser?.role === 'creator' ||
+          commentsVideo.userId === creatorProfile.id ||
+          commentsVideo.creator.username === actor.actorUsername,
         isVerified: currentUser?.role === 'admin' || currentUser?.role === 'creator',
       },
       text,
       timestamp: 'Just now',
+      createdAt: nowIso,
       likes: 0,
       isLiked: false,
     };
 
+    const nextCommentsList = [newComment, ...commentsVideo.commentsList];
+    const nextCommentsCount = Math.max(
+      commentsVideo.stats.comments + 1,
+      nextCommentsList.length
+    );
+
     setVideos((prev) =>
       prev.map((v) => {
         if (v.id === commentsVideo.id) {
-          const updatedComments = [newComment, ...v.commentsList];
-          const updatedVideo = {
+          const updatedVideo: VideoPost = {
             ...v,
-            stats: { ...v.stats, comments: v.stats.comments + 1 },
-            commentsList: updatedComments,
+            stats: { ...v.stats, comments: nextCommentsCount },
+            commentsList: nextCommentsList,
           };
           setCommentsVideo(updatedVideo);
           return updatedVideo;
@@ -463,6 +924,15 @@ export default function App() {
         return v;
       })
     );
+
+    void createCommentInSupabase({
+      postId: commentsVideo.id,
+      userId: actor.actorId,
+      comment: newComment,
+      nextCommentsList,
+      isSupabasePost: commentsVideo.isSupabasePost,
+    });
+    logActivity(commentsVideo, 'comment', text);
   };
 
   // Like comment
@@ -536,7 +1006,13 @@ export default function App() {
         }
 
         const uploadedUrl = await uploadMediaToReelsBucket(file, 'posts', file.name);
-        const finalMediaUrl = uploadedUrl || localPreviewUrl;
+        let finalMediaUrl = uploadedUrl || localPreviewUrl;
+        if (!uploadedUrl) {
+          const persistentDataUrl = await fileToPersistentDataUrl(file);
+          if (persistentDataUrl) {
+            finalMediaUrl = persistentDataUrl;
+          }
+        }
 
         const authorName = currentUser?.name || creatorProfile.name;
         const authorUsername = currentUser?.username || creatorProfile.username;
@@ -573,6 +1049,7 @@ export default function App() {
             userId: creatorProfile.id,
             mediaType,
             isUserUploaded: true,
+            createdAt: new Date().toISOString(),
             creator: {
               name: authorName,
               username: authorUsername,
@@ -591,16 +1068,19 @@ export default function App() {
               trackType: 'tokyo_drift',
             },
             stats: {
+              views: 0,
               likes: 0,
               comments: 0,
               shares: 0,
               saves: 0,
+              downloads: 0,
             },
             isLiked: false,
             isSaved: false,
             commentsList: [],
           };
 
+        saveLocalPostRecord(finalPost);
         // 1. Prepend this new post to the top of the main feed array (deduping realtime)
         setVideos((prev) => [finalPost, ...prev.filter((v) => v.id !== finalPost.id)]);
 
@@ -677,6 +1157,18 @@ export default function App() {
 
   const handleLoginSuccess = (user: UserAccount) => {
     updateCurrentUser(user);
+    void handleSyncProfileByUsername(user.username).then((synced) => {
+      if (!synced) {
+        const nextProfile: CreatorProfileData = {
+          ...creatorProfile,
+          name: user.name,
+          username: user.username,
+          avatar: user.avatar || creatorProfile.avatar,
+          bio: user.bio || creatorProfile.bio,
+        };
+        handleUpdateCreatorProfile(nextProfile);
+      }
+    });
     showToast(`Welcome back, @${user.username}! (${user.role.toUpperCase()})`);
   };
 
@@ -685,29 +1177,42 @@ export default function App() {
     showToast('You have logged out');
   };
 
-  const savedCount = videos.filter((v) => v.isSaved).length;
+  const savedCount = useMemo(() => videos.filter((v) => v.isSaved).length, [videos]);
+  const unreadActivityCount = useMemo(() => {
+    if (!lastReadActivityAt) return activityEvents.length;
+    const cutoff = new Date(lastReadActivityAt).getTime();
+    return activityEvents.filter((ev) => new Date(ev.createdAt).getTime() > cutoff).length;
+  }, [activityEvents, lastReadActivityAt]);
   const currentActiveVideo = displayedVideos[activeIndex];
 
-  // Real-time total likes & following count for Creator Profile
-  const userUploadedVideos = videos.filter(
-    (v) =>
-      v.userId === creatorProfile.id ||
-      v.isUserUploaded ||
-      v.creator.username === creatorProfile.username
-  );
-  const userVideosLikes = userUploadedVideos.reduce((sum, v) => sum + v.stats.likes, 0);
-  const likedFeedVideosCount = videos.filter(
-    (v) =>
-      !(
+  // Real-time total likes & following count for Creator Profile (memoized)
+  const { totalProfileLikes, followingCount } = useMemo(() => {
+    let likesSum = 0;
+    let likedOthers = 0;
+    const followedSet = new Set<string>();
+
+    for (const v of videos) {
+      const isMine =
         v.userId === creatorProfile.id ||
         v.isUserUploaded ||
-        v.creator.username === creatorProfile.username
-      ) && v.isLiked
-  ).length;
-  const totalProfileLikes = userVideosLikes + likedFeedVideosCount;
-  const followingCount = new Set(
-    videos.filter((v) => v.creator.isFollowing).map((v) => v.creator.username)
-  ).size;
+        v.creator.username === creatorProfile.username;
+
+      if (isMine) {
+        likesSum += v.stats.likes;
+      } else if (v.isLiked) {
+        likedOthers += 1;
+      }
+
+      if (v.creator.isFollowing) {
+        followedSet.add(v.creator.username);
+      }
+    }
+
+    return {
+      totalProfileLikes: likesSum + likedOthers,
+      followingCount: followedSet.size,
+    };
+  }, [videos, creatorProfile.id, creatorProfile.username]);
 
   // Play video from Creator Profile grid in full-screen vertical feed
   const handlePlayVideoFromProfile = useCallback(
@@ -751,13 +1256,19 @@ export default function App() {
           setSelectedTag(null);
           setCurrentTab('profile');
         }}
+        onOpenActivity={() => {
+          setSelectedTag(null);
+          setCurrentTab('activity');
+          handleMarkActivityRead();
+        }}
+        unreadActivityCount={unreadActivityCount}
         onLogout={handleLogout}
         currentTab={currentTab}
       />
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-60 bg-neutral-900/95 text-white px-4 py-2 rounded-full border border-neutral-700/80 shadow-2xl backdrop-blur-md text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-3 duration-200">
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-60 bg-neutral-900/95 text-white px-4 py-2 rounded-full border border-neutral-700/80 shadow-xl text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-3 duration-150 [transform:translateZ(0)]">
           <Sparkles className="w-3.5 h-3.5 text-pink-400" />
           <span>{toastMessage}</span>
         </div>
@@ -786,6 +1297,7 @@ export default function App() {
             });
           }}
           savedCount={savedCount}
+          unreadActivityCount={unreadActivityCount}
           currentUser={currentUser}
           onOpenAdmin={() => setIsAdminPanelOpen(true)}
           onOpenLogin={() => {
@@ -803,6 +1315,9 @@ export default function App() {
               setSelectedTag(null);
               setCurrentTab(tab);
               setActiveIndex(0);
+              if (tab === 'activity') {
+                handleMarkActivityRead();
+              }
             }}
             onOpenUpload={() => setIsUploadOpen(true)}
             onOpenTrends={() => setIsTrendsOpen(true)}
@@ -810,6 +1325,7 @@ export default function App() {
             onOpenProCamera={() => setIsProCameraOpen(true)}
             onQuickVideoUpload={handleQuickGalleryUpload}
             savedCount={savedCount}
+            unreadActivityCount={unreadActivityCount}
             currentUser={currentUser}
             creatorAvatar={creatorProfile.avatar}
             onOpenLogin={() => {
@@ -827,62 +1343,76 @@ export default function App() {
 
           {currentTab === 'live' ? (
             /* DYNAMIC TIKTOK-STYLE LIVE STREAM LAYOUT IN MAIN VIEW */
-            <LiveStreamMainView
-              currentUser={currentUser}
-              onSelectTab={(tab) => {
-                setSelectedTag(null);
-                setCurrentTab(tab);
-                setActiveIndex(0);
-              }}
-              onShowToast={showToast}
-              isMuted={isMuted}
-              onToggleMute={() => {
-                setIsMuted((prev) => {
-                  const next = !prev;
-                  soundEngine.setMuted(next);
-                  return next;
-                });
-              }}
-            />
+            <Suspense fallback={<LazyTabFallback />}>
+              <LiveStreamMainView
+                currentUser={currentUser}
+                onSelectTab={(tab) => {
+                  setSelectedTag(null);
+                  setCurrentTab(tab);
+                  setActiveIndex(0);
+                }}
+                onShowToast={showToast}
+                isMuted={isMuted}
+                onToggleMute={handleToggleMute}
+              />
+            </Suspense>
           ) : currentTab === 'downloads' ? (
             /* ALL-IN-ONE DOWNLOAD HUB (SONGS, APPS, DRAMAS, MOVIES, CARTOONS, QURAN) */
-            <DownloadHub
-              onBackToFeed={() => {
-                setSelectedTag(null);
-                setCurrentTab('foryou');
-                setActiveIndex(0);
-              }}
-              onShowToast={showToast}
-              isMuted={isMuted}
-              onToggleMute={() => {
-                setIsMuted((prev) => {
-                  const next = !prev;
-                  soundEngine.setMuted(next);
-                  return next;
-                });
-              }}
-            />
+            <Suspense fallback={<LazyTabFallback />}>
+              <DownloadHub
+                onBackToFeed={() => {
+                  setSelectedTag(null);
+                  setCurrentTab('foryou');
+                  setActiveIndex(0);
+                }}
+                onShowToast={showToast}
+                isMuted={isMuted}
+                onToggleMute={handleToggleMute}
+              />
+            </Suspense>
           ) : currentTab === 'profile' ? (
             /* TIKTOK-STYLE CREATOR PROFILE TAB */
-            <CreatorProfileView
-              profile={creatorProfile}
-              onUpdateProfile={handleUpdateCreatorProfile}
-              videos={videos}
-              totalProfileLikes={totalProfileLikes}
-              followingCount={followingCount}
-              onPlayVideo={handlePlayVideoFromProfile}
-              onOpenUpload={() => setIsUploadOpen(true)}
-              onBackToFeed={() => {
-                setSelectedTag(null);
-                setCurrentTab('foryou');
-              }}
-              onShowToast={showToast}
-            />
+            <Suspense fallback={<LazyTabFallback />}>
+              <CreatorProfileView
+                profile={creatorProfile}
+                onUpdateProfile={handleUpdateCreatorProfile}
+                onSyncProfileByUsername={handleSyncProfileByUsername}
+                videos={videos}
+                activityEvents={activityEvents}
+                unreadActivityCount={unreadActivityCount}
+                onMarkActivityRead={handleMarkActivityRead}
+                totalProfileLikes={totalProfileLikes}
+                followingCount={followingCount}
+                onPlayVideo={handlePlayVideoFromProfile}
+                onOpenUpload={() => setIsUploadOpen(true)}
+                onBackToFeed={() => {
+                  setSelectedTag(null);
+                  setCurrentTab('foryou');
+                }}
+                onShowToast={showToast}
+              />
+            </Suspense>
+          ) : currentTab === 'activity' ? (
+            /* CREATOR NOTIFICATIONS / ACTIVITY LOG & POST INSIGHTS */
+            <Suspense fallback={<LazyTabFallback />}>
+              <CreatorActivityView
+                events={activityEvents}
+                videos={videos}
+                profile={creatorProfile}
+                onPlayVideo={handlePlayVideoFromProfile}
+                onMarkAllRead={handleMarkActivityRead}
+                onBackToFeed={() => {
+                  setSelectedTag(null);
+                  setCurrentTab('foryou');
+                }}
+                onShowToast={showToast}
+              />
+            </Suspense>
           ) : (
             <>
               {/* Filter bar pill if tag is selected */}
               {selectedTag && (
-                <div className="absolute top-16 sm:top-4 left-1/2 -translate-x-1/2 z-40 bg-neutral-900/90 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-pink-500/50 flex items-center gap-2 text-xs shadow-xl">
+                <div className="absolute top-16 sm:top-4 left-1/2 -translate-x-1/2 z-40 bg-neutral-900/95 px-3.5 py-1.5 rounded-full border border-pink-500/50 flex items-center gap-2 text-xs shadow-lg [transform:translateZ(0)]">
 
                   <span className="text-pink-400 font-bold">#{selectedTag}</span>
                   <button
@@ -928,20 +1458,18 @@ export default function App() {
                         key={video.id}
                         video={video}
                         isActive={idx === activeIndex}
+                        isNext={idx === activeIndex + 1}
+                        isNearViewport={Math.abs(idx - activeIndex) <= 2}
                         isMuted={isMuted}
-                        onToggleMute={() => {
-                          setIsMuted((prev) => {
-                            const next = !prev;
-                            soundEngine.setMuted(next);
-                            return next;
-                          });
-                        }}
+                        onToggleMute={handleToggleMute}
                         onLikeToggle={handleLikeToggle}
                         onSaveToggle={handleSaveToggle}
                         onFollowToggle={handleFollowToggle}
-                        onOpenComments={(vid) => setCommentsVideo(vid)}
-                        onOpenShare={(vid) => setShareVideo(vid)}
-                        onHashtagClick={(tag) => setSelectedTag(tag)}
+                        onOpenComments={handleOpenComments}
+                        onOpenShare={handleOpenShare}
+                        onViewTracked={handleViewTracked}
+                        onDownloadTracked={handleDownloadTracked}
+                        onHashtagClick={handleHashtagClick}
                         onShowToast={showToast}
                       />
                     ))}
@@ -950,9 +1478,9 @@ export default function App() {
               </div>
 
               {/* Desktop Flanking Navigation & Info Widgets (xl screens) */}
-              <div className="hidden xl:flex flex-col gap-6 absolute right-8 top-1/2 -translate-y-1/2 z-30">
+              <div className="hidden xl:flex flex-col gap-6 absolute right-8 top-1/2 -translate-y-1/2 z-30 [transform:translateZ(0)]">
                 {/* Next / Previous Snap Buttons */}
-                <div className="flex flex-col gap-2 p-1.5 bg-neutral-900/90 rounded-2xl border border-neutral-800 shadow-xl backdrop-blur-md">
+                <div className="flex flex-col gap-2 p-1.5 bg-neutral-900/95 rounded-2xl border border-neutral-800 shadow-lg">
                   <button
                     type="button"
                     disabled={activeIndex === 0}
@@ -980,11 +1508,13 @@ export default function App() {
 
                 {/* Current Reel Mini Card */}
                 {currentActiveVideo && (
-                  <div className="w-56 p-3.5 bg-neutral-900/90 rounded-2xl border border-neutral-800 shadow-xl backdrop-blur-md text-xs space-y-2.5">
+                  <div className="w-56 p-3.5 bg-neutral-900/95 rounded-2xl border border-neutral-800 shadow-lg text-xs space-y-2.5">
                     <div className="flex items-center gap-2">
                       <img
                         src={currentActiveVideo.creator.avatar}
                         alt={currentActiveVideo.creator.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-8 h-8 rounded-full object-cover bg-neutral-800 shrink-0"
                         referrerPolicy="no-referrer"
                       />
@@ -1011,111 +1541,134 @@ export default function App() {
         </main>
       </div>
 
-      {/* User Registration & Login Modal */}
-      <AuthModal
-        isOpen={isAuthOpen}
-        onClose={() => setIsAuthOpen(false)}
-        initialMode={authMode}
-        onLoginSuccess={handleLoginSuccess}
-        registeredUsers={users}
-        onRegisterUser={(newUser) => {
-          updateUsers([newUser, ...users]);
-          showToast(`Registered successfully as @${newUser.username}!`);
-        }}
-      />
+      {/* Lazy-Loaded Modals: Only fetched and mounted when opened */}
+      {isAuthOpen && (
+        <Suspense fallback={null}>
+          <AuthModal
+            isOpen={isAuthOpen}
+            onClose={() => setIsAuthOpen(false)}
+            initialMode={authMode}
+            onLoginSuccess={handleLoginSuccess}
+            registeredUsers={users}
+            onRegisterUser={(newUser) => {
+              updateUsers([newUser, ...users]);
+              showToast(`Registered successfully as @${newUser.username}!`);
+            }}
+          />
+        </Suspense>
+      )}
 
-      {/* Admin Panel Layout */}
-      <AdminPanel
-        isOpen={isAdminPanelOpen}
-        onClose={() => setIsAdminPanelOpen(false)}
-        users={users}
-        currentUser={currentUser}
-        onUpdateUserRole={handleUpdateUserRole}
-        onToggleUserStatus={handleToggleUserStatus}
-        onDeleteUser={handleDeleteUser}
-        onAddNewUser={handleAddNewUser}
-        onShowToast={showToast}
-      />
+      {isAdminPanelOpen && (
+        <Suspense fallback={null}>
+          <AdminPanel
+            isOpen={isAdminPanelOpen}
+            onClose={() => setIsAdminPanelOpen(false)}
+            users={users}
+            currentUser={currentUser}
+            onUpdateUserRole={handleUpdateUserRole}
+            onToggleUserStatus={handleToggleUserStatus}
+            onDeleteUser={handleDeleteUser}
+            onAddNewUser={handleAddNewUser}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
 
-      {/* Interactive Comments Drawer */}
       {commentsVideo && (
-        <CommentsDrawer
-          isOpen={Boolean(commentsVideo)}
-          onClose={() => setCommentsVideo(null)}
-          comments={commentsVideo.commentsList}
-          onAddComment={handleAddComment}
-          onLikeComment={handleLikeComment}
-        />
+        <Suspense fallback={null}>
+          <CommentsDrawer
+            isOpen={Boolean(commentsVideo)}
+            onClose={() => setCommentsVideo(null)}
+            comments={commentsVideo.commentsList}
+            onAddComment={handleAddComment}
+            onLikeComment={handleLikeComment}
+            activeUsername={currentUser?.username || creatorProfile.username}
+            activeAvatar={currentUser?.avatar || creatorProfile.avatar}
+          />
+        </Suspense>
       )}
 
-      {/* Interactive Share Modal */}
       {shareVideo && (
-        <ShareModal
-          isOpen={Boolean(shareVideo)}
-          onClose={() => setShareVideo(null)}
-          video={shareVideo}
-          onShowToast={showToast}
-        />
+        <Suspense fallback={null}>
+          <ShareModal
+            isOpen={Boolean(shareVideo)}
+            onClose={() => setShareVideo(null)}
+            video={shareVideo}
+            onShowToast={showToast}
+          />
+        </Suspense>
       )}
 
-      {/* Upload Custom Reel Modal (from device file or URL) */}
-      <UploadModal
-        isOpen={isUploadOpen}
-        onClose={() => setIsUploadOpen(false)}
-        currentUser={currentUser}
-        creatorProfile={creatorProfile}
-        onUploadSuccess={handleUploadSuccess}
-        onShowToast={showToast}
-      />
+      {isUploadOpen && (
+        <Suspense fallback={null}>
+          <UploadModal
+            isOpen={isUploadOpen}
+            onClose={() => setIsUploadOpen(false)}
+            currentUser={currentUser}
+            creatorProfile={creatorProfile}
+            onUploadSuccess={handleUploadSuccess}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
 
-      {/* Heavy Pro Camera Interface (4K/60FPS, Beauty Filters, Night Mode, AI Motion Tracking) */}
-      <ProCameraModal
-        isOpen={isProCameraOpen}
-        onClose={() => setIsProCameraOpen(false)}
-        currentUser={currentUser}
-        creatorProfile={creatorProfile}
-        onRecordSuccess={(newPost) => {
-          setVideos((prev) => [newPost, ...prev]);
-          setSelectedTag(null);
-          setCurrentTab('foryou');
-          setActiveIndex(0);
-        }}
-        onSwitchToUploadFile={() => setIsUploadOpen(true)}
-        onShowToast={showToast}
-      />
+      {isProCameraOpen && (
+        <Suspense fallback={<LazyTabFallback />}>
+          <ProCameraModal
+            isOpen={isProCameraOpen}
+            onClose={() => setIsProCameraOpen(false)}
+            currentUser={currentUser}
+            creatorProfile={creatorProfile}
+            onRecordSuccess={(newPost) => {
+              setVideos((prev) => [newPost, ...prev.filter((v) => v.id !== newPost.id)]);
+              setSelectedTag(null);
+              setCurrentTab('foryou');
+              setActiveIndex(0);
+              setTimeout(() => scrollToIndex(0), 60);
+            }}
+            onSwitchToUploadFile={() => setIsUploadOpen(true)}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
 
+      {isTrendsOpen && (
+        <Suspense fallback={null}>
+          <TrendsDashboard
+            isOpen={isTrendsOpen}
+            onClose={() => setIsTrendsOpen(false)}
+            videos={videos}
+            onSelectReel={(videoIndex) => {
+              setSelectedTag(null);
+              setCurrentTab('foryou');
+              setIsTrendsOpen(false);
+              setTimeout(() => {
+                scrollToIndex(videoIndex);
+              }, 120);
+            }}
+            onSelectHashtag={(tag) => {
+              setSelectedTag(tag);
+              setIsTrendsOpen(false);
+              setTimeout(() => {
+                scrollToIndex(0);
+              }, 120);
+              showToast(`Filtered by #${tag}`);
+            }}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
 
-      {/* Trends Dashboard Panel */}
-      <TrendsDashboard
-        isOpen={isTrendsOpen}
-        onClose={() => setIsTrendsOpen(false)}
-        videos={videos}
-        onSelectReel={(videoIndex) => {
-          setSelectedTag(null);
-          setCurrentTab('foryou');
-          setIsTrendsOpen(false);
-          setTimeout(() => {
-            scrollToIndex(videoIndex);
-          }, 120);
-        }}
-        onSelectHashtag={(tag) => {
-          setSelectedTag(tag);
-          setIsTrendsOpen(false);
-          setTimeout(() => {
-            scrollToIndex(0);
-          }, 120);
-          showToast(`Filtered by #${tag}`);
-        }}
-        onShowToast={showToast}
-      />
-
-      {/* TikTok-style Live Stream Interface Modal */}
-      <LiveStreamModal
-        isOpen={isLiveOpen}
-        onClose={() => setIsLiveOpen(false)}
-        currentUser={currentUser}
-        onShowToast={showToast}
-      />
+      {isLiveOpen && (
+        <Suspense fallback={null}>
+          <LiveStreamModal
+            isOpen={isLiveOpen}
+            onClose={() => setIsLiveOpen(false)}
+            currentUser={currentUser}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

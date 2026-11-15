@@ -2,25 +2,33 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   X,
   Camera,
-  RotateCcw,
+  SwitchCamera,
   Sparkles,
   Moon,
   Zap,
   Grid,
   Volume2,
-  Sliders,
-  Check,
   Video,
   Upload,
-  Radio,
-  Share2,
   Film,
   Flame,
-  ArrowRight,
-  Eye,
+  RotateCcw,
+  Square,
+  Circle,
+  Image as ImageIcon,
+  Download,
+  Check,
 } from 'lucide-react';
 import { VideoPost, UserAccount, CreatorProfileData } from '../types';
 import { soundEngine } from '../utils/soundEngine';
+import { isSupabaseConfigured } from '../lib/supabase';
+import {
+  uploadMediaToReelsBucket,
+  createGlobalPostInSupabase,
+  getOrCreateUserProfileId,
+  fileToPersistentDataUrl,
+  saveLocalPostRecord,
+} from '../lib/supabaseService';
 
 interface ProCameraModalProps {
   isOpen: boolean;
@@ -32,8 +40,158 @@ interface ProCameraModalProps {
   onShowToast: (msg: string) => void;
 }
 
-type ResolutionFpsMode = '4K/60FPS' | '4K/30FPS' | '1080p/60FPS' | '1080p/24FPS';
-type BeautyPreset = 'Natural' | 'Smooth Glam' | 'Cyber Neon' | 'Golden Hour' | 'Vivid Rosy';
+type ResolutionFpsMode = '4K/60FPS' | '1080p/60FPS' | '1080p/30FPS';
+
+export interface CameraFilterDef {
+  id: string;
+  name: string;
+  shortLabel: string;
+  cssFilter: string;
+  swatchClass: string;
+  drawOverlay?: (ctx: CanvasRenderingContext2D, width: number, height: number) => void;
+}
+
+export const CAMERA_FILTERS: CameraFilterDef[] = [
+  {
+    id: 'normal',
+    name: 'Normal',
+    shortLabel: 'Normal',
+    cssFilter: 'none',
+    swatchClass: 'from-neutral-700 to-neutral-900',
+  },
+  {
+    id: 'warm_glow',
+    name: 'Warm Glow',
+    shortLabel: 'Warm Glow',
+    cssFilter: 'sepia(0.28) saturate(1.38) brightness(1.06) contrast(1.04) hue-rotate(-8deg)',
+    swatchClass: 'from-amber-400 via-orange-500 to-rose-500',
+    drawOverlay: (ctx, w, h) => {
+      ctx.save();
+      const grad = ctx.createRadialGradient(w * 0.5, h * 0.45, w * 0.1, w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
+      grad.addColorStop(0, 'rgba(255, 196, 112, 0.14)');
+      grad.addColorStop(1, 'rgba(255, 107, 53, 0.12)');
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    },
+  },
+  {
+    id: 'cool_breeze',
+    name: 'Cool Breeze',
+    shortLabel: 'Cool Breeze',
+    cssFilter: 'saturate(1.14) contrast(1.06) brightness(1.04) hue-rotate(14deg)',
+    swatchClass: 'from-cyan-400 via-sky-500 to-indigo-600',
+    drawOverlay: (ctx, w, h) => {
+      ctx.save();
+      const grad = ctx.createLinearGradient(0, 0, w, h);
+      grad.addColorStop(0, 'rgba(56, 189, 248, 0.14)');
+      grad.addColorStop(1, 'rgba(99, 102, 241, 0.12)');
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    },
+  },
+  {
+    id: 'vintage_retro',
+    name: 'Vintage Retro',
+    shortLabel: 'Vintage Retro',
+    cssFilter: 'sepia(0.55) contrast(1.14) brightness(0.96) saturate(0.85)',
+    swatchClass: 'from-yellow-600 via-amber-700 to-stone-800',
+    drawOverlay: (ctx, w, h) => {
+      ctx.save();
+      const vignette = ctx.createRadialGradient(w * 0.5, h * 0.5, w * 0.25, w * 0.5, h * 0.5, Math.max(w, h) * 0.72);
+      vignette.addColorStop(0, 'rgba(255, 224, 160, 0.06)');
+      vignette.addColorStop(1, 'rgba(24, 16, 8, 0.42)');
+      ctx.fillStyle = vignette;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    },
+  },
+  {
+    id: 'noir_bw',
+    name: 'Black & White (Noir)',
+    shortLabel: 'Noir B&W',
+    cssFilter: 'grayscale(1) contrast(1.34) brightness(0.96)',
+    swatchClass: 'from-zinc-200 via-zinc-500 to-black',
+    drawOverlay: (ctx, w, h) => {
+      ctx.save();
+      const vignette = ctx.createRadialGradient(w * 0.5, h * 0.5, w * 0.2, w * 0.5, h * 0.5, Math.max(w, h) * 0.72);
+      vignette.addColorStop(0, 'rgba(255, 255, 255, 0.04)');
+      vignette.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+      ctx.fillStyle = vignette;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    },
+  },
+  {
+    id: 'cyberpunk_neon',
+    name: 'Cyberpunk Neon',
+    shortLabel: 'Cyberpunk Neon',
+    cssFilter: 'contrast(1.3) saturate(1.75) hue-rotate(20deg) brightness(1.04)',
+    swatchClass: 'from-fuchsia-500 via-purple-600 to-cyan-400',
+    drawOverlay: (ctx, w, h) => {
+      ctx.save();
+      const neon = ctx.createLinearGradient(0, 0, w, h);
+      neon.addColorStop(0, 'rgba(236, 72, 153, 0.18)');
+      neon.addColorStop(0.5, 'rgba(139, 92, 246, 0.08)');
+      neon.addColorStop(1, 'rgba(34, 211, 238, 0.2)');
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = neon;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    },
+  },
+  {
+    id: 'vivid_pop',
+    name: 'Vivid Pop',
+    shortLabel: 'Vivid Pop',
+    cssFilter: 'saturate(1.65) contrast(1.18) brightness(1.06)',
+    swatchClass: 'from-pink-500 via-rose-500 to-yellow-400',
+  },
+  {
+    id: 'soft_beauty',
+    name: 'Soft Beauty',
+    shortLabel: 'Soft Beauty',
+    cssFilter: 'brightness(1.09) contrast(0.95) saturate(1.16) blur(0.35px)',
+    swatchClass: 'from-rose-300 via-pink-400 to-fuchsia-400',
+    drawOverlay: (ctx, w, h) => {
+      ctx.save();
+      const glow = ctx.createRadialGradient(w * 0.5, h * 0.45, w * 0.1, w * 0.5, h * 0.5, Math.max(w, h) * 0.7);
+      glow.addColorStop(0, 'rgba(255, 228, 238, 0.12)');
+      glow.addColorStop(1, 'rgba(244, 114, 182, 0.08)');
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    },
+  },
+];
+
+function getSupportedRecorderOptions(): MediaRecorderOptions {
+  const mimeCandidates = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+
+  for (const mimeType of mimeCandidates) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeType)) {
+      return {
+        mimeType,
+        videoBitsPerSecond: 12_000_000,
+        audioBitsPerSecond: 192_000,
+      };
+    }
+  }
+  return {
+    videoBitsPerSecond: 10_000_000,
+    audioBitsPerSecond: 192_000,
+  };
+}
 
 export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   isOpen,
@@ -44,100 +202,239 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   onSwitchToUploadFile,
   onShowToast,
 }) => {
-  // Pro Camera Settings State
+  // Camera Settings
   const [resFps, setResFps] = useState<ResolutionFpsMode>('4K/60FPS');
-  const [beautyLevel, setBeautyLevel] = useState<number>(65); // 0-100%
-  const [beautyPreset, setBeautyPreset] = useState<BeautyPreset>('Smooth Glam');
-  const [isBeautyOpen, setIsBeautyOpen] = useState<boolean>(false);
+  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('4K UHD · 60fps');
+  const [selectedFilterId, setSelectedFilterId] = useState<string>('normal');
   const [nightModeLevel, setNightModeLevel] = useState<number>(0); // 0 = off, 1 = 1.5x, 2 = 3.0x
   const [isFlashOn, setIsFlashOn] = useState<boolean>(false);
-  const [showGrid, setShowGrid] = useState<boolean>(true);
-  const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.5, 1.0, 2.0, 5.0
+  const [showGrid, setShowGrid] = useState<boolean>(false);
+  const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isSimulatedFeed, setIsSimulatedFeed] = useState<boolean>(false);
+  const [cameraBlockedInWebView, setCameraBlockedInWebView] = useState<boolean>(false);
 
-  // Recording State
+  // Recording & Capture State
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordingSeconds, setRecordingSeconds] = useState<number>(0);
   const [recordedClipUrl, setRecordedClipUrl] = useState<string | null>(null);
-
-  // AI Motion Tracking State
-  const [aiTrackingLocked, setAiTrackingLocked] = useState<boolean>(true);
-  const [trackerPos, setTrackerPos] = useState<{ x: number; y: number }>({ x: 50, y: 45 });
-  const [horizonTilt, setHorizonTilt] = useState<number>(0.4);
+  const [recordedMediaType, setRecordedMediaType] = useState<'video' | 'image'>('video');
+  const [isSavedToGallery, setIsSavedToGallery] = useState<boolean>(false);
+  const [isPublishing, setIsPublishing] = useState<boolean>(false);
 
   // Post-recording caption form
   const [clipTitle, setClipTitle] = useState('');
-  const [clipHashtags, setClipHashtags] = useState('#JattVibe #ProCamera #4K60FPS #Trending');
+  const [clipHashtags, setClipHashtags] = useState('#JattVibe #HD60FPS #LiveFilter #Trending');
 
-  // DOM Refs
+  // Refs for camera stream, canvas rendering, and MediaRecorder
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const canvasPreviewRef = useRef<HTMLCanvasElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordedBlobRef = useRef<Blob | null>(null);
+  const recordedMimeRef = useRef<string>('video/webm');
+  const animFrameRef = useRef<number | null>(null);
   const timerIntervalRef = useRef<number | null>(null);
   const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
-  const [cameraBlockedInWebView, setCameraBlockedInWebView] = useState<boolean>(false);
+
+  // Keep live filter & transform values in refs so the 60fps rAF loop never restarts on filter tap
+  const activeFilterRef = useRef<CameraFilterDef>(CAMERA_FILTERS[0]);
+  const nightModeRef = useRef<number>(nightModeLevel);
+  const zoomRef = useRef<number>(zoomLevel);
+  const facingRef = useRef<'user' | 'environment'>(facingMode);
+
+  const selectedFilter =
+    CAMERA_FILTERS.find((f) => f.id === selectedFilterId) || CAMERA_FILTERS[0];
+
+  useEffect(() => {
+    activeFilterRef.current = selectedFilter;
+  }, [selectedFilter]);
+
+  useEffect(() => {
+    nightModeRef.current = nightModeLevel;
+  }, [nightModeLevel]);
+
+  useEffect(() => {
+    zoomRef.current = zoomLevel;
+  }, [zoomLevel]);
+
+  useEffect(() => {
+    facingRef.current = facingMode;
+  }, [facingMode]);
+
+  // Compute combined CSS filter string for live canvas/fallback preview
+  const buildCompositeFilter = useCallback(
+    (filterDef: CameraFilterDef, night: number): string => {
+      const parts: string[] = [];
+      if (filterDef.cssFilter && filterDef.cssFilter !== 'none') {
+        parts.push(filterDef.cssFilter);
+      }
+      if (night === 1) {
+        parts.push('brightness(1.32) contrast(1.12)');
+      } else if (night === 2) {
+        parts.push('brightness(1.65) contrast(1.25) saturate(1.15)');
+      }
+      return parts.length > 0 ? parts.join(' ') : 'none';
+    },
+    []
+  );
 
   // Fallback native camera capture handler
   const handleNativeCameraCaptured = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const url = URL.createObjectURL(file);
+      recordedBlobRef.current = file;
+      setRecordedMediaType(file.type.startsWith('image/') ? 'image' : 'video');
       setRecordedClipUrl(url);
       const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-      setClipTitle(cleanName || `4K Mobile Reel #${Math.floor(Math.random() * 900 + 100)}`);
-      onShowToast('Captured from native device camera! Preview & publish below.');
+      setClipTitle(cleanName || `HD Mobile Reel #${Math.floor(Math.random() * 900 + 100)}`);
+      onShowToast('Captured from phone camera! Preview & publish below.');
     }
     e.target.value = '';
   };
 
-  // Initialize or teardown camera stream
+  // Acquire highest available HD/4K 60fps camera stream with graceful fallback
   useEffect(() => {
     if (!isOpen) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
       }
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
       setIsRecording(false);
       setRecordingSeconds(0);
       setRecordedClipUrl(null);
+      setIsSavedToGallery(false);
+      recordedBlobRef.current = null;
       setCameraBlockedInWebView(false);
       return;
     }
 
     let isMounted = true;
 
+    async function acquireBestCameraStream(): Promise<MediaStream> {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Live mediaDevices.getUserMedia not supported');
+      }
+
+      const audioHighQuality: MediaTrackConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+
+      const targetConstraints: MediaStreamConstraints[] =
+        resFps === '4K/60FPS'
+          ? [
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 3840 },
+                  height: { ideal: 2160 },
+                  frameRate: { ideal: 60, min: 30 },
+                },
+                audio: audioHighQuality,
+              },
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 1920 },
+                  height: { ideal: 1080 },
+                  frameRate: { ideal: 60, min: 24 },
+                },
+                audio: audioHighQuality,
+              },
+              { video: { facingMode }, audio: true },
+              { video: { facingMode }, audio: false },
+            ]
+          : resFps === '1080p/60FPS'
+          ? [
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 1920 },
+                  height: { ideal: 1080 },
+                  frameRate: { ideal: 60, min: 30 },
+                },
+                audio: audioHighQuality,
+              },
+              { video: { facingMode }, audio: true },
+              { video: { facingMode }, audio: false },
+            ]
+          : [
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 1920 },
+                  height: { ideal: 1080 },
+                  frameRate: { ideal: 30 },
+                },
+                audio: audioHighQuality,
+              },
+              { video: { facingMode }, audio: true },
+              { video: { facingMode }, audio: false },
+            ];
+
+      let lastErr: unknown = null;
+      for (const constraints of targetConstraints) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      throw lastErr;
+    }
+
     async function setupCamera() {
+      // Stop existing tracks before switching front/back or resolution
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
+
       try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('Live mediaDevices.getUserMedia not supported in this browser or WebView');
+        const stream = await acquireBestCameraStream();
+        if (!isMounted) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
         }
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode,
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-          },
-          audio: true,
-        });
-
-        if (isMounted) {
-          mediaStreamRef.current = stream;
-          if (videoPreviewRef.current) {
-            videoPreviewRef.current.srcObject = stream;
-            videoPreviewRef.current.play().catch(() => {});
-          }
-          setIsSimulatedFeed(false);
-          setCameraBlockedInWebView(false);
+        mediaStreamRef.current = stream;
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+          const settings = videoTrack.getSettings();
+          const w = settings.width || 1920;
+          const h = settings.height || 1080;
+          const fps = Math.round(settings.frameRate || 60);
+          const qualityTag = w >= 3840 || h >= 2160 ? '4K' : w >= 1920 || h >= 1080 ? '1080p' : `${w}x${h}`;
+          setStreamInfoLabel(`${qualityTag} (${w}x${h}) · ${fps}fps`);
         }
+
+        if (videoPreviewRef.current) {
+          videoPreviewRef.current.srcObject = stream;
+          videoPreviewRef.current.play().catch(() => {});
+        }
+        setIsSimulatedFeed(false);
+        setCameraBlockedInWebView(false);
       } catch (err) {
-        console.warn('Live camera access blocked by browser or WebView:', err);
-        // Fallback to simulated cyber pro viewfinder & automatically trigger native camera input
+        console.warn('Live camera access blocked or unavailable:', err);
         if (isMounted) {
           setIsSimulatedFeed(true);
           setCameraBlockedInWebView(true);
-          onShowToast('Live camera blocked in WebView/Browser. Opening native mobile camera...');
-          nativeCameraInputRef.current?.click();
+          onShowToast('Live camera blocked. Tap "Open Phone Camera" below to record.');
         }
       }
     }
@@ -151,28 +448,102 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaStreamRef.current = null;
       }
     };
-  }, [isOpen, facingMode, onShowToast]);
+  }, [isOpen, facingMode, resFps, onShowToast]);
 
-  // AI Motion Tracker gentle drift simulation
+  // 60fps Real-Time Canvas Render Loop (bakes active CSS/Canvas filter directly into canvas pixels)
   useEffect(() => {
-    if (!isOpen || recordedClipUrl) return;
+    if (!isOpen || isSimulatedFeed || recordedClipUrl) {
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
+      return;
+    }
 
-    const interval = setInterval(() => {
-      setTrackerPos((prev) => {
-        const dx = (Math.random() - 0.5) * 4;
-        const dy = (Math.random() - 0.5) * 4;
-        return {
-          x: Math.max(30, Math.min(70, prev.x + dx)),
-          y: Math.max(30, Math.min(65, prev.y + dy)),
-        };
-      });
-      setHorizonTilt((Math.random() - 0.5) * 1.8);
-      // Randomly re-verify lock status
-      setAiTrackingLocked(Math.random() > 0.05);
-    }, 800);
+    let running = true;
 
-    return () => clearInterval(interval);
-  }, [isOpen, recordedClipUrl]);
+    const renderFrame = () => {
+      if (!running) return;
+      const video = videoPreviewRef.current;
+      const canvas = canvasPreviewRef.current;
+
+      if (video && canvas && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+        const targetW = video.videoWidth;
+        const targetH = video.videoHeight;
+
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+          canvas.width = targetW;
+          canvas.height = targetH;
+        }
+
+        const ctx = canvas.getContext('2d', { alpha: false });
+        if (ctx) {
+          const filterDef = activeFilterRef.current;
+          const compositeFilter = buildCompositeFilter(filterDef, nightModeRef.current);
+          const zoom = Math.max(1, zoomRef.current);
+
+          ctx.save();
+          if ('filter' in ctx) {
+            ctx.filter = compositeFilter;
+          }
+
+          // Handle selfie mirror so saved video matches preview
+          if (facingRef.current === 'user') {
+            ctx.translate(targetW, 0);
+            ctx.scale(-1, 1);
+          }
+
+          // Center-crop digital zoom
+          const srcW = targetW / zoom;
+          const srcH = targetH / zoom;
+          const srcX = (targetW - srcW) / 2;
+          const srcY = (targetH - srcH) / 2;
+
+          ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
+          ctx.restore();
+
+          // Reset filter and apply custom Canvas filter overlay (tint/glow/vignette)
+          if ('filter' in ctx) {
+            ctx.filter = 'none';
+          }
+          if (filterDef.drawOverlay) {
+            filterDef.drawOverlay(ctx, targetW, targetH);
+          }
+        }
+      }
+
+      animFrameRef.current = requestAnimationFrame(renderFrame);
+    };
+
+    animFrameRef.current = requestAnimationFrame(renderFrame);
+
+    return () => {
+      running = false;
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
+    };
+  }, [isOpen, isSimulatedFeed, recordedClipUrl, buildCompositeFilter]);
+
+  // Stop active MediaRecorder cleanly
+  const handleStopRecording = useCallback(() => {
+    soundEngine.playRecordBeep(false);
+    setIsRecording(false);
+
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop();
+        return;
+      } catch (err) {
+        console.warn('MediaRecorder stop error:', err);
+      }
+    }
+
+    // Fallback if recorder wasn't active (e.g. simulated feed)
+    onShowToast('Please use "Open Phone Camera" when live camera access is blocked.');
+  }, [onShowToast]);
 
   // Recording Timer Tracker
   useEffect(() => {
@@ -186,60 +557,157 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           return prev + 1;
         });
       }, 1000);
-    } else {
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-        timerIntervalRef.current = null;
-      }
+    } else if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
     }
 
     return () => {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
       }
     };
-  }, [isRecording]);
+  }, [isRecording, handleStopRecording]);
 
-  // Shutter Record Trigger
+  // Start / Stop High-Bitrate Canvas MediaRecorder
   const handleToggleRecord = () => {
-    if (!isRecording) {
+    if (isSimulatedFeed) {
+      nativeCameraInputRef.current?.click();
+      return;
+    }
+
+    if (isRecording) {
+      handleStopRecording();
+      return;
+    }
+
+    const canvas = canvasPreviewRef.current;
+    const rawStream = mediaStreamRef.current;
+
+    if (!canvas || !rawStream) {
+      onShowToast('Camera stream is still initializing...');
+      return;
+    }
+
+    try {
+      const targetFps = resFps.includes('60FPS') ? 60 : 30;
+      const canvasStream =
+        typeof canvas.captureStream === 'function'
+          ? canvas.captureStream(targetFps)
+          : rawStream;
+
+      const combinedTracks: MediaStreamTrack[] = [
+        ...canvasStream.getVideoTracks(),
+        ...rawStream.getAudioTracks(),
+      ];
+      const combinedStream = new MediaStream(combinedTracks);
+
+      const options = getSupportedRecorderOptions();
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(combinedStream, options);
+      } catch {
+        recorder = new MediaRecorder(combinedStream);
+      }
+
+      recordedChunksRef.current = [];
+      recordedMimeRef.current = recorder.mimeType || options.mimeType || 'video/webm';
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const mime = recordedMimeRef.current || 'video/webm';
+        const blob = new Blob(recordedChunksRef.current, { type: mime });
+        if (blob.size > 0) {
+          recordedBlobRef.current = blob;
+          const url = URL.createObjectURL(blob);
+          setRecordedMediaType('video');
+          setRecordedClipUrl(url);
+          setClipTitle(
+            `${selectedFilter.name !== 'Normal' ? `${selectedFilter.shortLabel} ` : ''}HD Reel #${Math.floor(
+              Math.random() * 900 + 100
+            )}`
+          );
+          onShowToast(
+            `Recorded in ${streamInfoLabel} with ${selectedFilter.name} filter!`
+          );
+        } else {
+          onShowToast('No video data captured. Please try recording for at least 1 second.');
+        }
+      };
+
+      recorder.start(250);
+      mediaRecorderRef.current = recorder;
       soundEngine.playRecordBeep(true);
       setIsRecording(true);
       setRecordingSeconds(0);
-      onShowToast(`Started Recording in ${resFps}`);
-    } else {
-      handleStopRecording();
+      onShowToast(`Recording ${resFps} (${selectedFilter.name})...`);
+    } catch (err) {
+      console.error('Failed to start MediaRecorder:', err);
+      onShowToast('Live recording unsupported on this browser — opening native phone camera.');
+      nativeCameraInputRef.current?.click();
     }
   };
 
-  const handleStopRecording = () => {
-    soundEngine.playRecordBeep(false);
-    setIsRecording(false);
+  // Capture Filtered High-Res Photo from Canvas
+  const handleCapturePhoto = () => {
+    if (isSimulatedFeed) {
+      nativeCameraInputRef.current?.click();
+      return;
+    }
+    const canvas = canvasPreviewRef.current;
+    if (!canvas || canvas.width === 0) {
+      onShowToast('Camera preview is still loading...');
+      return;
+    }
 
-    // Set a representative high-grade sample video or the captured stream
-    const fallbackClips = [
-      'https://upload.wikimedia.org/wikipedia/commons/4/47/Astrophysics_Holiday_Vertical_Video_%28SVS14800_-_Fermi_YuleLog_Rotate_Reel%29.webm',
-      'https://upload.wikimedia.org/wikipedia/commons/a/a8/Berlin-KarnevalderKulturen2023-1-Asio.webm',
-    ];
-    setRecordedClipUrl(fallbackClips[Math.floor(Math.random() * fallbackClips.length)]);
-    setClipTitle(`My 4K Reel #${Math.floor(Math.random() * 900 + 100)}`);
-    onShowToast('Recording Captured! Preview & Publish your reel.');
+    soundEngine.playCameraShutter();
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          onShowToast('Could not capture photo.');
+          return;
+        }
+        recordedBlobRef.current = blob;
+        setRecordedMediaType('image');
+        setRecordedClipUrl(URL.createObjectURL(blob));
+        setClipTitle(
+          `${selectedFilter.name !== 'Normal' ? `${selectedFilter.shortLabel} ` : ''}Shot #${Math.floor(
+            Math.random() * 900 + 100
+          )}`
+        );
+        onShowToast(`Photo captured with ${selectedFilter.name} filter!`);
+      },
+      'image/jpeg',
+      0.95
+    );
   };
 
-  // Flip Camera
+  // Switch Camera (Front / Back)
   const handleFlipCamera = () => {
+    if (isRecording) {
+      onShowToast('Stop recording before switching camera.');
+      return;
+    }
     soundEngine.playCameraShutter();
-    setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
-    onShowToast(`Switched Camera: ${facingMode === 'user' ? 'Rear Wide Lens' : 'Front Selfie'}`);
+    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(nextMode);
+    onShowToast(`Switched Camera: ${nextMode === 'environment' ? 'Back (Rear)' : 'Front (Selfie)'}`);
   };
 
   // Cycle 4K / 60FPS modes
   const handleCycleResFps = () => {
+    if (isRecording) return;
     soundEngine.playCameraShutter();
-    const modes: ResolutionFpsMode[] = ['4K/60FPS', '4K/30FPS', '1080p/60FPS', '1080p/24FPS'];
+    const modes: ResolutionFpsMode[] = ['4K/60FPS', '1080p/60FPS', '1080p/30FPS'];
     const nextIdx = (modes.indexOf(resFps) + 1) % modes.length;
     setResFps(modes[nextIdx]);
-    onShowToast(`Pro Format set to ${modes[nextIdx]}`);
+    onShowToast(`Target quality: ${modes[nextIdx]}`);
   };
 
   // Cycle Night Mode Booster
@@ -247,131 +715,190 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     soundEngine.playCameraShutter();
     const next = (nightModeLevel + 1) % 3;
     setNightModeLevel(next);
-    const labels = ['Night Mode: OFF', 'Night Mode: 1.5x Booster', 'Night Mode: 3.0x Ultra ISO'];
+    const labels = ['Night Mode: OFF', 'Night Mode: 1.5x Boost', 'Night Mode: 3.0x Max'];
     onShowToast(labels[next]);
   };
 
-  // Compute live visual filter CSS based on beauty & night mode settings
-  const getFilterStyle = useCallback(() => {
-    let brightness = 1;
-    let contrast = 1.05;
-    let saturate = 1.1;
-    let hueRotate = 0;
-    let blur = 0;
+  // Direct Save to Device Gallery / Storage using standard <a download> blob trigger
+  const handleSaveToDeviceGallery = () => {
+    if (!recordedClipUrl) return;
 
-    // Night Mode boost
-    if (nightModeLevel === 1) {
-      brightness += 0.35;
-      contrast += 0.15;
-    } else if (nightModeLevel === 2) {
-      brightness += 0.75;
-      contrast += 0.3;
-      saturate += 0.2;
+    const baseName = (clipTitle.trim() || 'JattVibeReels_Capture')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .slice(0, 48);
+
+    const ext =
+      recordedMediaType === 'image'
+        ? 'jpg'
+        : recordedMimeRef.current.includes('mp4')
+        ? 'mp4'
+        : 'webm';
+
+    const filename = `${baseName}_${Date.now()}.${ext}`;
+
+    try {
+      const link = document.createElement('a');
+      link.href = recordedClipUrl;
+      link.download = filename;
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setIsSavedToGallery(true);
+      soundEngine.playDownloadComplete();
+      onShowToast(
+        `Saved ${recordedMediaType === 'image' ? 'photo' : 'HD video'} (${filename}) to device gallery!`
+      );
+    } catch (err) {
+      console.error('Failed to trigger gallery download:', err);
+      onShowToast('Could not save directly on this browser.');
     }
+  };
 
-    // Beauty Preset adjustments
-    const bRatio = beautyLevel / 100;
-    switch (beautyPreset) {
-      case 'Smooth Glam':
-        brightness += 0.08 * bRatio;
-        contrast -= 0.05 * bRatio;
-        saturate += 0.2 * bRatio;
-        blur = 0.25 * bRatio;
-        break;
-      case 'Cyber Neon':
-        contrast += 0.3 * bRatio;
-        saturate += 0.5 * bRatio;
-        hueRotate = 25 * bRatio;
-        break;
-      case 'Golden Hour':
-        brightness += 0.1 * bRatio;
-        saturate += 0.4 * bRatio;
-        hueRotate = -12 * bRatio;
-        break;
-      case 'Vivid Rosy':
-        saturate += 0.35 * bRatio;
-        hueRotate = 10 * bRatio;
-        brightness += 0.05 * bRatio;
-        break;
-      default:
-        // Natural
-        break;
-    }
+  // Publish newly captured video or photo to feed (+ Supabase if configured)
+  const handlePublishReel = async () => {
+    if (!recordedClipUrl || isPublishing) return;
+    setIsPublishing(true);
 
-    return {
-      filter: `brightness(${brightness}) contrast(${contrast}) saturate(${saturate}) hue-rotate(${hueRotate}deg) blur(${blur}px)`,
-    };
-  }, [beautyLevel, beautyPreset, nightModeLevel]);
+    try {
+      const userId = creatorProfile?.id || currentUser?.id || getOrCreateUserProfileId();
+      const authorName = currentUser?.name || creatorProfile?.name || 'Jatt Creator';
+      const authorUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
+      const authorAvatar =
+        currentUser?.avatar ||
+        creatorProfile?.avatar ||
+        'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+      const authorBio = currentUser?.bio || creatorProfile?.bio || 'VibeReels Pro Creator';
 
-  // Publish newly captured reel
-  const handlePublishReel = () => {
-    const authorName = currentUser?.name || creatorProfile?.name || 'Jatt Creator';
-    const authorUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
-    const authorAvatar =
-      currentUser?.avatar ||
-      creatorProfile?.avatar ||
-      'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
-    const authorBio = currentUser?.bio || creatorProfile?.bio || 'VibeReels Pro Creator';
+      const cleanTitle = clipTitle.trim() || `Shot with Jatt VibeReels (${selectedFilter.name})`;
+      const caption = `${cleanTitle} (${streamInfoLabel} · ${selectedFilter.name}) ${clipHashtags}`.trim();
 
-    const newPost: VideoPost = {
-      id: `pro-reel-${Date.now()}`,
-      title: clipTitle.trim() || 'Shot with Jatt VibeReels Pro Camera',
-      description: `Recorded in ${resFps} with Beauty Filter (${beautyPreset} ${beautyLevel}%) and AI Motion Tracking.`,
-      hashtags: clipHashtags.split(' ').filter((h) => h.startsWith('#')),
-      videoUrl: recordedClipUrl || '',
-      fallbackGradient: 'from-pink-900 via-purple-900 to-black',
-      category: 'trending',
-      isUserUploaded: true,
-      creator: {
-        name: authorName,
+      let finalMediaUrl = recordedClipUrl;
+      if (recordedBlobRef.current && isSupabaseConfigured) {
+        onShowToast('Uploading high-quality capture to global feed...');
+        const ext = recordedMediaType === 'image' ? 'jpg' : recordedMimeRef.current.includes('mp4') ? 'mp4' : 'webm';
+        const uploadedUrl = await uploadMediaToReelsBucket(
+          recordedBlobRef.current,
+          'posts',
+          `camera-${Date.now()}.${ext}`
+        );
+        if (uploadedUrl) {
+          finalMediaUrl = uploadedUrl;
+        }
+      } else if (recordedBlobRef.current) {
+        const dataUrl = await fileToPersistentDataUrl(recordedBlobRef.current);
+        if (dataUrl) finalMediaUrl = dataUrl;
+      }
+
+      const supabasePost = await createGlobalPostInSupabase({
+        userId,
         username: authorUsername,
-        avatar: authorAvatar,
-        isVerified: true,
-        isFollowing: true,
-        bio: authorBio,
-      },
-      stats: {
-        likes: 1,
-        comments: 0,
-        shares: 0,
-        saves: 0,
-      },
-      isLiked: true,
-      isSaved: false,
-      sound: {
-        title: 'Original Pro Studio Audio',
-        artist: authorName,
-        trackType: 'future_bass',
-      },
-      commentsList: [],
-    };
+        displayName: authorName,
+        avatarUrl: authorAvatar,
+        mediaUrl: finalMediaUrl,
+        mediaType: recordedMediaType,
+        caption,
+      });
 
-    onRecordSuccess(newPost);
-    soundEngine.playDownloadComplete();
-    onShowToast(`🎉 Published your 4K Reel! Check the For You feed.`);
-    onClose();
+      const tags = clipHashtags
+        .split(/[\s,]+/)
+        .map((h) => h.replace(/^#/, '').trim())
+        .filter(Boolean);
+
+      const newPost: VideoPost =
+        supabasePost || {
+          id: `pro-reel-${Date.now()}`,
+          title: cleanTitle,
+          description: caption,
+          hashtags: tags.length ? tags : ['JattVibe', 'HD60FPS'],
+          videoUrl: finalMediaUrl,
+          posterUrl: recordedMediaType === 'image' ? finalMediaUrl : undefined,
+          fallbackGradient: 'from-pink-900 via-purple-900 to-black',
+          category: 'trending',
+          userId,
+          mediaType: recordedMediaType,
+          isUserUploaded: true,
+          createdAt: new Date().toISOString(),
+          creator: {
+            name: authorName,
+            username: authorUsername,
+            avatar: authorAvatar,
+            isVerified: true,
+            isFollowing: false,
+            bio: authorBio,
+          },
+          stats: {
+            views: 0,
+            likes: 0,
+            comments: 0,
+            shares: 0,
+            saves: 0,
+            downloads: 0,
+          },
+          isLiked: false,
+          isSaved: false,
+          sound: {
+            title: recordedMediaType === 'image' ? 'Photo Studio Vibe' : 'Original HD Studio Audio',
+            artist: authorName,
+            trackType: 'future_bass',
+          },
+          commentsList: [],
+        };
+
+      saveLocalPostRecord(newPost);
+      onRecordSuccess(newPost);
+      soundEngine.playDownloadComplete();
+      onShowToast(
+        supabasePost
+          ? `Published ${recordedMediaType === 'image' ? 'photo' : 'HD video'} to global feed!`
+          : `Published ${recordedMediaType === 'image' ? 'photo' : 'HD video'} to For You feed!`
+      );
+      onClose();
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   if (!isOpen) return null;
 
+  const formattedTimer = `00:${recordingSeconds < 10 ? `0${recordingSeconds}` : recordingSeconds}`;
+  const activeCanvasFallbackFilter = buildCompositeFilter(selectedFilter, nightModeLevel);
+
   return (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col justify-between overflow-hidden select-none">
-      {/* Flash / Studio Ring Light Simulation Overlay */}
+    <div className="fixed inset-0 z-50 bg-black flex flex-col justify-between overflow-hidden select-none [transform:translateZ(0)]">
+      {/* Hidden source video element fed by getUserMedia */}
+      <video
+        ref={videoPreviewRef}
+        autoPlay
+        playsInline
+        muted
+        className="hidden"
+      />
+
+      {/* Fallback Native Camera Input for restricted WebViews */}
+      <input
+        ref={nativeCameraInputRef}
+        type="file"
+        accept="video/*,image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleNativeCameraCaptured}
+      />
+
+      {/* Flash / Studio Ring Light Overlay */}
       {isFlashOn && (
-        <div className="absolute inset-0 pointer-events-none z-40 bg-radial from-amber-100/30 via-white/10 to-transparent mix-blend-screen animate-pulse" />
+        <div className="absolute inset-0 pointer-events-none z-40 bg-radial from-amber-100/25 via-white/10 to-transparent mix-blend-screen" />
       )}
 
-      {/* ========================================================================= */}
-      {/* TOP PRO STATUS BAR: RESOLUTION/FPS, NIGHT MODE, FLASH, GRID, CLOSE        */}
-      {/* ========================================================================= */}
-      <div className="relative z-30 px-4 py-3 bg-gradient-to-b from-black/90 via-black/50 to-transparent flex items-center justify-between gap-2 shrink-0">
-        {/* Left: Close & File Upload Switcher */}
+      {/* TOP PRO STATUS BAR */}
+      <div className="relative z-30 px-3 sm:px-4 py-2.5 bg-gradient-to-b from-black/90 via-black/55 to-transparent flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="w-9 h-9 rounded-full bg-black/60 hover:bg-neutral-800 text-neutral-300 hover:text-white flex items-center justify-center border border-white/15 backdrop-blur-md transition-all active:scale-95"
-            title="Exit Pro Camera"
+            className="w-9 h-9 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-neutral-300 hover:text-white flex items-center justify-center border border-white/15 transition-all active:scale-95"
+            title="Close Camera"
           >
             <X className="w-5 h-5" />
           </button>
@@ -382,188 +909,204 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               onClose();
               onSwitchToUploadFile();
             }}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900/80 hover:bg-neutral-800 text-xs font-bold text-neutral-300 hover:text-white border border-neutral-700/80 backdrop-blur-md transition-all"
-            title="Switch to file upload modal"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-xs font-bold text-neutral-300 hover:text-white border border-neutral-700/80 transition-all"
           >
             <Upload className="w-3.5 h-3.5 text-pink-400" />
-            <span>File Upload</span>
+            <span>Upload File</span>
           </button>
         </div>
 
-        {/* Center: 4K / 60FPS Pro Toggle & Night Mode Indicator */}
-        <div className="flex items-center gap-2">
-          {/* 4K/60FPS Pill Toggle */}
+        {/* Center: Active Stream Resolution & FPS */}
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={handleCycleResFps}
-            className="px-3 py-1.5 rounded-full bg-black/70 hover:bg-black/90 border border-pink-500/50 text-white text-xs font-black flex items-center gap-1.5 backdrop-blur-md shadow-lg shadow-pink-500/20 active:scale-95 transition-transform"
-            title="Toggle 4K / 60FPS Pro format"
+            className="px-3 py-1.5 rounded-full bg-neutral-900/90 hover:bg-neutral-800 border border-pink-500/50 text-white text-[11px] font-black flex items-center gap-1.5 shadow-lg shadow-pink-500/15 active:scale-95 transition-transform"
+            title="Tap to cycle target resolution & FPS"
           >
-            <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse" />
-            <span className="tracking-wider">{resFps}</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="tracking-wide">{isSimulatedFeed ? resFps : streamInfoLabel}</span>
           </button>
 
-          {/* Night Mode Booster Toggle */}
           <button
             type="button"
             onClick={handleCycleNightMode}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 border backdrop-blur-md transition-all ${
+            className={`px-2.5 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1 border transition-all ${
               nightModeLevel > 0
-                ? 'bg-amber-500/20 border-amber-400/80 text-amber-300 shadow-lg shadow-amber-500/25'
-                : 'bg-black/60 border-white/15 text-neutral-400 hover:text-white'
+                ? 'bg-amber-500/20 border-amber-400/80 text-amber-300'
+                : 'bg-neutral-900/90 border-white/15 text-neutral-400 hover:text-white'
             }`}
-            title="Night Mode Booster (Low-light ISO boost)"
+            title="Night Mode Low-Light Boost"
           >
             <Moon className={`w-3.5 h-3.5 ${nightModeLevel > 0 ? 'text-amber-400 fill-amber-400' : ''}`} />
             <span className="hidden sm:inline">
-              {nightModeLevel === 0 ? 'Night Mode' : nightModeLevel === 1 ? 'Night 1.5x' : 'Night 3.0x'}
+              {nightModeLevel === 0 ? 'Night' : nightModeLevel === 1 ? '1.5x' : '3.0x'}
             </span>
           </button>
         </div>
 
-        {/* Right: Studio Flash & Grid Overlay */}
-        <div className="flex items-center gap-2">
-          {/* Flash / Studio Ring */}
+        {/* Right: Flash & Grid */}
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => setIsFlashOn(!isFlashOn)}
-            className={`w-9 h-9 rounded-full flex items-center justify-center border backdrop-blur-md transition-all ${
+            className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all ${
               isFlashOn
-                ? 'bg-amber-400 text-black border-amber-300 shadow-lg shadow-amber-400/40'
-                : 'bg-black/60 text-neutral-300 border-white/15'
+                ? 'bg-amber-400 text-black border-amber-300'
+                : 'bg-neutral-900/90 text-neutral-300 border-white/15'
             }`}
-            title="Toggle Studio Torch Light"
+            title="Toggle Studio Light"
           >
             <Zap className="w-4 h-4" />
           </button>
 
-          {/* Grid Toggle */}
           <button
             type="button"
             onClick={() => setShowGrid(!showGrid)}
-            className={`w-9 h-9 rounded-full flex items-center justify-center border backdrop-blur-md transition-all ${
+            className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all ${
               showGrid
-                ? 'bg-pink-500/20 text-pink-400 border-pink-500/40'
-                : 'bg-black/60 text-neutral-400 border-white/15'
+                ? 'bg-pink-500/25 text-pink-400 border-pink-500/50'
+                : 'bg-neutral-900/90 text-neutral-400 border-white/15'
             }`}
-            title="Toggle Rule of Thirds Grid"
+            title="Toggle Framing Grid"
           >
             <Grid className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* ========================================================================= */}
-      {/* MAIN PRO VIEWFINDER / CAMERA STREAM AREA                                  */}
-      {/* ========================================================================= */}
-      <div className="relative flex-1 w-full h-full flex items-center justify-center overflow-hidden bg-neutral-950">
-        {/* Live Camera Feed or Animated Viewfinder */}
+      {/* MAIN VIEWFINDER / RECORDED PREVIEW */}
+      <div className="relative flex-1 w-full flex items-center justify-center overflow-hidden bg-neutral-950 px-2 sm:px-4">
         {recordedClipUrl ? (
-          /* PLAYBACK PREVIEW OF RECORDED CLIP */
+          /* PREVIEW OF RECORDED FILTERED VIDEO OR CAPTURED PHOTO */
           <div className="relative w-full h-full max-w-md max-h-[760px] rounded-3xl overflow-hidden bg-black border border-pink-500/40 shadow-2xl flex flex-col justify-between">
-            <video
-              src={recordedClipUrl}
-              autoPlay
-              loop
-              playsInline
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/60 pointer-events-none" />
+            {recordedMediaType === 'image' ? (
+              <img
+                src={recordedClipUrl}
+                alt="Captured Preview"
+                className="w-full h-full object-contain bg-black"
+              />
+            ) : (
+              <video
+                src={recordedClipUrl}
+                autoPlay
+                loop
+                controls
+                playsInline
+                className="w-full h-full object-cover"
+              />
+            )}
 
-            {/* Preview Header */}
-            <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between">
-              <span className="px-3 py-1 rounded-full bg-pink-600/90 text-white text-xs font-black tracking-wider flex items-center gap-1.5 shadow-md">
-                <Film className="w-3.5 h-3.5" /> 4K CLIP PREVIEW
+            <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
+              <span className="px-3 py-1 rounded-full bg-pink-600/95 text-white text-[11px] font-black tracking-wider flex items-center gap-1.5 shadow-md">
+                <Film className="w-3.5 h-3.5" />
+                {recordedMediaType === 'image' ? 'FILTERED PHOTO' : `${selectedFilter.shortLabel.toUpperCase()} HD VIDEO`}
               </span>
               <button
                 type="button"
-                onClick={() => setRecordedClipUrl(null)}
-                className="px-3 py-1 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 text-xs font-bold border border-neutral-700 flex items-center gap-1"
+                onClick={() => {
+                  setRecordedClipUrl(null);
+                  setIsSavedToGallery(false);
+                  recordedBlobRef.current = null;
+                }}
+                className="pointer-events-auto px-3 py-1 rounded-full bg-neutral-900/95 hover:bg-neutral-800 text-neutral-200 text-xs font-bold border border-neutral-700 flex items-center gap-1"
               >
                 <RotateCcw className="w-3 h-3" /> Retake
               </button>
             </div>
 
-            {/* Publish Form Overlay */}
-            <div className="absolute bottom-4 left-4 right-4 z-20 bg-neutral-950/90 border border-neutral-800 rounded-2xl p-4 backdrop-blur-md space-y-3">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block mb-1">
-                  Reel Title
-                </label>
+            <div className="absolute bottom-3 left-3 right-3 z-20 bg-neutral-950/95 border border-neutral-800 rounded-2xl p-3.5 space-y-2.5">
+              <div className="grid grid-cols-1 gap-2">
                 <input
                   type="text"
                   value={clipTitle}
                   onChange={(e) => setClipTitle(e.target.value)}
-                  placeholder="Give your 4K reel a title..."
+                  placeholder="Give your reel a title..."
                   className="w-full bg-neutral-900 text-xs text-white px-3 py-2 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
+                />
+                <input
+                  type="text"
+                  value={clipHashtags}
+                  onChange={(e) => setClipHashtags(e.target.value)}
+                  placeholder="#hashtags"
+                  className="w-full bg-neutral-900 text-[11px] text-cyan-300 px-3 py-1.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-cyan-400"
                 />
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-stretch gap-2">
+                {/* Direct Save to Mobile Gallery / Download */}
                 <button
                   type="button"
+                  onClick={handleSaveToDeviceGallery}
+                  className={`py-2.5 px-3.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 border transition-all active:scale-98 cursor-pointer shrink-0 ${
+                    isSavedToGallery
+                      ? 'bg-emerald-600/25 border-emerald-400 text-emerald-300'
+                      : 'bg-neutral-900 hover:bg-neutral-800 border-cyan-500/50 text-cyan-300 shadow-lg shadow-cyan-500/15'
+                  }`}
+                >
+                  {isSavedToGallery ? (
+                    <>
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <span>Saved to Gallery</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 text-cyan-400" />
+                      <span>Save to Gallery / Download</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Publish to Global / Feed */}
+                <button
+                  type="button"
+                  disabled={isPublishing}
                   onClick={handlePublishReel}
-                  className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 hover:from-pink-500 hover:to-cyan-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xl shadow-pink-600/35 active:scale-98 transition-all"
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 hover:from-pink-500 hover:to-cyan-400 disabled:opacity-60 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xl shadow-pink-600/30 active:scale-98 transition-all cursor-pointer"
                 >
                   <Flame className="w-4 h-4" />
-                  <span>Publish to VibeReels</span>
+                  <span>{isPublishing ? 'Publishing...' : 'Publish to Feed'}</span>
                 </button>
               </div>
             </div>
           </div>
         ) : (
-          /* ACTIVE VIEWFINDER */
+          /* ACTIVE LIVE CANVAS CAMERA VIEWFINDER */
           <div className="relative w-full h-full max-w-md max-h-[760px] rounded-2xl sm:rounded-3xl overflow-hidden bg-black border border-neutral-800 shadow-2xl flex flex-col justify-between">
-            {/* Real Webcam Video or Futuristic Simulated Viewfinder */}
             {!isSimulatedFeed ? (
-              <video
-                ref={videoPreviewRef}
-                autoPlay
-                playsInline
-                muted
-                style={getFilterStyle()}
-                className={`w-full h-full object-cover transition-all duration-300 ${
-                  facingMode === 'user' ? 'scale-x-[-1]' : ''
-                }`}
+              <canvas
+                ref={canvasPreviewRef}
+                style={{
+                  filter:
+                    typeof CanvasRenderingContext2D !== 'undefined' &&
+                    'filter' in CanvasRenderingContext2D.prototype
+                      ? 'none'
+                      : activeCanvasFallbackFilter,
+                }}
+                className="w-full h-full object-cover [transform:translateZ(0)]"
               />
             ) : (
               <div
-                style={getFilterStyle()}
+                style={{ filter: activeCanvasFallbackFilter }}
                 className="w-full h-full relative overflow-hidden bg-gradient-to-br from-purple-950 via-neutral-950 to-cyan-950 flex items-center justify-center p-5"
               >
-                {/* Fallback Native Camera Input (<input type="file" accept="video/*,image/*" capture="environment">) */}
-                <input
-                  ref={nativeCameraInputRef}
-                  type="file"
-                  accept="video/*,image/*"
-                  capture="environment"
-                  className="hidden"
-                  style={{ display: 'none' }}
-                  onChange={handleNativeCameraCaptured}
-                />
-
-                {/* Cyberpunk Animated Studio Backing */}
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-pink-600/20 via-cyan-900/10 to-black/90 pointer-events-none" />
                 <div className="relative z-10 flex flex-col items-center gap-3 max-w-xs text-center">
-                  <div className="w-18 h-18 rounded-full bg-neutral-900/80 border-2 border-pink-500/50 flex items-center justify-center text-pink-400 shadow-xl shadow-pink-500/25">
-                    <Camera className="w-9 h-9 animate-pulse" />
+                  <div className="w-16 h-16 rounded-full bg-neutral-900/90 border-2 border-pink-500/50 flex items-center justify-center text-pink-400 shadow-xl">
+                    <Camera className="w-8 h-8" />
                   </div>
                   <div>
                     <h3 className="text-sm font-black text-white tracking-wide">
-                      {cameraBlockedInWebView ? 'LIVE WEBCAM RESTRICTED' : 'PRO 4K STUDIO SENSOR'}
+                      {cameraBlockedInWebView ? 'LIVE WEBCAM BLOCKED' : 'INITIALIZING HD CAMERA...'}
                     </h3>
                     <p className="text-xs text-neutral-300 font-medium mt-1 leading-relaxed">
-                      {cameraBlockedInWebView
-                        ? 'Browser/APK WebView blocked live camera stream. Tap below to capture directly with your mobile phone camera app!'
-                        : '10-bit HDR · ProRes 422 HQ Ready'}
+                      Allow camera & microphone permissions, or launch your phone&apos;s native camera directly.
                     </p>
                   </div>
 
-                  {/* Native Camera Direct Launcher Button */}
                   <button
                     type="button"
                     onClick={() => nativeCameraInputRef.current?.click()}
-                    className="mt-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:from-pink-500 hover:to-amber-400 text-white font-bold text-xs flex items-center gap-2 shadow-xl shadow-pink-600/30 active:scale-95 transition-all border border-pink-300/40"
+                    className="mt-1 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:from-pink-500 hover:to-amber-400 text-white font-bold text-xs flex items-center gap-2 shadow-xl active:scale-95 transition-all"
                   >
                     <Camera className="w-4 h-4" />
                     <span>Open Phone Native Camera</span>
@@ -572,7 +1115,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               </div>
             )}
 
-            {/* Rule of Thirds Grid Lines Overlay */}
+            {/* Rule of Thirds Grid */}
             {showGrid && (
               <div className="absolute inset-0 pointer-events-none z-10 flex flex-col divide-y divide-white/15">
                 <div className="flex-1 flex divide-x divide-white/15">
@@ -593,247 +1136,153 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               </div>
             )}
 
-            {/* Red Recording Border when live recording */}
+            {/* Red Recording Border */}
             {isRecording && (
-              <div className="absolute inset-0 pointer-events-none z-25 border-4 border-red-500 animate-pulse rounded-2xl sm:rounded-3xl shadow-[inset_0_0_20px_rgba(239,68,68,0.5)]" />
+              <div className="absolute inset-0 pointer-events-none z-20 border-4 border-red-500 rounded-2xl sm:rounded-3xl" />
             )}
 
-            {/* ========================================================= */}
-            {/* AI MOTION TRACKING INDICATOR OVERLAY                      */}
-            {/* ========================================================= */}
-            <div
-              style={{
-                left: `${trackerPos.x}%`,
-                top: `${trackerPos.y}%`,
-                transform: 'translate(-50%, -50%)',
-              }}
-              className="absolute z-20 pointer-events-none transition-all duration-700 ease-out"
-            >
-              {/* Dynamic HUD Bounding Box */}
-              <div className="w-28 h-28 sm:w-32 sm:h-32 border border-dashed border-cyan-400/80 rounded-2xl relative flex flex-col justify-between p-1.5 shadow-lg shadow-cyan-400/20">
-                {/* Corner Brackets */}
-                <span className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-cyan-400 rounded-tl-md" />
-                <span className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-cyan-400 rounded-tr-md" />
-                <span className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-cyan-400 rounded-bl-md" />
-                <span className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-cyan-400 rounded-br-md" />
-
-                {/* Center Crosshair */}
-                <div className="w-2 h-2 rounded-full bg-cyan-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-ping" />
-
-                {/* Top Lock Badge */}
-                <div className="flex items-center justify-between text-[9px] font-black tracking-wider uppercase">
-                  <span
-                    className={`px-1.5 py-0.2 rounded-xs flex items-center gap-1 ${
-                      aiTrackingLocked ? 'bg-cyan-500 text-black' : 'bg-red-500 text-white'
-                    }`}
-                  >
-                    <Eye className="w-2.5 h-2.5" />
-                    {aiTrackingLocked ? 'AI TRACK: LOCKED' : 'SEARCHING'}
-                  </span>
-                  <span className="text-cyan-300">98.4%</span>
-                </div>
-
-                {/* Bottom Distance & Focus Info */}
-                <div className="flex items-center justify-between text-[8px] text-cyan-200 font-mono">
-                  <span>F/1.8 · ISO 240</span>
-                  <span>AF-C 1.4m</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Gyro Horizon Tilt Leveler Indicator */}
-            <div className="absolute top-1/2 left-4 right-4 -translate-y-1/2 z-15 pointer-events-none flex items-center justify-between opacity-40">
-              <div
-                style={{ transform: `rotate(${horizonTilt}deg)` }}
-                className="w-10 h-0.5 bg-cyan-400 rounded-full transition-transform"
-              />
-              <span className="text-[9px] font-mono text-cyan-400">{horizonTilt.toFixed(1)}°</span>
-              <div
-                style={{ transform: `rotate(${horizonTilt}deg)` }}
-                className="w-10 h-0.5 bg-cyan-400 rounded-full transition-transform"
-              />
-            </div>
-
-            {/* ========================================================= */}
-            {/* RECORDING HEADER OVERLAY: REC TIMER & AUDIO VU METERS     */}
-            {/* ========================================================= */}
-            <div className="relative z-30 p-3 flex items-center justify-between gap-2 pointer-events-none">
-              {/* Recording Status / Duration */}
+            {/* Top Viewfinder Overlay: REC Timer + Filter Badge */}
+            <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between gap-2 pointer-events-none">
               {isRecording ? (
-                <div className="flex items-center gap-2 bg-red-600/90 border border-red-400 px-3 py-1 rounded-full text-white shadow-xl backdrop-blur-md animate-pulse">
+                <div className="flex items-center gap-2 bg-red-600/95 border border-red-400 px-3 py-1 rounded-full text-white shadow-xl">
                   <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                  <span className="text-xs font-black tracking-wider">
-                    REC 00:{recordingSeconds < 10 ? `0${recordingSeconds}` : recordingSeconds} / 01:00
+                  <span className="text-xs font-black tracking-wider tabular-nums">
+                    REC {formattedTimer} / 01:00
                   </span>
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5 bg-black/60 border border-white/10 px-2.5 py-1 rounded-full text-[11px] text-neutral-300 backdrop-blur-md">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  <span className="font-mono">PRO READY</span>
+                <div className="flex items-center gap-1.5 bg-black/75 border border-white/15 px-2.5 py-1 rounded-full text-[11px] text-neutral-200">
+                  <Sparkles className="w-3 h-3 text-pink-400" />
+                  <span className="font-bold">{selectedFilter.name}</span>
                 </div>
               )}
 
-              {/* Simulated Audio VU Level Meter Bars */}
-              <div className="flex items-center gap-1 bg-black/60 px-2.5 py-1 rounded-full border border-white/10 backdrop-blur-md">
-                <Volume2 className="w-3 h-3 text-neutral-400" />
-                <div className="flex items-center gap-0.5 h-3">
-                  <span className={`w-0.5 rounded-full bg-emerald-400 ${isRecording ? 'h-3 animate-pulse' : 'h-1.5'}`} />
-                  <span className={`w-0.5 rounded-full bg-emerald-400 ${isRecording ? 'h-2 animate-bounce' : 'h-2'}`} />
-                  <span className={`w-0.5 rounded-full bg-emerald-400 ${isRecording ? 'h-3.5 animate-pulse' : 'h-2.5'}`} />
-                  <span className={`w-0.5 rounded-full bg-amber-400 ${isRecording ? 'h-2 animate-bounce' : 'h-1'}`} />
-                  <span className={`w-0.5 rounded-full bg-red-400 ${isRecording ? 'h-1.5 animate-pulse' : 'h-0.5'}`} />
-                </div>
+              <div className="flex items-center gap-1.5 bg-black/75 px-2.5 py-1 rounded-full border border-white/15 text-[10px] font-bold text-neutral-300">
+                <Volume2 className="w-3 h-3 text-emerald-400" />
+                <span>{facingMode === 'user' ? 'Front' : 'Back'}</span>
               </div>
             </div>
 
-            {/* Zoom Stepper Pills (0.5x, 1x, 2x, 5x) */}
-            <div className="relative z-30 flex items-center justify-center gap-2 pb-2">
-              {[0.5, 1.0, 2.0, 5.0].map((z) => (
-                <button
-                  key={z}
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playCameraShutter();
-                    setZoomLevel(z);
-                    onShowToast(`Zoom set to ${z}x`);
-                  }}
-                  className={`w-8 h-8 rounded-full text-[10px] font-black transition-all border backdrop-blur-md ${
-                    zoomLevel === z
-                      ? 'bg-amber-400 text-black border-amber-300 shadow-md shadow-amber-400/30 scale-110'
-                      : 'bg-black/60 text-white border-white/20 hover:bg-neutral-800'
-                  }`}
-                >
-                  {z}x
-                </button>
-              ))}
+            {/* Bottom Overlay inside Viewfinder: Zoom Pills + Scrollable Real-Time Filter Bar */}
+            <div className="absolute bottom-2 left-0 right-0 z-30 flex flex-col gap-2 px-2">
+              {/* Digital Zoom Stepper */}
+              <div className="flex items-center justify-center gap-1.5">
+                {[1.0, 1.5, 2.0, 3.0].map((z) => (
+                  <button
+                    key={z}
+                    type="button"
+                    onClick={() => {
+                      setZoomLevel(z);
+                      onShowToast(`Zoom ${z}x`);
+                    }}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-black border transition-all ${
+                      zoomLevel === z
+                        ? 'bg-amber-400 text-black border-amber-300 scale-105'
+                        : 'bg-black/70 text-white border-white/20 hover:bg-neutral-800'
+                    }`}
+                  >
+                    {z}x
+                  </button>
+                ))}
+              </div>
+
+              {/* Scrollable Live Camera Filters & Effects Bar */}
+              <div
+                className="flex items-center gap-2 overflow-x-auto no-scrollbar px-2 py-1.5 bg-black/65 rounded-2xl border border-white/10"
+                aria-label="Live camera filters"
+              >
+                {CAMERA_FILTERS.map((filter) => {
+                  const isSelected = filter.id === selectedFilterId;
+                  return (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedFilterId(filter.id);
+                        soundEngine.playCameraShutter();
+                      }}
+                      className={`shrink-0 flex flex-col items-center gap-1 px-2 py-1 rounded-xl transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-pink-600/30 border border-pink-400 scale-105'
+                          : 'bg-neutral-900/75 border border-white/10 hover:border-white/30'
+                      }`}
+                    >
+                      <div
+                        className={`w-8 h-8 rounded-full bg-gradient-to-tr ${filter.swatchClass} border-2 ${
+                          isSelected ? 'border-white' : 'border-neutral-700'
+                        }`}
+                      />
+                      <span
+                        className={`text-[10px] font-bold whitespace-nowrap ${
+                          isSelected ? 'text-pink-300' : 'text-neutral-300'
+                        }`}
+                      >
+                        {filter.shortLabel}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* ========================================================================= */}
-      {/* BOTTOM CONTROLS: BEAUTY SLIDER, HEAVY SHUTTER BUTTON, FLIP CAMERA        */}
-      {/* ========================================================================= */}
+      {/* BOTTOM PRIMARY CAMERA CONTROLS: CAPTURE PHOTO | RECORD VIDEO / STOP | SWITCH CAMERA */}
       {!recordedClipUrl && (
-        <div className="relative z-30 px-6 py-4 bg-gradient-to-t from-black via-black/90 to-transparent flex flex-col gap-3 shrink-0">
-          {/* Beauty Filters Tray Popup */}
-          {isBeautyOpen && (
-            <div className="max-w-md mx-auto w-full bg-neutral-900/95 border border-neutral-800 rounded-2xl p-3 shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-2 duration-200 space-y-2.5">
-              <div className="flex items-center justify-between pb-1 border-b border-neutral-800">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-pink-400" />
-                  <span className="text-xs font-bold text-white">Beauty & Skin Smooth ({beautyLevel}%)</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsBeautyOpen(false)}
-                  className="text-neutral-400 hover:text-white text-xs"
-                >
-                  Close
-                </button>
-              </div>
-
-              {/* Slider */}
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] text-neutral-400 font-bold">0%</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={beautyLevel}
-                  onChange={(e) => setBeautyLevel(Number(e.target.value))}
-                  className="flex-1 accent-pink-500 cursor-pointer h-1.5 bg-neutral-800 rounded-lg"
-                />
-                <span className="text-[10px] text-pink-400 font-bold">100%</span>
-              </div>
-
-              {/* Presets */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
-                {(['Natural', 'Smooth Glam', 'Cyber Neon', 'Golden Hour', 'Vivid Rosy'] as BeautyPreset[]).map(
-                  (preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => setBeautyPreset(preset)}
-                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap border transition-all ${
-                        beautyPreset === preset
-                          ? 'bg-pink-600 text-white border-pink-400 shadow-sm'
-                          : 'bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-700'
-                      }`}
-                    >
-                      {preset}
-                    </button>
-                  )
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Bottom Primary Controls Row */}
-          <div className="max-w-md mx-auto w-full flex items-center justify-around">
-            {/* Left: Beauty Filter Toggle */}
+        <div className="relative z-30 px-4 py-3.5 bg-gradient-to-t from-black via-black/95 to-transparent shrink-0">
+          <div className="max-w-md mx-auto w-full flex items-center justify-around gap-3">
+            {/* Capture Photo Button */}
             <button
               type="button"
-              onClick={() => setIsBeautyOpen(!isBeautyOpen)}
-              className={`flex flex-col items-center gap-1 p-2 rounded-2xl transition-all ${
-                isBeautyOpen
-                  ? 'text-pink-400 bg-pink-500/20'
-                  : 'text-neutral-300 hover:text-white'
-              }`}
-              title="Open Beauty Filters Slider"
+              disabled={isRecording}
+              onClick={handleCapturePhoto}
+              className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
+              title="Capture Filtered Photo"
             >
-              <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center shadow-md">
-                <Sparkles className="w-5 h-5 text-pink-400" />
+              <div className="w-11 h-11 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center shadow-md">
+                <ImageIcon className="w-5 h-5 text-cyan-400" />
               </div>
-              <span className="text-[10px] font-bold">Beauty</span>
+              <span className="text-[10px] font-bold">Capture Photo</span>
             </button>
 
-            {/* ========================================================= */}
-            {/* HEAVY NEON-GLOWING SHUTTER RECORD BUTTON                  */}
-            {/* ========================================================= */}
-            <div className="relative flex items-center justify-center">
-              {/* Outer Pulsing Neon Halo */}
-              <div
-                className={`absolute w-24 h-24 rounded-full transition-all duration-500 pointer-events-none ${
-                  isRecording
-                    ? 'bg-red-500/30 scale-125 animate-ping'
-                    : 'bg-gradient-to-tr from-pink-500/25 to-cyan-500/25 blur-md'
-                }`}
-              />
-
-              {/* Shutter Ring Bezel */}
-              <button
-                type="button"
-                onClick={handleToggleRecord}
-                className={`relative w-20 h-20 rounded-full p-1.5 flex items-center justify-center transition-all duration-300 active:scale-92 border-4 ${
-                  isRecording
-                    ? 'border-red-500 bg-red-950/60 shadow-[0_0_35px_rgba(239,68,68,0.7)]'
-                    : 'border-pink-500 bg-black/80 hover:border-pink-400 shadow-[0_0_25px_rgba(236,72,153,0.5)]'
-                }`}
-                aria-label={isRecording ? 'Stop Recording' : 'Start Recording'}
-              >
-                {/* Inner Core: Morphs from Circle to Square when recording */}
-                <div
-                  className={`transition-all duration-300 ${
-                    isRecording
-                      ? 'w-7 h-7 rounded-md bg-red-500 shadow-md shadow-red-500/80 animate-pulse'
-                      : 'w-14 h-14 rounded-full bg-gradient-to-tr from-pink-500 via-rose-500 to-amber-500 shadow-lg shadow-pink-500/50 hover:scale-105'
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* Right: Flip Camera (Front / Back) */}
+            {/* Primary Record Video / Stop Button */}
             <button
               type="button"
-              onClick={handleFlipCamera}
-              className="flex flex-col items-center gap-1 p-2 text-neutral-300 hover:text-white transition-colors"
-              title="Flip Front / Rear Camera"
+              onClick={handleToggleRecord}
+              className={`flex items-center gap-2.5 px-5 py-3 rounded-full font-black text-xs border-2 transition-all active:scale-95 cursor-pointer shadow-xl ${
+                isRecording
+                  ? 'bg-red-600 hover:bg-red-500 border-red-300 text-white shadow-red-600/40'
+                  : 'bg-gradient-to-r from-pink-600 via-rose-600 to-amber-500 hover:from-pink-500 hover:to-amber-400 border-pink-300/60 text-white shadow-pink-600/35'
+              }`}
+              aria-label={isRecording ? 'Stop Recording' : 'Record Video'}
             >
-              <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center shadow-md active:rotate-180 transition-transform duration-300">
-                <RotateCcw className="w-5 h-5" />
+              {isRecording ? (
+                <>
+                  <Square className="w-4 h-4 fill-white" />
+                  <span className="tabular-nums">Stop ({formattedTimer})</span>
+                </>
+              ) : (
+                <>
+                  <Circle className="w-4 h-4 fill-white text-white" />
+                  <Video className="w-4 h-4" />
+                  <span>Record Video</span>
+                </>
+              )}
+            </button>
+
+            {/* Switch Camera Button (Front / Back) */}
+            <button
+              type="button"
+              disabled={isRecording}
+              onClick={handleFlipCamera}
+              className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
+              title="Switch Front / Back Camera"
+            >
+              <div className="w-11 h-11 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center shadow-md">
+                <SwitchCamera className="w-5 h-5 text-pink-400" />
               </div>
-              <span className="text-[10px] font-bold">Flip</span>
+              <span className="text-[10px] font-bold">Switch Camera</span>
             </button>
           </div>
         </div>

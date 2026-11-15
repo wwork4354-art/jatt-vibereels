@@ -5,6 +5,8 @@ import {
   uploadMediaToReelsBucket,
   createGlobalPostInSupabase,
   getOrCreateUserProfileId,
+  fileToPersistentDataUrl,
+  saveLocalPostRecord,
 } from '../lib/supabaseService';
 
 interface UploadModalProps {
@@ -127,6 +129,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         );
         if (uploadedUrl) {
           finalMediaUrl = uploadedUrl;
+        } else {
+          const dataUrl = await fileToPersistentDataUrl(selectedFile);
+          if (dataUrl) finalMediaUrl = dataUrl;
         }
       }
 
@@ -141,6 +146,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       });
 
       if (supabasePost) {
+        saveLocalPostRecord(supabasePost);
         onUploadSuccess(supabasePost);
         onClose();
         return;
@@ -158,6 +164,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         userId,
         mediaType,
         isUserUploaded: true,
+        createdAt: new Date().toISOString(),
         creator: {
           name: authorName,
           username: authorUsername,
@@ -167,10 +174,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           bio: currentUser?.bio || creatorProfile?.bio || 'Creator on VibeReels',
         },
         stats: {
+          views: 0,
           likes: 0,
           comments: 0,
           shares: 0,
           saves: 0,
+          downloads: 0,
         },
         isLiked: false,
         isSaved: false,
@@ -182,6 +191,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         commentsList: [],
       };
 
+      saveLocalPostRecord(newPost);
       onUploadSuccess(newPost);
       onClose();
     } finally {
