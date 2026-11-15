@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   X,
   Flame,
@@ -19,6 +19,7 @@ import {
 import { VideoPost, TrendingHashtag, TrendingAudio } from '../types';
 import { TRENDING_HASHTAGS, TRENDING_AUDIOS } from '../data/mockTrends';
 import { soundEngine } from '../utils/soundEngine';
+import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 
 interface TrendsDashboardProps {
   isOpen: boolean;
@@ -44,28 +45,47 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
+  // Ranked videos sorted by likes/engagement (memoized before early return)
+  const rankedVideos = useMemo(
+    () => [...videos].sort((a, b) => b.stats.likes - a.stats.likes),
+    [videos]
+  );
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filteredVideos = useMemo(
+    () =>
+      !normalizedQuery
+        ? rankedVideos
+        : rankedVideos.filter(
+            (v) =>
+              v.title.toLowerCase().includes(normalizedQuery) ||
+              v.creator.name.toLowerCase().includes(normalizedQuery) ||
+              v.hashtags.some((t) => t.toLowerCase().includes(normalizedQuery))
+          ),
+    [rankedVideos, normalizedQuery]
+  );
+
+  const filteredHashtags = useMemo(() => {
+    const q = normalizedQuery.replace(/^#/, '');
+    return !q
+      ? TRENDING_HASHTAGS
+      : TRENDING_HASHTAGS.filter((h) => h.tag.toLowerCase().includes(q));
+  }, [normalizedQuery]);
+
+  const filteredAudios = useMemo(
+    () =>
+      !normalizedQuery
+        ? TRENDING_AUDIOS
+        : TRENDING_AUDIOS.filter(
+            (a) =>
+              a.title.toLowerCase().includes(normalizedQuery) ||
+              a.artist.toLowerCase().includes(normalizedQuery)
+          ),
+    [normalizedQuery]
+  );
+
   if (!isOpen) return null;
-
-  // Ranked videos sorted by likes/engagement
-  const rankedVideos = [...videos].sort((a, b) => b.stats.likes - a.stats.likes);
-
-  // Filtered lists based on search
-  const filteredVideos = rankedVideos.filter(
-    (v) =>
-      v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      v.creator.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      v.hashtags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
-
-  const filteredHashtags = TRENDING_HASHTAGS.filter((h) =>
-    h.tag.toLowerCase().includes(searchQuery.toLowerCase().replace(/^#/, ''))
-  );
-
-  const filteredAudios = TRENDING_AUDIOS.filter(
-    (a) =>
-      a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.artist.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   const formatViews = (likes: number) => {
     const estimatedViews = likes * 4.2;
@@ -321,7 +341,7 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                         <div className="flex items-center gap-3 min-w-0">
                           {getRankBadge(idx + 1)}
                           <img
-                            src={video.creator.avatar}
+                            src={optimizeThumbnailUrl(video.creator.avatar, 'grid')}
                             alt={video.creator.name}
                             loading="lazy"
                             decoding="async"
@@ -472,12 +492,12 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                 {filteredVideos.map((video, idx) => (
                   <div
                     key={video.id}
-                    className="p-3.5 bg-neutral-950/60 hover:bg-neutral-800/40 rounded-2xl border border-neutral-800 flex items-center justify-between gap-3 transition-colors group"
+                    className="p-3.5 bg-neutral-950/60 hover:bg-neutral-800/40 rounded-2xl border border-neutral-800 flex items-center justify-between gap-3 transition-colors group cv-auto-card"
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       {getRankBadge(idx + 1)}
                       <img
-                        src={video.creator.avatar}
+                        src={optimizeThumbnailUrl(video.creator.avatar, 'grid')}
                         alt={video.creator.name}
                         loading="lazy"
                         decoding="async"

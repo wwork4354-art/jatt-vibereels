@@ -19,6 +19,7 @@ import { SidebarDesktop } from './components/SidebarDesktop';
 import { MobileNavigation } from './components/MobileNavigation';
 import { TopBar } from './components/TopBar';
 import { soundEngine } from './utils/soundEngine';
+import { compressImageFile } from './utils/imageOptimize';
 
 // Lazy-load offscreen tabs and modals so initial page load is fast
 const CommentsDrawer = lazy(() =>
@@ -59,9 +60,24 @@ const CreatorActivityView = lazy(() =>
 );
 
 const LazyTabFallback = () => (
-  <div className="w-full h-full flex flex-col items-center justify-center bg-neutral-950 text-neutral-400 gap-2">
-    <div className="w-8 h-8 rounded-full border-2 border-pink-500 border-t-transparent animate-spin" />
-    <span className="text-xs font-bold tracking-wide text-neutral-400">Loading...</span>
+  <div className="w-full h-full bg-neutral-950 p-4 sm:p-6 flex flex-col gap-4 overflow-hidden">
+    <div className="flex items-center justify-between gap-3">
+      <div className="h-9 w-44 rounded-xl bg-neutral-900 animate-pulse" />
+      <div className="h-9 w-28 rounded-xl bg-neutral-900 animate-pulse" />
+    </div>
+    <div className="h-11 w-full rounded-xl bg-neutral-900 animate-pulse" />
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <div
+          key={i}
+          className="rounded-2xl bg-neutral-900/90 border border-neutral-800/80 p-4 space-y-3 animate-pulse"
+        >
+          <div className="w-full aspect-video rounded-xl bg-neutral-800/80" />
+          <div className="h-4 w-3/4 rounded-md bg-neutral-800" />
+          <div className="h-3 w-1/2 rounded-md bg-neutral-800/70" />
+        </div>
+      ))}
+    </div>
   </div>
 );
 import { supabase, isSupabaseConfigured } from './lib/supabase';
@@ -103,6 +119,33 @@ import {
 } from './lib/supabaseService';
 
 const CREATOR_PROFILE_STORAGE_KEY = 'jatt_creator_profile';
+const GLOBAL_FEED_CACHE_KEY = 'jatt_global_feed_cache_v1';
+
+function getCachedGlobalFeedPosts(): VideoPost[] {
+  try {
+    const raw = localStorage.getItem(GLOBAL_FEED_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((p) => p && typeof p.videoUrl === 'string' && !p.videoUrl.startsWith('blob:'));
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return [];
+}
+
+function saveCachedGlobalFeedPosts(posts: VideoPost[]): void {
+  try {
+    const cacheable = posts
+      .filter((p) => p.isSupabasePost && p.videoUrl && !p.videoUrl.startsWith('blob:') && !p.videoUrl.startsWith('data:'))
+      .slice(0, 40);
+    localStorage.setItem(GLOBAL_FEED_CACHE_KEY, JSON.stringify(cacheable));
+  } catch {
+    // ignore quota errors
+  }
+}
 
 const getInitialCreatorProfile = (user: UserAccount | null): CreatorProfileData => {
   const profileId = getOrCreateUserProfileId();
@@ -213,7 +256,14 @@ export default function App() {
   );
   const [videos, setVideos] = useState<VideoPost[]>(() => {
     const initialProf = getInitialCreatorProfile(getStoredCurrentUser());
-    return hydrateVideosFromStorage(INITIAL_VIDEOS, initialProf.id, initialProf.username);
+    const cachedCloud = getCachedGlobalFeedPosts();
+    const seen = new Set<string>();
+    const combinedBase = [...cachedCloud, ...INITIAL_VIDEOS].filter((v) => {
+      if (seen.has(v.id)) return false;
+      seen.add(v.id);
+      return true;
+    });
+    return hydrateVideosFromStorage(combinedBase, initialProf.id, initialProf.username);
   });
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>(getStoredActivityEvents);
   const [lastReadActivityAt, setLastReadActivityAt] = useState<string>(getActivityLastReadAt);
@@ -289,6 +339,9 @@ export default function App() {
       }
 
       const combinedCloud = [...myCloudPosts, ...globalPosts];
+      if (combinedCloud.length > 0) {
+        saveCachedGlobalFeedPosts(combinedCloud);
+      }
       if (combinedCloud.length > 0 || Object.keys(commentsMap).length > 0) {
         setVideos((prev) => {
           const cloudMap = new Map<string, VideoPost>();
@@ -325,6 +378,23 @@ export default function App() {
     };
 
     void loadCloudData();
+
+    // Idle-preload heavy tab/modal chunks so tab switches are instant
+    const preloadChunks = () => {
+      void import('./components/DownloadHub');
+      void import('./components/CreatorProfileView');
+      void import('./components/TrendsDashboard');
+      void import('./components/CreatorActivityView');
+      void import('./components/ProCameraModal');
+    };
+    const idleWin = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    const idleId =
+      typeof idleWin.requestIdleCallback === 'function'
+        ? idleWin.requestIdleCallback(preloadChunks, { timeout: 1500 })
+        : window.setTimeout(preloadChunks, 350);
 
     if (!supabase || !isSupabaseConfigured) {
       return () => {
@@ -436,6 +506,11 @@ export default function App() {
 
     return () => {
       isCancelled = true;
+      if (typeof idleWin.cancelIdleCallback === 'function') {
+        idleWin.cancelIdleCallback(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
       client.removeChannel(channel);
     };
   }, [creatorProfile.id, creatorProfile.username]);
@@ -1005,10 +1080,11 @@ export default function App() {
           showToast(`Uploading ${isImage ? 'image' : 'video'} to global feed...`);
         }
 
-        const uploadedUrl = await uploadMediaToReelsBucket(file, 'posts', file.name);
+        const uploadFile = isImage ? await compressImageFile(file, 1080, 0.8) : file;
+        const uploadedUrl = await uploadMediaToReelsBucket(uploadFile, 'posts', uploadFile.name);
         let finalMediaUrl = uploadedUrl || localPreviewUrl;
         if (!uploadedUrl) {
-          const persistentDataUrl = await fileToPersistentDataUrl(file);
+          const persistentDataUrl = await fileToPersistentDataUrl(uploadFile);
           if (persistentDataUrl) {
             finalMediaUrl = persistentDataUrl;
           }
@@ -1459,7 +1535,7 @@ export default function App() {
                         video={video}
                         isActive={idx === activeIndex}
                         isNext={idx === activeIndex + 1}
-                        isNearViewport={Math.abs(idx - activeIndex) <= 2}
+                        isNearViewport={Math.abs(idx - activeIndex) <= 1}
                         isMuted={isMuted}
                         onToggleMute={handleToggleMute}
                         onLikeToggle={handleLikeToggle}

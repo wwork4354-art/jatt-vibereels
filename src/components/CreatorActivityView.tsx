@@ -27,6 +27,7 @@ import {
   getSchemaSyncStatus,
   SUPABASE_SCHEMA_SQL,
 } from '../lib/supabaseService';
+import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 
 interface CreatorActivityPanelProps {
   events: ActivityEvent[];
@@ -241,8 +242,13 @@ export const CreatorActivityView: React.FC<CreatorActivityPanelProps> = ({
                 <div className="w-12 h-16 rounded-xl overflow-hidden bg-neutral-800 shrink-0 relative">
                   {post.mediaType === 'image' || post.posterUrl ? (
                     <img
-                      src={post.mediaType === 'image' ? post.videoUrl : post.posterUrl}
+                      src={optimizeThumbnailUrl(
+                        post.mediaType === 'image' ? post.videoUrl : post.posterUrl,
+                        'grid'
+                      )}
                       alt={post.title}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover"
                     />
                   ) : (
@@ -395,11 +401,13 @@ export const CreatorActivityView: React.FC<CreatorActivityPanelProps> = ({
           {filteredEvents.map((ev) => (
             <div
               key={ev.id}
-              className="p-3 rounded-2xl bg-neutral-900/80 hover:bg-neutral-900 border border-neutral-800/90 flex items-center gap-3 transition-colors"
+              className="p-3 rounded-2xl bg-neutral-900/80 hover:bg-neutral-900 border border-neutral-800/90 flex items-center gap-3 transition-colors cv-auto-card"
             >
               <img
-                src={ev.actorAvatar}
+                src={optimizeThumbnailUrl(ev.actorAvatar, 'grid')}
                 alt={ev.actorName}
+                loading="lazy"
+                decoding="async"
                 className="w-10 h-10 rounded-full object-cover bg-neutral-800 border border-neutral-700 shrink-0"
                 referrerPolicy="no-referrer"
               />
@@ -438,8 +446,10 @@ export const CreatorActivityView: React.FC<CreatorActivityPanelProps> = ({
               >
                 {ev.postThumbnail ? (
                   <img
-                    src={ev.postThumbnail}
+                    src={optimizeThumbnailUrl(ev.postThumbnail, 'grid')}
                     alt={ev.postTitle}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover"
                   />
                 ) : (

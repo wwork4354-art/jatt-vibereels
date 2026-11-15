@@ -30,6 +30,7 @@ import {
 import { DownloadItem, DownloadCategory } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
 import { soundEngine } from '../utils/soundEngine';
+import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 
 const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
 
@@ -1351,7 +1352,26 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
             {/* Marketplace / Fetched Videos Grid (Directly below "Showing X playable videos") */}
             <div className="max-w-6xl mx-auto">
-              {displayedItems.length === 0 ? (
+              {isSearchingYouTube ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[0, 1, 2, 3, 4, 5].map((idx) => (
+                    <div
+                      key={idx}
+                      className="bg-neutral-900/90 border border-neutral-800 rounded-2xl p-4 space-y-3 animate-pulse"
+                    >
+                      <div className="w-full aspect-video rounded-xl bg-neutral-800/80" />
+                      <div className="space-y-2">
+                        <div className="h-4 w-4/5 rounded-md bg-neutral-800" />
+                        <div className="h-3 w-1/2 rounded-md bg-neutral-800/70" />
+                      </div>
+                      <div className="flex gap-2 pt-2 border-t border-neutral-800/80">
+                        <div className="h-8 w-16 rounded-xl bg-neutral-800" />
+                        <div className="h-8 flex-1 rounded-xl bg-neutral-800/80" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : displayedItems.length === 0 ? (
                 <div className="py-16 text-center text-neutral-400 space-y-3">
                   <Search className="w-10 h-10 mx-auto text-neutral-600" />
                   <p className="text-sm font-bold text-neutral-300">
@@ -1404,7 +1424,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             onShowToast(`Playing "${item.title}"`);
                           }
                         }}
-                        className={`group bg-neutral-900/90 hover:bg-neutral-900 border rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between [transform:translateZ(0)] relative overflow-hidden ${
+                        className={`group cv-auto-card bg-neutral-900/90 hover:bg-neutral-900 border rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between [transform:translateZ(0)] relative overflow-hidden ${
                           isCurrentlyPlaying
                             ? 'border-red-500 ring-1 ring-red-500/40'
                             : item.youtubeId
@@ -1418,7 +1438,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             <div className="space-y-2.5">
                               <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-neutral-800 group-hover:border-red-500/60 transition-colors">
                                 <img
-                                  src={item.thumbnailUrl}
+                                  src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
                                   alt={item.title}
                                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                   loading="lazy"
@@ -1451,7 +1471,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                               {/* Thumbnail with quality badge & Hover Play Overlay */}
                               <div className="relative w-22 h-22 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-neutral-800 shrink-0 border border-neutral-700/80 shadow-md group-hover:scale-102 transition-transform">
                                 <img
-                                  src={item.thumbnailUrl}
+                                  src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
                                   alt={item.title}
                                   className="w-full h-full object-cover"
                                   loading="lazy"
@@ -1813,7 +1833,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <img
-                        src={item.thumbnailUrl}
+                        src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
                         alt={item.title}
                         loading="lazy"
                         decoding="async"
@@ -1883,7 +1903,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <img
-                        src={item.thumbnailUrl}
+                        src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
                         alt={item.title}
                         loading="lazy"
                         decoding="async"

@@ -23,6 +23,7 @@ import { ActivityEvent, CreatorProfileData, VideoPost } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { uploadMediaToReelsBucket } from '../lib/supabaseService';
 import { CreatorActivityView, PostInsightsModal } from './CreatorActivityView';
+import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 
 interface CreatorProfileViewProps {
   profile: CreatorProfileData;
@@ -478,7 +479,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
             {currentGridVideos.map((vid) => (
               <div
                 key={vid.id}
-                className="group relative aspect-[9/16] rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 hover:border-pink-500/60 transition-all [transform:translateZ(0)]"
+                className="group relative aspect-[9/16] rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 hover:border-pink-500/60 transition-all cv-auto-card [transform:translateZ(0)]"
               >
                 <button
                   type="button"
@@ -487,7 +488,10 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 >
                   {vid.mediaType === 'image' || vid.posterUrl ? (
                     <img
-                      src={vid.mediaType === 'image' ? vid.videoUrl : vid.posterUrl}
+                      src={optimizeThumbnailUrl(
+                        vid.mediaType === 'image' ? vid.videoUrl : vid.posterUrl,
+                        'grid'
+                      )}
                       alt={vid.title}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       loading="lazy"

@@ -8,6 +8,7 @@ import {
   fileToPersistentDataUrl,
   saveLocalPostRecord,
 } from '../lib/supabaseService';
+import { compressImageFile } from '../utils/imageOptimize';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -122,15 +123,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
       if (videoSourceType === 'file' && selectedFile) {
         onShowToast?.('Uploading media to Supabase Storage...');
+        const fileToUpload =
+          selectedMediaType === 'image'
+            ? await compressImageFile(selectedFile, 1080, 0.8)
+            : selectedFile;
         const uploadedUrl = await uploadMediaToReelsBucket(
-          selectedFile,
+          fileToUpload,
           'posts',
-          selectedFile.name
+          fileToUpload.name
         );
         if (uploadedUrl) {
           finalMediaUrl = uploadedUrl;
         } else {
-          const dataUrl = await fileToPersistentDataUrl(selectedFile);
+          const dataUrl = await fileToPersistentDataUrl(fileToUpload);
           if (dataUrl) finalMediaUrl = dataUrl;
         }
       }

@@ -96,10 +96,10 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     return () => window.clearTimeout(timer);
   }, [isActive, video.id, onViewTracked]);
 
-  // Smart Video Preloading & Lazy-Loading:
+  // Strict Lazy-Loading & Virtualization:
   // 1) Active reel: plays immediately at 60fps
-  // 2) Next reel (isNext): preloads/buffers silently so scrolling feels instantaneous
-  // 3) Far off-screen reels: pause & flush buffer immediately to keep memory low
+  // 2) Very next reel (isNext): strictly preload="metadata" to save RAM & bandwidth
+  // 3) All off-screen reels: pause & unload src/decoder immediately
   useEffect(() => {
     if (video.mediaType === 'image') {
       if (isNext && video.videoUrl) {
@@ -119,8 +119,8 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     if (!el) return;
 
     if (isActive) {
-      if (el.src !== video.videoUrl) {
-        el.src = video.videoUrl;
+      if (el.getAttribute('src') !== video.videoUrl) {
+        el.setAttribute('src', video.videoUrl);
       }
       el.preload = 'auto';
       el.muted = isMuted;
@@ -139,21 +139,16 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           });
       }
     } else if (isNext) {
-      // Pre-buffer next reel silently for instant zero-lag swipe
+      // Very next video only: pause and strictly preload="metadata"
       el.pause();
       setIsPlaying(false);
       el.muted = true;
-      el.preload = 'auto';
-      if (video.videoUrl && el.src !== video.videoUrl) {
-        el.src = video.videoUrl;
-        try {
-          el.load();
-        } catch {
-          // ignore
-        }
+      el.preload = 'metadata';
+      if (video.videoUrl && el.getAttribute('src') !== video.videoUrl) {
+        el.setAttribute('src', video.videoUrl);
       }
     } else {
-      // Off-screen: pause, unload buffer, release hardware decoder
+      // Off-screen: immediately pause, unload src & release hardware decoder
       el.pause();
       setIsPlaying(false);
       if (el.hasAttribute('src')) {
@@ -367,17 +362,20 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
-  // Lightweight virtualized placeholder when far off-screen to keep scroll container at 60fps
+  // Strict virtualization: unmount video DOM completely for off-screen cards outside [active-1 .. active+1]
   if (!isNearViewport && !isActive && !isNext) {
     return (
-      <div className="relative w-full h-[100dvh] snap-item bg-neutral-950 flex items-center justify-center overflow-hidden">
+      <div
+        className="relative w-full h-[100dvh] snap-item bg-neutral-950 flex items-center justify-center overflow-hidden"
+        style={{ contain: 'strict' }}
+      >
         {video.posterUrl && (
           <img
             src={video.posterUrl}
             alt={video.title}
             loading="lazy"
             decoding="async"
-            className="w-full h-full object-cover sm:object-contain sm:max-w-md opacity-60"
+            className="w-full h-full object-cover sm:object-contain sm:max-w-md opacity-40"
           />
         )}
       </div>
@@ -398,7 +396,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             alt={video.title}
             loading={isActive || isNext ? 'eager' : 'lazy'}
             decoding="async"
-            className="w-full h-full object-contain sm:max-w-md mx-auto [transform:translateZ(0)]"
+            className="w-full h-full object-contain sm:max-w-md mx-auto [transform:translate3d(0,0,0)] will-change-transform"
           />
         ) : (
           <>
@@ -410,7 +408,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 playsInline
                 loop
                 muted={isMuted || !isActive}
-                preload={isActive || isNext ? 'auto' : 'none'}
+                preload={isActive ? 'auto' : isNext ? 'metadata' : 'none'}
                 crossOrigin="anonymous"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={() => {
@@ -421,7 +419,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 onError={() => {
                   if (isActive) setVideoError(true);
                 }}
-                className="w-full h-full object-cover sm:object-contain sm:max-w-md mx-auto [transform:translateZ(0)]"
+                className="w-full h-full object-cover sm:object-contain sm:max-w-md mx-auto [transform:translate3d(0,0,0)] will-change-transform"
               />
             )}
 

@@ -29,19 +29,25 @@
 .snap-item {
   scroll-snap-align: start;
   scroll-snap-stop: always;
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
+  transform: translate3d(0, 0, 0);
+  -webkit-transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
-  contain: content;
+  contain: layout style paint;
 }
 
-/* Fast hardware-accelerated class for interactive overlays */
+/* Fast hardware-accelerated class for interactive overlays & camera preview */
 .gpu-accelerated {
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
+  transform: translate3d(0, 0, 0);
+  -webkit-transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+  will-change: transform;
+}
+
+.cv-auto-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 220px 320px;
 }
 
 /* Vinyl rotation animation */

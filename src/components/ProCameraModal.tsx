@@ -235,10 +235,12 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const recordedBlobRef = useRef<Blob | null>(null);
   const recordedMimeRef = useRef<string>('video/webm');
   const animFrameRef = useRef<number | null>(null);
+  const videoFrameCbRef = useRef<number | null>(null);
+  const recordingCanvasActiveRef = useRef<boolean>(false);
   const timerIntervalRef = useRef<number | null>(null);
   const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Keep live filter & transform values in refs so the 60fps rAF loop never restarts on filter tap
+  // Keep live filter & transform values in refs so on-demand recording never restarts
   const activeFilterRef = useRef<CameraFilterDef>(CAMERA_FILTERS[0]);
   const nightModeRef = useRef<number>(nightModeLevel);
   const zoomRef = useRef<number>(zoomLevel);
@@ -450,86 +452,126 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     };
   }, [isOpen, facingMode, resFps, onShowToast]);
 
-  // 60fps Real-Time Canvas Render Loop (bakes active CSS/Canvas filter directly into canvas pixels)
-  useEffect(() => {
-    if (!isOpen || isSimulatedFeed || recordedClipUrl) {
-      if (animFrameRef.current !== null) {
-        cancelAnimationFrame(animFrameRef.current);
-        animFrameRef.current = null;
+  // Draw one filtered/mirrored/zoomed frame onto the offscreen canvas (used for snapshot & filtered recording only)
+  const drawVideoFrameToCanvas = useCallback(
+    (maxDim = 1920): boolean => {
+      const video = videoPreviewRef.current;
+      const canvas = canvasPreviewRef.current;
+      if (!video || !canvas || video.readyState < 2 || video.videoWidth <= 0 || video.videoHeight <= 0) {
+        return false;
       }
+
+      const rawW = video.videoWidth;
+      const rawH = video.videoHeight;
+      const scale = Math.min(1, maxDim / Math.max(rawW, rawH));
+      const targetW = Math.max(2, Math.round(rawW * scale));
+      const targetH = Math.max(2, Math.round(rawH * scale));
+
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+
+      const ctx = canvas.getContext('2d', { alpha: false });
+      if (!ctx) return false;
+
+      const filterDef = activeFilterRef.current;
+      const compositeFilter = buildCompositeFilter(filterDef, nightModeRef.current);
+      const zoom = Math.max(1, zoomRef.current);
+
+      ctx.save();
+      if ('filter' in ctx) {
+        ctx.filter = compositeFilter;
+      }
+
+      if (facingRef.current === 'user') {
+        ctx.translate(targetW, 0);
+        ctx.scale(-1, 1);
+      }
+
+      const srcW = rawW / zoom;
+      const srcH = rawH / zoom;
+      const srcX = (rawW - srcW) / 2;
+      const srcY = (rawH - srcH) / 2;
+
+      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
+      ctx.restore();
+
+      if ('filter' in ctx) {
+        ctx.filter = 'none';
+      }
+      if (filterDef.drawOverlay) {
+        filterDef.drawOverlay(ctx, targetW, targetH);
+      }
+      return true;
+    },
+    [buildCompositeFilter]
+  );
+
+  // Stop any on-demand recording canvas frame pump immediately
+  const stopRecordingFramePump = useCallback(() => {
+    recordingCanvasActiveRef.current = false;
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    const video = videoPreviewRef.current as (HTMLVideoElement & {
+      cancelVideoFrameCallback?: (handle: number) => void;
+    }) | null;
+    if (video && videoFrameCbRef.current !== null && typeof video.cancelVideoFrameCallback === 'function') {
+      try {
+        video.cancelVideoFrameCallback(videoFrameCbRef.current);
+      } catch {
+        // ignore
+      }
+      videoFrameCbRef.current = null;
+    }
+  }, []);
+
+  // Start on-demand recording-only canvas pump (zero overhead during normal camera preview)
+  const startRecordingFramePump = useCallback(() => {
+    stopRecordingFramePump();
+    recordingCanvasActiveRef.current = true;
+
+    const video = videoPreviewRef.current as (HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number;
+    }) | null;
+
+    if (video && typeof video.requestVideoFrameCallback === 'function') {
+      const onVideoFrame = () => {
+        if (!recordingCanvasActiveRef.current) return;
+        drawVideoFrameToCanvas(1080);
+        videoFrameCbRef.current = video.requestVideoFrameCallback!(onVideoFrame);
+      };
+      drawVideoFrameToCanvas(1080);
+      videoFrameCbRef.current = video.requestVideoFrameCallback(onVideoFrame);
       return;
     }
 
-    let running = true;
-
-    const renderFrame = () => {
-      if (!running) return;
-      const video = videoPreviewRef.current;
-      const canvas = canvasPreviewRef.current;
-
-      if (video && canvas && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-        const targetW = video.videoWidth;
-        const targetH = video.videoHeight;
-
-        if (canvas.width !== targetW || canvas.height !== targetH) {
-          canvas.width = targetW;
-          canvas.height = targetH;
-        }
-
-        const ctx = canvas.getContext('2d', { alpha: false });
-        if (ctx) {
-          const filterDef = activeFilterRef.current;
-          const compositeFilter = buildCompositeFilter(filterDef, nightModeRef.current);
-          const zoom = Math.max(1, zoomRef.current);
-
-          ctx.save();
-          if ('filter' in ctx) {
-            ctx.filter = compositeFilter;
-          }
-
-          // Handle selfie mirror so saved video matches preview
-          if (facingRef.current === 'user') {
-            ctx.translate(targetW, 0);
-            ctx.scale(-1, 1);
-          }
-
-          // Center-crop digital zoom
-          const srcW = targetW / zoom;
-          const srcH = targetH / zoom;
-          const srcX = (targetW - srcW) / 2;
-          const srcY = (targetH - srcH) / 2;
-
-          ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
-          ctx.restore();
-
-          // Reset filter and apply custom Canvas filter overlay (tint/glow/vignette)
-          if ('filter' in ctx) {
-            ctx.filter = 'none';
-          }
-          if (filterDef.drawOverlay) {
-            filterDef.drawOverlay(ctx, targetW, targetH);
-          }
-        }
-      }
-
-      animFrameRef.current = requestAnimationFrame(renderFrame);
+    const onRaf = () => {
+      if (!recordingCanvasActiveRef.current) return;
+      drawVideoFrameToCanvas(1080);
+      animFrameRef.current = requestAnimationFrame(onRaf);
     };
+    drawVideoFrameToCanvas(1080);
+    animFrameRef.current = requestAnimationFrame(onRaf);
+  }, [drawVideoFrameToCanvas, stopRecordingFramePump]);
 
-    animFrameRef.current = requestAnimationFrame(renderFrame);
-
+  // Ensure frame pump cleans up on modal close
+  useEffect(() => {
+    if (!isOpen || recordedClipUrl) {
+      stopRecordingFramePump();
+    }
     return () => {
-      running = false;
-      if (animFrameRef.current !== null) {
-        cancelAnimationFrame(animFrameRef.current);
-        animFrameRef.current = null;
-      }
+      stopRecordingFramePump();
     };
-  }, [isOpen, isSimulatedFeed, recordedClipUrl, buildCompositeFilter]);
+  }, [isOpen, recordedClipUrl, stopRecordingFramePump]);
 
   // Stop active MediaRecorder cleanly
   const handleStopRecording = useCallback(() => {
     soundEngine.playRecordBeep(false);
     setIsRecording(false);
+    stopRecordingFramePump();
 
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
@@ -543,7 +585,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
 
     // Fallback if recorder wasn't active (e.g. simulated feed)
     onShowToast('Please use "Open Phone Camera" when live camera access is blocked.');
-  }, [onShowToast]);
+  }, [onShowToast, stopRecordingFramePump]);
 
   // Recording Timer Tracker
   useEffect(() => {
@@ -570,7 +612,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     };
   }, [isRecording, handleStopRecording]);
 
-  // Start / Stop High-Bitrate Canvas MediaRecorder
+  // Start / Stop High-Bitrate MediaRecorder (zero-copy rawStream when Normal + 1x + back cam, on-demand 1080p canvas otherwise)
   const handleToggleRecord = () => {
     if (isSimulatedFeed) {
       nativeCameraInputRef.current?.click();
@@ -591,17 +633,24 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
 
     try {
-      const targetFps = resFps.includes('60FPS') ? 60 : 30;
-      const canvasStream =
-        typeof canvas.captureStream === 'function'
-          ? canvas.captureStream(targetFps)
-          : rawStream;
+      const needsCanvasBake =
+        selectedFilterId !== 'normal' ||
+        nightModeLevel > 0 ||
+        zoomLevel > 1.0 ||
+        facingMode === 'user';
 
-      const combinedTracks: MediaStreamTrack[] = [
-        ...canvasStream.getVideoTracks(),
-        ...rawStream.getAudioTracks(),
-      ];
-      const combinedStream = new MediaStream(combinedTracks);
+      let combinedStream: MediaStream;
+      if (!needsCanvasBake || typeof canvas.captureStream !== 'function') {
+        combinedStream = rawStream;
+      } else {
+        startRecordingFramePump();
+        const targetFps = resFps.includes('60FPS') ? 60 : 30;
+        const canvasStream = canvas.captureStream(targetFps);
+        combinedStream = new MediaStream([
+          ...canvasStream.getVideoTracks(),
+          ...rawStream.getAudioTracks(),
+        ]);
+      }
 
       const options = getSupportedRecorderOptions();
       let recorder: MediaRecorder;
@@ -621,6 +670,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       };
 
       recorder.onstop = () => {
+        stopRecordingFramePump();
         const mime = recordedMimeRef.current || 'video/webm';
         const blob = new Blob(recordedChunksRef.current, { type: mime });
         if (blob.size > 0) {
@@ -648,20 +698,22 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       setRecordingSeconds(0);
       onShowToast(`Recording ${resFps} (${selectedFilter.name})...`);
     } catch (err) {
+      stopRecordingFramePump();
       console.error('Failed to start MediaRecorder:', err);
       onShowToast('Live recording unsupported on this browser — opening native phone camera.');
       nativeCameraInputRef.current?.click();
     }
   };
 
-  // Capture Filtered High-Res Photo from Canvas
+  // Capture Filtered High-Res Photo via single on-demand snapshot
   const handleCapturePhoto = () => {
     if (isSimulatedFeed) {
       nativeCameraInputRef.current?.click();
       return;
     }
+    const ok = drawVideoFrameToCanvas(1920);
     const canvas = canvasPreviewRef.current;
-    if (!canvas || canvas.width === 0) {
+    if (!ok || !canvas || canvas.width === 0) {
       onShowToast('Camera preview is still loading...');
       return;
     }
@@ -684,7 +736,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         onShowToast(`Photo captured with ${selectedFilter.name} filter!`);
       },
       'image/jpeg',
-      0.95
+      0.92
     );
   };
 
@@ -867,14 +919,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col justify-between overflow-hidden select-none [transform:translateZ(0)]">
-      {/* Hidden source video element fed by getUserMedia */}
-      <video
-        ref={videoPreviewRef}
-        autoPlay
-        playsInline
-        muted
-        className="hidden"
-      />
+      {/* Offscreen canvas used strictly on-demand for photo snapshots or filtered video baking */}
+      <canvas ref={canvasPreviewRef} className="hidden" />
 
       {/* Fallback Native Camera Input for restricted WebViews */}
       <input
@@ -1071,20 +1117,41 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             </div>
           </div>
         ) : (
-          /* ACTIVE LIVE CANVAS CAMERA VIEWFINDER */
+          /* ACTIVE HARDWARE-ACCELERATED VIDEO CAMERA VIEWFINDER */
           <div className="relative w-full h-full max-w-md max-h-[760px] rounded-2xl sm:rounded-3xl overflow-hidden bg-black border border-neutral-800 shadow-2xl flex flex-col justify-between">
             {!isSimulatedFeed ? (
-              <canvas
-                ref={canvasPreviewRef}
-                style={{
-                  filter:
-                    typeof CanvasRenderingContext2D !== 'undefined' &&
-                    'filter' in CanvasRenderingContext2D.prototype
-                      ? 'none'
-                      : activeCanvasFallbackFilter,
-                }}
-                className="w-full h-full object-cover [transform:translateZ(0)]"
-              />
+              <div className="relative w-full h-full overflow-hidden bg-black">
+                <video
+                  ref={videoPreviewRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{
+                    filter: activeCanvasFallbackFilter,
+                    transform: `translate3d(0, 0, 0) scale(${zoomLevel}) scaleX(${facingMode === 'user' ? -1 : 1})`,
+                    willChange: 'transform, filter',
+                  }}
+                  className="w-full h-full object-cover"
+                />
+                {selectedFilterId === 'warm_glow' && (
+                  <div className="absolute inset-0 pointer-events-none bg-radial from-amber-300/15 via-transparent to-orange-500/15 mix-blend-screen" />
+                )}
+                {selectedFilterId === 'cool_breeze' && (
+                  <div className="absolute inset-0 pointer-events-none bg-linear-to-br from-sky-400/15 to-indigo-500/15 mix-blend-screen" />
+                )}
+                {selectedFilterId === 'vintage_retro' && (
+                  <div className="absolute inset-0 pointer-events-none bg-radial from-amber-200/10 via-transparent to-black/45" />
+                )}
+                {selectedFilterId === 'noir_bw' && (
+                  <div className="absolute inset-0 pointer-events-none bg-radial from-white/5 via-transparent to-black/50" />
+                )}
+                {selectedFilterId === 'cyberpunk_neon' && (
+                  <div className="absolute inset-0 pointer-events-none bg-linear-to-br from-pink-500/20 via-purple-500/10 to-cyan-400/20 mix-blend-screen" />
+                )}
+                {selectedFilterId === 'soft_beauty' && (
+                  <div className="absolute inset-0 pointer-events-none bg-radial from-pink-200/15 via-transparent to-pink-400/10 mix-blend-screen" />
+                )}
+              </div>
             ) : (
               <div
                 style={{ filter: activeCanvasFallbackFilter }}
