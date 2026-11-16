@@ -12,16 +12,31 @@ import {
   LogOut,
   Sparkles,
   Bell,
+  Search,
+  CheckCircle2,
+  ArrowRight,
 } from 'lucide-react';
-import { FeedTab, UserAccount } from '../types';
+import {
+  FeedTab,
+  UserAccount,
+  VideoPost,
+  CreatorProfileData,
+  CreatorChannelSummary,
+} from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
+import { searchCreatorsDirectory } from '../lib/supabaseService';
+import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 
 interface MobileNavigationProps {
   currentTab: FeedTab;
   onSelectTab: (tab: FeedTab) => void;
   onOpenUpload: () => void;
   onOpenTrends: () => void;
+  onOpenCreatorSearch?: () => void;
+  videos?: VideoPost[];
+  ownProfile?: CreatorProfileData;
+  onSelectCreator?: (username: string) => void;
   onOpenLive: () => void;
   onOpenProCamera: () => void;
   onQuickVideoUpload?: (file: File, source?: 'live' | 'gallery') => void;
@@ -40,6 +55,10 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onSelectTab,
   onOpenUpload,
   onOpenTrends,
+  onOpenCreatorSearch,
+  videos = [],
+  ownProfile,
+  onSelectCreator,
   onOpenLive,
   onOpenProCamera,
   onQuickVideoUpload,
@@ -54,12 +73,31 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 }) => {
   const [isMobileProfileOpen, setIsMobileProfileOpen] = useState(false);
   const [isUploadSheetOpen, setIsUploadSheetOpen] = useState(false);
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
+  const [mobileSearchQuery, setMobileSearchQuery] = useState('');
+  const [mobileSearchResults, setMobileSearchResults] = useState<CreatorChannelSummary[]>([]);
 
   // Dual upload inputs:
   // Option 1: Record live video right now using phone camera (capture="environment")
   const liveRecordInputRef = useRef<HTMLInputElement | null>(null);
   // Option 2: Choose from phone mobile gallery / file manager (WITHOUT capture)
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    if (!isMobileSearchOpen || !ownProfile) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const list = await searchCreatorsDirectory(mobileSearchQuery, videos, ownProfile);
+      if (!cancelled) {
+        setMobileSearchResults(list.slice(0, 6));
+      }
+    }, mobileSearchQuery ? 120 : 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isMobileSearchOpen, mobileSearchQuery, videos, ownProfile]);
 
   const handleVideoFileSelected = (e: React.ChangeEvent<HTMLInputElement>, source: 'live' | 'gallery') => {
     const file = e.target.files?.[0];
@@ -140,8 +178,21 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           </button>
         </div>
 
-        {/* Right Activity Bell & Auth / Admin */}
+        {/* Right Creator Search, Activity Bell & Auth / Admin */}
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setIsMobileSearchOpen((prev) => !prev)}
+            className={`p-1.5 rounded-lg border transition-colors ${
+              isMobileSearchOpen
+                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                : 'bg-neutral-900 border-neutral-800 text-cyan-400 hover:text-white'
+            }`}
+            title="Search User ID (@username) or Creator Name"
+            aria-label="Search Creators"
+          >
+            {isMobileSearchOpen ? <X className="w-4 h-4" /> : <Search className="w-4 h-4" />}
+          </button>
           <button
             type="button"
             onClick={() => onSelectTab('activity')}
@@ -198,6 +249,99 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           )}
         </div>
       </header>
+
+      {/* Mobile Expandable Top Creator ID & Name Search Bar */}
+      {isMobileSearchOpen && (
+        <div className="lg:hidden fixed top-11 left-0 right-0 z-40 bg-neutral-950/98 border-b border-neutral-800 p-3 shadow-2xl space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="w-3.5 h-3.5 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                autoFocus
+                value={mobileSearchQuery}
+                onChange={(e) => setMobileSearchQuery(e.target.value)}
+                placeholder="Search user ID (@username) or name..."
+                className="w-full bg-neutral-900 text-xs text-white placeholder-neutral-400 pl-8.5 pr-8 py-2 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
+              />
+              {mobileSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setMobileSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {onOpenCreatorSearch && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileSearchOpen(false);
+                  onOpenCreatorSearch();
+                }}
+                className="px-2.5 py-2 rounded-xl bg-neutral-900 border border-neutral-700 text-cyan-300 text-[11px] font-bold flex items-center gap-1 shrink-0"
+              >
+                <span>All</span>
+                <ArrowRight className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-60 overflow-y-auto no-scrollbar divide-y divide-neutral-900 rounded-xl border border-neutral-800/80 bg-neutral-900/50">
+            {mobileSearchResults.length === 0 ? (
+              <p className="py-3 text-center text-xs text-neutral-400">
+                No creators matched &ldquo;{mobileSearchQuery}&rdquo;
+              </p>
+            ) : (
+              mobileSearchResults.map((channel) => (
+                <div
+                  key={channel.username}
+                  onClick={() => {
+                    setIsMobileSearchOpen(false);
+                    setMobileSearchQuery('');
+                    onSelectCreator?.(channel.username);
+                  }}
+                  className="px-3 py-2 flex items-center justify-between gap-2 active:bg-neutral-800"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <img
+                      src={optimizeThumbnailUrl(channel.avatar, 'grid')}
+                      alt={channel.name}
+                      className="w-9 h-9 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-bold text-white truncate">
+                          {channel.name}
+                        </span>
+                        {channel.isVerified && (
+                          <CheckCircle2 className="w-3 h-3 text-sky-400 shrink-0" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-cyan-400 truncate">@{channel.username}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsMobileSearchOpen(false);
+                      setMobileSearchQuery('');
+                      onSelectCreator?.(channel.username);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 text-white text-[10px] font-black shrink-0"
+                  >
+                    View Profile
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
 
       {/* Mobile Bottom Tab Bar */}

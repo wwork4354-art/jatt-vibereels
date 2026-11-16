@@ -1,3 +1,24 @@
+export type SoundTrackType =
+  | 'ambient_lofi'
+  | 'future_bass'
+  | 'chill_synth'
+  | 'cosmic_pulse'
+  | 'tokyo_drift'
+  | 'naat_serene'
+  | 'naat_medina'
+  | 'punjabi_dhol'
+  | 'sufi_acoustic';
+
+export interface AudioTrackOption {
+  id: string;
+  title: string;
+  artist: string;
+  category: 'naat' | 'song' | 'beat';
+  duration: string;
+  mood: string;
+  trackType: SoundTrackType;
+}
+
 export interface CommentItem {
   id: string;
   user: {
@@ -49,7 +70,12 @@ export interface VideoPost {
   sound: {
     title: string;
     artist: string;
-    trackType: 'ambient_lofi' | 'future_bass' | 'chill_synth' | 'cosmic_pulse' | 'tokyo_drift';
+    trackType: SoundTrackType;
+    audioUrl?: string;
+    category?: 'song' | 'naat' | 'beat' | 'original';
+    originalVolume?: number;
+    bgAudioVolume?: number;
+    hasAttachedAudio?: boolean;
   };
   commentsList: CommentItem[];
 }
@@ -96,9 +122,36 @@ export interface CreatorProfileData {
   bio: string;
   avatar: string;
   baseFollowers: number;
+  followingCount?: number;
+  profileViews?: number;
+  isVerified?: boolean;
 }
 
-export type FeedTab = 'foryou' | 'following' | 'trending' | 'saved' | 'live' | 'downloads' | 'profile' | 'activity';
+export interface CreatorChannelSummary {
+  id: string;
+  name: string;
+  username: string;
+  bio: string;
+  avatar: string;
+  isVerified: boolean;
+  isFollowing: boolean;
+  followersCount: number;
+  followingCount: number;
+  totalLikes: number;
+  profileViews: number;
+  videosCount: number;
+}
+
+export type FeedTab =
+  | 'foryou'
+  | 'following'
+  | 'trending'
+  | 'saved'
+  | 'live'
+  | 'downloads'
+  | 'profile'
+  | 'activity'
+  | 'channel';
 
 export type DownloadCategory = 'songs' | 'apps' | 'dramas' | 'movies' | 'cartoons' | 'quran';
 
@@ -138,6 +191,5 @@ export interface TrendingAudio {
   artist: string;
   usesCount: string;
   duration: string;
-  trackType: 'ambient_lofi' | 'future_bass' | 'chill_synth' | 'cosmic_pulse' | 'tokyo_drift';
+  trackType: SoundTrackType;
 }
-

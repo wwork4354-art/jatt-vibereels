@@ -12,9 +12,16 @@ import {
   ChevronDown,
   User,
   Bell,
+  Search,
+  X,
+  CheckCircle2,
+  ArrowRight,
 } from 'lucide-react';
-import { UserAccount } from '../types';
+import { UserAccount, VideoPost, CreatorProfileData, CreatorChannelSummary } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
+import { searchCreatorsDirectory } from '../lib/supabaseService';
+import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import { PWAInstallButton } from './PWAInstallButton';
 
 /**
  * PLACEHOLDER: Replace this URL or path with your custom logo image.
@@ -24,6 +31,9 @@ export const BRAND_LOGO_SRC = "/src/assets/images/jatt_vibereels_neon_logo.png";
 
 interface TopBarProps {
   currentUser: UserAccount | null;
+  videos?: VideoPost[];
+  ownProfile?: CreatorProfileData;
+  onSelectCreator?: (username: string) => void;
   onOpenLogin: () => void;
   onOpenRegister: () => void;
   onOpenUpload: () => void;
@@ -33,6 +43,7 @@ interface TopBarProps {
   onOpenProCamera?: () => void;
   onOpenAdmin: () => void;
   onOpenProfile?: () => void;
+  onOpenCreatorSearch?: () => void;
   onOpenActivity?: () => void;
   unreadActivityCount?: number;
   onLogout: () => void;
@@ -41,6 +52,9 @@ interface TopBarProps {
 
 export const TopBar: React.FC<TopBarProps> = ({
   currentUser,
+  videos = [],
+  ownProfile,
+  onSelectCreator,
   onOpenLogin,
   onOpenRegister,
   onOpenUpload,
@@ -50,39 +64,201 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenProCamera,
   onOpenAdmin,
   onOpenProfile,
+  onOpenCreatorSearch,
   onOpenActivity,
   unreadActivityCount = 0,
   onLogout,
   currentTab,
 }) => {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
-  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState<CreatorChannelSummary[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
 
-  // Close profile menu on outside click
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
+
+  // Close menus on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
         setIsProfileMenuOpen(false);
+      }
+      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
+        setIsSearchOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Instant live creator search by @username or display name
+  useEffect(() => {
+    if (!isSearchOpen || !ownProfile) return;
+    let cancelled = false;
+    setIsSearching(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const list = await searchCreatorsDirectory(searchQuery, videos, ownProfile);
+        if (!cancelled) {
+          setSearchResults(list.slice(0, 7));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsSearching(false);
+        }
+      }
+    }, searchQuery ? 120 : 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isSearchOpen, searchQuery, videos, ownProfile]);
+
+  const handleOpenCreator = (username: string) => {
+    setIsSearchOpen(false);
+    setSearchQuery('');
+    if (onSelectCreator) {
+      onSelectCreator(username);
+    } else {
+      onOpenCreatorSearch?.();
+    }
+  };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4 [transform:translateZ(0)]">
+    <header className="fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 [transform:translateZ(0)]">
       {/* Brand Zone: Replaced text with Image Logo Tag */}
       <div className="flex items-center shrink-0">
         <img
           src={BRAND_LOGO_SRC} /* <-- PLACEHOLDER: Link your logo here */
           alt="Jatt VibeReels"
-          className="h-8 sm:h-9 w-auto max-w-[180px] object-contain rounded-md shadow-sm"
+          className="h-8 sm:h-9 w-auto max-w-[165px] object-contain rounded-md shadow-sm"
         />
       </div>
 
+      {/* Prominent Inline User ID & Creator Channel Search Bar */}
+      <div ref={searchBoxRef} className="relative flex-1 max-w-xs md:max-w-sm">
+        <div className="relative flex items-center">
+          <Search className="w-3.5 h-3.5 text-cyan-400 absolute left-3 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onFocus={() => setIsSearchOpen(true)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setIsSearchOpen(true);
+            }}
+            placeholder="Search user ID (@username) or name..."
+            className="w-full bg-neutral-900/95 hover:bg-neutral-900 text-xs text-white placeholder-neutral-400 pl-8.5 pr-8 py-2 rounded-xl border border-neutral-700/80 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/40 transition-all"
+            aria-label="Search creators by @username or display name"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 text-neutral-400 hover:text-white p-0.5"
+              aria-label="Clear creator search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Instant Matching Creators Dropdown */}
+        {isSearchOpen && (
+          <div className="absolute left-0 right-0 top-full mt-2 bg-neutral-950 border border-neutral-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+            <div className="px-3 py-2 border-b border-neutral-800/80 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+              <span>{searchQuery ? 'Matching Creators' : 'Suggested Channels'}</span>
+              {onOpenCreatorSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSearchOpen(false);
+                    onOpenCreatorSearch();
+                  }}
+                  className="text-cyan-400 hover:text-cyan-300 flex items-center gap-0.5 cursor-pointer"
+                >
+                  <span>Directory</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            <div className="max-h-80 overflow-y-auto no-scrollbar divide-y divide-neutral-900">
+              {isSearching && searchResults.length === 0 ? (
+                <div className="p-4 text-center text-xs text-neutral-400">
+                  Searching creators...
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div className="p-4 text-center text-xs text-neutral-400">
+                  No user found for &ldquo;{searchQuery}&rdquo;
+                </div>
+              ) : (
+                searchResults.map((channel) => (
+                  <div
+                    key={channel.username}
+                    onClick={() => handleOpenCreator(channel.username)}
+                    className="px-3 py-2.5 hover:bg-neutral-900/90 flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <img
+                        src={optimizeThumbnailUrl(channel.avatar, 'grid')}
+                        alt={channel.name}
+                        className="w-9 h-9 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs font-bold text-white truncate">
+                            {channel.name}
+                          </span>
+                          {channel.isVerified && (
+                            <CheckCircle2 className="w-3 h-3 text-sky-400 shrink-0" />
+                          )}
+                        </div>
+                        <p className="text-[11px] font-semibold text-cyan-400 truncate">
+                          @{channel.username}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenCreator(channel.username);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white text-[10px] font-black shrink-0 shadow-xs cursor-pointer"
+                    >
+                      View Profile
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Primary Action Controls */}
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+      <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+        <PWAInstallButton variant="topbar" />
+
+        {/* Search Creators Modal Trigger */}
+        {onOpenCreatorSearch && (
+          <button
+            type="button"
+            onClick={onOpenCreatorSearch}
+            className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 hover:border-pink-500/50 text-neutral-200 hover:text-white text-xs font-bold transition-all active:scale-95 shadow-sm cursor-pointer"
+            title="Browse Full Creators Directory"
+          >
+            <Search className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Creators</span>
+          </button>
+        )}
+
         {/* Trends Dashboard Button */}
         <button
           type="button"

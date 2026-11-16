@@ -12,6 +12,7 @@ interface CommentsDrawerProps {
   onLikeComment: (commentId: string) => void;
   activeUsername?: string;
   activeAvatar?: string;
+  onOpenCreatorProfile?: (username: string) => void;
 }
 
 const QUICK_EMOJIS = ['🔥', '❤️', '😂', '👏', '💯', '✨', '🙌', '😍'];
@@ -24,6 +25,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   onLikeComment,
   activeUsername = 'jatt_official',
   activeAvatar,
+  onOpenCreatorProfile,
 }) => {
   const [inputText, setInputText] = useState('');
   const [activeTab, setActiveTab] = useState<'top' | 'newest'>('newest');
@@ -112,20 +114,31 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
           ) : (
             sortedComments.map((comment) => (
               <div key={comment.id} className="flex items-start gap-3 group">
-                <img
+                <button
+                  type="button"
+                  onClick={() => onOpenCreatorProfile?.(comment.user.username)}
+                  className="shrink-0 cursor-pointer"
+                  title={`Open @${comment.user.username} channel`}
+                >
+                  <img
                   src={comment.user.avatar}
                   alt={comment.user.name}
                   className="w-9 h-9 rounded-full object-cover shrink-0 bg-neutral-800 border border-neutral-700/60"
-                  referrerPolicy="no-referrer"
-                />
+                    referrerPolicy="no-referrer"
+                  />
+                </button>
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-xs font-semibold text-neutral-200 truncate">
                       {comment.user.name}
                     </span>
-                    <span className="text-[11px] font-medium text-cyan-400">
+                    <button
+                      type="button"
+                      onClick={() => onOpenCreatorProfile?.(comment.user.username)}
+                      className="text-[11px] font-medium text-cyan-400 hover:underline cursor-pointer"
+                    >
                       @{comment.user.username}
-                    </span>
+                    </button>
                     {comment.user.isCreator && (
                       <span className="text-[10px] font-bold uppercase tracking-wider text-pink-400 bg-pink-500/10 px-1.5 py-0.2 rounded-xs">
                         Creator

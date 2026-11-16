@@ -18,12 +18,36 @@ import {
   Bell,
   TrendingUp,
   RefreshCw,
+  Globe,
+  AlertCircle,
+  HardDrive,
+  Music,
+  Trash2,
+  WifiOff,
+  CheckCircle,
+  Download,
 } from 'lucide-react';
 import { ActivityEvent, CreatorProfileData, VideoPost } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
-import { uploadMediaToReelsBucket } from '../lib/supabaseService';
+import {
+  uploadMediaToReelsBucket,
+  checkUsernameAvailability,
+  getProfileViewsForUsername,
+  normalizeCreatorUsername,
+} from '../lib/supabaseService';
 import { CreatorActivityView, PostInsightsModal } from './CreatorActivityView';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import {
+  OfflineMediaRecord,
+  OFFLINE_STORE_EVENT,
+  getAllOfflineSavedPosts,
+  savePostForOffline,
+  removeOfflineSavedPost,
+  hydratePostWithOfflineRecord,
+  formatOfflineBytes,
+} from '../lib/offlineMediaStore';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { soundEngine } from '../utils/soundEngine';
 
 interface CreatorProfileViewProps {
   profile: CreatorProfileData;
@@ -35,8 +59,10 @@ interface CreatorProfileViewProps {
   onMarkActivityRead?: () => void;
   totalProfileLikes: number;
   followingCount: number;
+  initialSubTab?: 'videos' | 'saved' | 'liked' | 'activity';
   onPlayVideo: (videoId: string) => void;
   onOpenUpload: () => void;
+  onOpenPublicChannel?: () => void;
   onBackToFeed: () => void;
   onShowToast: (msg: string) => void;
 }
@@ -65,12 +91,21 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   onMarkActivityRead,
   totalProfileLikes,
   followingCount,
+  initialSubTab,
   onPlayVideo,
   onOpenUpload,
+  onOpenPublicChannel,
   onBackToFeed,
   onShowToast,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'videos' | 'saved' | 'liked' | 'activity'>('videos');
+  const isOnline = useOnlineStatus();
+  const [activeSubTab, setActiveSubTab] = useState<'videos' | 'saved' | 'liked' | 'activity'>(
+    initialSubTab || 'videos'
+  );
+  const [offlineRecords, setOfflineRecords] = useState<OfflineMediaRecord[]>([]);
+  const [savedFilter, setSavedFilter] = useState<'all' | 'reels' | 'audio'>('all');
+  const [offlinePlayerPost, setOfflinePlayerPost] = useState<VideoPost | null>(null);
+  const [cachingPostId, setCachingPostId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSyncOpen, setIsSyncOpen] = useState(false);
   const [syncUsernameInput, setSyncUsernameInput] = useState('');
@@ -84,8 +119,55 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   const [editAvatar, setEditAvatar] = useState(profile.avatar);
   const [pendingAvatarBlob, setPendingAvatarBlob] = useState<Blob | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [usernameStatus, setUsernameStatus] = useState<{
+    checking: boolean;
+    available: boolean;
+    normalized: string;
+    reason?: string;
+  }>({
+    checking: false,
+    available: true,
+    normalized: normalizeCreatorUsername(profile.username),
+  });
 
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
+  React.useEffect(() => {
+    const loadOffline = () => {
+      void getAllOfflineSavedPosts().then((list) => {
+        setOfflineRecords(list);
+      });
+    };
+    loadOffline();
+    window.addEventListener(OFFLINE_STORE_EVENT, loadOffline);
+    return () => window.removeEventListener(OFFLINE_STORE_EVENT, loadOffline);
+  }, []);
+
+  React.useEffect(() => {
+    if (!offlinePlayerPost) {
+      soundEngine.stopTrack();
+      return;
+    }
+    const shouldSynth =
+      !offlinePlayerPost.sound?.audioUrl &&
+      (offlinePlayerPost.mediaType === 'image' ||
+        Boolean(offlinePlayerPost.sound?.hasAttachedAudio) ||
+        offlinePlayerPost.sound?.category === 'naat' ||
+        offlinePlayerPost.sound?.category === 'song');
+    if (shouldSynth) {
+      soundEngine.setMuted(false);
+      soundEngine.playTrack(offlinePlayerPost.sound.trackType, 0.85);
+    }
+    return () => {
+      soundEngine.stopTrack();
+    };
+  }, [offlinePlayerPost]);
 
   const userVideos = videos.filter(
     (v) =>
@@ -96,14 +178,137 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   const likedVideos = videos.filter((v) => v.isLiked);
   const savedVideos = videos.filter((v) => v.isSaved);
 
+  const offlineRecordMap = React.useMemo(() => {
+    const map = new Map<string, OfflineMediaRecord>();
+    for (const rec of offlineRecords) {
+      map.set(rec.id, rec);
+    }
+    return map;
+  }, [offlineRecords]);
+
+  // Combined Saved / Downloads list (bookmarked reels + IndexedDB downloaded/uploaded/recorded items)
+  const combinedSavedDownloads = React.useMemo(() => {
+    const seen = new Set<string>();
+    const list: VideoPost[] = [];
+
+    for (const rec of offlineRecords) {
+      if (!seen.has(rec.id)) {
+        seen.add(rec.id);
+        list.push(rec.post);
+      }
+    }
+    for (const v of savedVideos) {
+      if (!seen.has(v.id)) {
+        seen.add(v.id);
+        list.push(v);
+      }
+    }
+
+    if (savedFilter === 'audio') {
+      return list.filter(
+        (v) =>
+          v.mediaType === 'image' ||
+          Boolean(v.sound?.hasAttachedAudio) ||
+          Boolean(v.sound?.audioUrl) ||
+          v.sound?.category === 'naat' ||
+          v.sound?.category === 'song' ||
+          v.category === 'music'
+      );
+    }
+    if (savedFilter === 'reels') {
+      return list.filter((v) => v.mediaType !== 'image');
+    }
+    return list;
+  }, [offlineRecords, savedVideos, savedFilter]);
+
+  const totalSavedDownloadsCount = React.useMemo(() => {
+    const ids = new Set<string>([
+      ...offlineRecords.map((r) => r.id),
+      ...savedVideos.map((v) => v.id),
+    ]);
+    return ids.size;
+  }, [offlineRecords, savedVideos]);
+
   const totalOwnViews = userVideos.reduce((sum, v) => sum + (v.stats.views || 0), 0);
+  const profileViewsCount = getProfileViewsForUsername(
+    profile.username,
+    profile.profileViews ?? Math.max(userVideos.length * 48, Math.round(totalOwnViews * 0.04))
+  );
+
+  React.useEffect(() => {
+    if (!isEditing) return;
+    let cancelled = false;
+    const normalized = normalizeCreatorUsername(editUsername);
+
+    if (normalized === normalizeCreatorUsername(profile.username) && normalized.length >= 3) {
+      setUsernameStatus({ checking: false, available: true, normalized });
+      return;
+    }
+
+    setUsernameStatus((prev) => ({ ...prev, checking: true, normalized }));
+    const timer = window.setTimeout(async () => {
+      const check = await checkUsernameAvailability(editUsername, profile.id, videos);
+      if (!cancelled) {
+        setUsernameStatus({
+          checking: false,
+          available: check.available,
+          normalized: check.normalized,
+          reason: check.reason,
+        });
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isEditing, editUsername, profile.id, profile.username, videos]);
 
   const currentGridVideos =
     activeSubTab === 'videos'
       ? userVideos
       : activeSubTab === 'liked'
       ? likedVideos
-      : savedVideos;
+      : combinedSavedDownloads;
+
+  const handleOpenSavedOfflineItem = (vid: VideoPost) => {
+    const rec = offlineRecordMap.get(vid.id);
+    if (rec && (rec.mediaBlob || rec.audioBlob)) {
+      setOfflinePlayerPost(hydratePostWithOfflineRecord(vid, rec));
+      return;
+    }
+    if (!isOnline && (vid.videoUrl.startsWith('http') || vid.sound?.audioUrl?.startsWith('http'))) {
+      setOfflinePlayerPost(vid);
+      return;
+    }
+    if (activeSubTab === 'saved') {
+      setOfflinePlayerPost(vid);
+    } else {
+      onPlayVideo(vid.id);
+    }
+  };
+
+  const handleCacheForOffline = async (e: React.MouseEvent, vid: VideoPost) => {
+    e.stopPropagation();
+    if (cachingPostId === vid.id) return;
+    setCachingPostId(vid.id);
+    try {
+      const saved = await savePostForOffline(vid, { sourceType: 'saved' });
+      if (saved && (saved.mediaBlob || saved.audioBlob)) {
+        onShowToast(`Saved "${vid.title}" for Offline Mode (${formatOfflineBytes(saved.sizeBytes)})!`);
+      } else {
+        onShowToast(`Saved "${vid.title}" metadata for Offline Mode.`);
+      }
+    } finally {
+      setCachingPostId(null);
+    }
+  };
+
+  const handleDeleteOfflineCopy = async (e: React.MouseEvent, postId: string) => {
+    e.stopPropagation();
+    await removeOfflineSavedPost(postId);
+    onShowToast('Removed local offline download');
+  };
 
   const openEditModal = () => {
     setEditName(profile.name);
@@ -169,11 +374,19 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
     e.preventDefault();
     setIsSavingProfile(true);
     try {
-      const cleanUsername = editUsername
-        .trim()
-        .replace(/^@+/, '')
-        .replace(/\s+/g, '_')
-        .toLowerCase();
+      const check = await checkUsernameAvailability(editUsername, profile.id, videos);
+      if (!check.available) {
+        setUsernameStatus({
+          checking: false,
+          available: false,
+          normalized: check.normalized,
+          reason: check.reason,
+        });
+        onShowToast(check.reason || 'Choose a unique @username first.');
+        return;
+      }
+
+      const cleanUsername = check.normalized || 'jatt_official';
 
       let finalAvatarUrl = editAvatar.trim() || NEON_AVATAR_PRESETS[0];
       if (pendingAvatarBlob) {
@@ -190,15 +403,16 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
       const updated: CreatorProfileData = {
         ...profile,
         name: editName.trim() || 'Jatt Creator',
-        username: cleanUsername || 'jatt_official',
+        username: cleanUsername,
         bio: editBio.trim(),
         avatar: finalAvatarUrl,
+        profileViews: profileViewsCount,
       };
 
       onUpdateProfile(updated);
       setIsEditing(false);
       setPendingAvatarBlob(null);
-      onShowToast('Profile saved & synced to cloud!');
+      onShowToast('Creator channel saved & synced!');
     } finally {
       setIsSavingProfile(false);
     }
@@ -303,30 +517,36 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
           </div>
 
           {/* TikTok-Style Stats Row */}
-          <div className="grid grid-cols-4 gap-2 sm:gap-6 py-2.5 px-4 sm:px-6 rounded-2xl bg-neutral-900/80 border border-neutral-800/90">
+          <div className="grid grid-cols-5 gap-1.5 sm:gap-5 py-2.5 px-3 sm:px-6 rounded-2xl bg-neutral-900/80 border border-neutral-800/90 w-full max-w-xl">
             <div className="flex flex-col items-center">
               <span className="text-sm sm:text-lg font-black text-white tabular-nums">
                 {followingCount.toLocaleString()}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Following</span>
             </div>
-            <div className="flex flex-col items-center border-l border-neutral-800 pl-2 sm:pl-4">
+            <div className="flex flex-col items-center border-l border-neutral-800 pl-1.5 sm:pl-4">
               <span className="text-sm sm:text-lg font-black text-white tabular-nums">
                 {formatCompactCount(profile.baseFollowers)}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Followers</span>
             </div>
-            <div className="flex flex-col items-center border-l border-neutral-800 pl-2 sm:pl-4">
+            <div className="flex flex-col items-center border-l border-neutral-800 pl-1.5 sm:pl-4">
               <span className="text-sm sm:text-lg font-black text-pink-400 tabular-nums">
                 {formatCompactCount(totalProfileLikes)}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Likes</span>
             </div>
-            <div className="flex flex-col items-center border-l border-neutral-800 pl-2 sm:pl-4">
+            <div className="flex flex-col items-center border-l border-neutral-800 pl-1.5 sm:pl-4">
               <span className="text-sm sm:text-lg font-black text-cyan-400 tabular-nums">
                 {formatCompactCount(totalOwnViews)}
               </span>
-              <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Views</span>
+              <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Post Views</span>
+            </div>
+            <div className="flex flex-col items-center border-l border-neutral-800 pl-1.5 sm:pl-4">
+              <span className="text-sm sm:text-lg font-black text-emerald-400 tabular-nums">
+                {formatCompactCount(profileViewsCount)}
+              </span>
+              <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Profile Views</span>
             </div>
           </div>
 
@@ -343,7 +563,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               className="px-4 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-700 text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
             >
               <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Edit Profile</span>
+              <span>Edit Channel</span>
             </button>
             <button
               type="button"
@@ -353,6 +573,17 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               <Plus className="w-4 h-4 stroke-[3]" />
               <span>Upload / Record</span>
             </button>
+            {onOpenPublicChannel && (
+              <button
+                type="button"
+                onClick={onOpenPublicChannel}
+                className="px-3.5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-pink-300 border border-pink-500/35 text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                title="View how others see your public creator channel"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>Public Channel</span>
+              </button>
+            )}
             {onSyncProfileByUsername && (
               <button
                 type="button"
@@ -391,8 +622,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'
             }`}
           >
-            <Bookmark className="w-4 h-4 shrink-0" />
-            <span>Saved ({savedVideos.length})</span>
+            <HardDrive className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+            <span className="truncate">Saved / Downloads ({totalSavedDownloadsCount})</span>
           </button>
 
           <button
@@ -428,6 +659,47 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
           </button>
         </div>
 
+        {/* Offline / Saved Filter Toolbar */}
+        {activeSubTab === 'saved' && (
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-neutral-900/70 border border-neutral-800 rounded-2xl p-2.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {(
+                [
+                  { id: 'all', label: 'All Saved' },
+                  { id: 'reels', label: 'Videos & Reels' },
+                  { id: 'audio', label: 'Songs & Naats' },
+                ] as const
+              ).map((chip) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => setSavedFilter(chip.id)}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                    savedFilter === chip.id
+                      ? 'bg-gradient-to-r from-amber-500 to-pink-600 text-white shadow-sm'
+                      : 'bg-neutral-950 text-neutral-400 hover:text-white border border-neutral-800'
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] font-bold px-2">
+              {isOnline ? (
+                <span className="text-emerald-400 flex items-center gap-1">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>{offlineRecords.length} cached offline</span>
+                </span>
+              ) : (
+                <span className="text-amber-300 flex items-center gap-1">
+                  <WifiOff className="w-3.5 h-3.5" />
+                  <span>Offline Playback Ready</span>
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Sub-Tab Body */}
         {activeSubTab === 'activity' ? (
           <CreatorActivityView
@@ -447,7 +719,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               ) : activeSubTab === 'liked' ? (
                 <Heart className="w-6 h-6" />
               ) : (
-                <Bookmark className="w-6 h-6" />
+                <HardDrive className="w-6 h-6 text-amber-400" />
               )}
             </div>
             <h3 className="text-sm font-bold text-white">
@@ -455,14 +727,14 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 ? 'No uploaded or recorded videos yet'
                 : activeSubTab === 'liked'
                 ? 'No liked reels yet'
-                : 'No saved reels yet'}
+                : 'No Saved / Downloaded items yet'}
             </h3>
             <p className="text-xs text-neutral-400 max-w-xs mx-auto">
               {activeSubTab === 'videos'
                 ? 'Tap the (+) camera button below or Upload / Record to share your first vertical reel permanently!'
                 : activeSubTab === 'liked'
                 ? 'Tap the Heart icon on any reel in the feed and it will appear here.'
-                : 'Tap the Bookmark icon on any reel in the feed to keep it in Saved Videos.'}
+                : 'Bookmark or Download any reel, song, or naat — or record with Pro Camera — to watch it anytime even without internet.'}
             </p>
             {activeSubTab === 'videos' && (
               <button
@@ -476,86 +748,142 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-1.5 sm:gap-2.5 [transform:translateZ(0)]">
-            {currentGridVideos.map((vid) => (
-              <div
-                key={vid.id}
-                className="group relative aspect-[9/16] rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 hover:border-pink-500/60 transition-all cv-auto-card [transform:translateZ(0)]"
-              >
-                <button
-                  type="button"
-                  onClick={() => onPlayVideo(vid.id)}
-                  className="w-full h-full text-left cursor-pointer block"
+            {currentGridVideos.map((vid) => {
+              const offlineRec = offlineRecordMap.get(vid.id);
+              const isOfflinePlayable = Boolean(offlineRec?.mediaBlob || offlineRec?.audioBlob);
+              const isAudioOrNaat =
+                Boolean(vid.sound?.hasAttachedAudio) ||
+                vid.sound?.category === 'naat' ||
+                vid.sound?.category === 'song';
+
+              return (
+                <div
+                  key={vid.id}
+                  className="group relative aspect-[9/16] rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 hover:border-pink-500/60 transition-all cv-auto-card [transform:translateZ(0)]"
                 >
-                  {vid.mediaType === 'image' || vid.posterUrl ? (
-                    <img
-                      src={optimizeThumbnailUrl(
-                        vid.mediaType === 'image' ? vid.videoUrl : vid.posterUrl,
-                        'grid'
-                      )}
-                      alt={vid.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      loading="lazy"
-                      decoding="async"
-                    />
-                  ) : (
-                    <video
-                      src={vid.videoUrl}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      className="w-full h-full object-cover"
-                    />
-                  )}
-
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-transparent pointer-events-none" />
-
-                  {/* Top Upload Tag */}
-                  {(vid.isUserUploaded ||
-                    vid.userId === profile.id ||
-                    vid.creator.username.toLowerCase() === profile.username.toLowerCase()) && (
-                    <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-pink-600/90 text-[9px] font-black text-white uppercase">
-                      Mine
-                    </span>
-                  )}
-
-                  {/* Center Hover Play Icon */}
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                    <div className="w-10 h-10 rounded-full bg-black/75 border border-white/25 flex items-center justify-center text-white">
-                      <Play className="w-4 h-4 fill-white ml-0.5" />
-                    </div>
-                  </div>
-
-                  {/* Bottom Overlay Stats: Views & Likes */}
-                  <div className="absolute bottom-1.5 left-2 right-2 flex items-end justify-between gap-1">
-                    <span className="flex items-center gap-1 text-[10px] font-bold text-white shrink-0 tabular-nums">
-                      <Eye className="w-3 h-3 text-cyan-300" />
-                      {formatCompactCount(vid.stats.views)}
-                    </span>
-                    <span className="flex items-center gap-0.5 text-[10px] font-bold text-white shrink-0 tabular-nums">
-                      <Heart
-                        className={`w-3 h-3 ${
-                          vid.isLiked ? 'fill-rose-500 text-rose-500' : 'text-white'
-                        }`}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenSavedOfflineItem(vid)}
+                    className="w-full h-full text-left cursor-pointer block"
+                  >
+                    {vid.mediaType === 'image' || vid.posterUrl ? (
+                      <img
+                        src={optimizeThumbnailUrl(
+                          vid.mediaType === 'image' ? vid.videoUrl : vid.posterUrl,
+                          'grid'
+                        )}
+                        alt={vid.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        loading="lazy"
+                        decoding="async"
                       />
-                      {formatCompactCount(vid.stats.likes)}
-                    </span>
-                  </div>
-                </button>
+                    ) : (
+                      <video
+                        src={vid.videoUrl}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
 
-                {/* Post Insights Trigger */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setInsightsPost(vid);
-                  }}
-                  className="absolute top-1.5 right-1.5 p-1.5 rounded-lg bg-black/70 hover:bg-pink-600 text-white border border-white/15 transition-colors cursor-pointer"
-                  title="View Post Insights & Activity"
-                >
-                  <TrendingUp className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-transparent pointer-events-none" />
+
+                    {/* Top Left Tag: Offline / Audio / Mine */}
+                    <div className="absolute top-1.5 left-1.5 flex flex-col gap-1 items-start pointer-events-none">
+                      {activeSubTab === 'saved' && isOfflinePlayable ? (
+                        <span className="px-1.5 py-0.5 rounded-md bg-emerald-600/90 text-[8px] sm:text-[9px] font-black text-white uppercase flex items-center gap-0.5">
+                          <CheckCircle className="w-2.5 h-2.5" />
+                          <span>Offline · {formatOfflineBytes(offlineRec?.sizeBytes || 0)}</span>
+                        </span>
+                      ) : (vid.isUserUploaded ||
+                          vid.userId === profile.id ||
+                          vid.creator.username.toLowerCase() === profile.username.toLowerCase()) ? (
+                        <span className="px-1.5 py-0.5 rounded-md bg-pink-600/90 text-[9px] font-black text-white uppercase">
+                          Mine
+                        </span>
+                      ) : null}
+
+                      {isAudioOrNaat && (
+                        <span className="px-1.5 py-0.5 rounded-md bg-purple-600/90 text-[8px] font-black text-white uppercase flex items-center gap-0.5">
+                          <Music className="w-2.5 h-2.5" />
+                          <span>{vid.sound.category === 'naat' ? 'Naat' : 'Audio'}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Center Hover Play Icon */}
+                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      <div className="w-10 h-10 rounded-full bg-black/75 border border-white/25 flex items-center justify-center text-white">
+                        <Play className="w-4 h-4 fill-white ml-0.5" />
+                      </div>
+                    </div>
+
+                    {/* Bottom Overlay Stats: Title/Audio & Views/Likes */}
+                    <div className="absolute bottom-1.5 left-2 right-2 space-y-0.5">
+                      {activeSubTab === 'saved' && (
+                        <p className="text-[10px] font-bold text-white truncate drop-shadow">
+                          {vid.title}
+                        </p>
+                      )}
+                      <div className="flex items-end justify-between gap-1">
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-white shrink-0 tabular-nums">
+                          <Eye className="w-3 h-3 text-cyan-300" />
+                          {formatCompactCount(vid.stats.views)}
+                        </span>
+                        <span className="flex items-center gap-0.5 text-[10px] font-bold text-white shrink-0 tabular-nums">
+                          <Heart
+                            className={`w-3 h-3 ${
+                              vid.isLiked ? 'fill-rose-500 text-rose-500' : 'text-white'
+                            }`}
+                          />
+                          {formatCompactCount(vid.stats.likes)}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* Top-right Action Button: Cache/Delete offline in Saved tab OR Insights in Posts tab */}
+                  {activeSubTab === 'saved' ? (
+                    <div className="absolute top-1.5 right-1.5 flex items-center gap-1">
+                      {!isOfflinePlayable && isOnline && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleCacheForOffline(e, vid)}
+                          disabled={cachingPostId === vid.id}
+                          className="p-1.5 rounded-lg bg-cyan-600/85 hover:bg-cyan-500 text-white border border-white/20 transition-colors cursor-pointer"
+                          title="Save locally for Offline Playback"
+                        >
+                          <Download className={`w-3 h-3 ${cachingPostId === vid.id ? 'animate-bounce' : ''}`} />
+                        </button>
+                      )}
+                      {offlineRec && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteOfflineCopy(e, vid.id)}
+                          className="p-1.5 rounded-lg bg-black/75 hover:bg-rose-600 text-white border border-white/15 transition-colors cursor-pointer"
+                          title="Delete offline copy"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setInsightsPost(vid);
+                      }}
+                      className="absolute top-1.5 right-1.5 p-1.5 rounded-lg bg-black/70 hover:bg-pink-600 text-white border border-white/15 transition-colors cursor-pointer"
+                      title="View Post Insights & Activity"
+                    >
+                      <TrendingUp className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -564,6 +892,101 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
           <DeveloperCreditBadge variant="modal" showDetails={true} />
         </div>
       </div>
+
+      {/* Built-In Offline Media Player Modal (Videos, Photos, Songs & Naats) */}
+      {offlinePlayerPost && (
+        <div
+          className="fixed inset-0 z-55 bg-black/92 flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150"
+          onClick={() => setOfflinePlayerPost(null)}
+        >
+          <div
+            className="w-full max-w-md bg-neutral-950 border border-neutral-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 text-[9px] font-black uppercase">
+                    {isOnline ? 'Saved Player' : 'Offline Mode Player'}
+                  </span>
+                  {offlinePlayerPost.sound?.category === 'naat' && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[9px] font-black uppercase">
+                      Naat
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-xs sm:text-sm font-black text-white truncate mt-1">
+                  {offlinePlayerPost.title}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOfflinePlayerPost(null)}
+                className="p-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="relative bg-black flex items-center justify-center aspect-[9/14] max-h-[60vh]">
+              {offlinePlayerPost.mediaType === 'image' ? (
+                <img
+                  src={offlinePlayerPost.videoUrl}
+                  alt={offlinePlayerPost.title}
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <video
+                  src={offlinePlayerPost.videoUrl}
+                  poster={offlinePlayerPost.posterUrl}
+                  controls
+                  autoPlay
+                  loop
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
+              )}
+            </div>
+
+            {offlinePlayerPost.sound?.audioUrl && (
+              <div className="px-4 pt-3 bg-neutral-950">
+                <audio
+                  src={offlinePlayerPost.sound.audioUrl}
+                  controls
+                  autoPlay
+                  loop
+                  className="w-full h-9"
+                />
+              </div>
+            )}
+
+            <div className="p-4 flex items-center justify-between gap-2 bg-neutral-950 border-t border-neutral-800">
+              <div className="min-w-0 flex items-center gap-2">
+                <Music className="w-4 h-4 text-pink-400 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-white truncate">
+                    {offlinePlayerPost.sound?.title || 'Original Audio'}
+                  </p>
+                  <p className="text-[10px] text-neutral-400 truncate">
+                    @{offlinePlayerPost.creator.username}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetId = offlinePlayerPost.id;
+                  setOfflinePlayerPost(null);
+                  onPlayVideo(targetId);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 text-white text-xs font-black shrink-0 cursor-pointer"
+              >
+                Open in Feed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Focused Single-Post Insights Modal */}
       {insightsPost && (
@@ -655,7 +1078,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <div className="w-8 h-8 rounded-xl bg-pink-500/20 text-pink-400 flex items-center justify-center border border-pink-500/30">
                   <UserIcon className="w-4 h-4" />
                 </div>
-                <h3 className="text-base font-black text-white">Edit Creator Profile</h3>
+                <h3 className="text-base font-black text-white">Create / Edit Creator Channel</h3>
               </div>
               <button
                 type="button"
@@ -744,9 +1167,22 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 />
               </div>
 
-              {/* Username */}
+              {/* Unique Channel @Username */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-neutral-300">Username</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-neutral-300">Unique @Username</label>
+                  {usernameStatus.checking ? (
+                    <span className="text-[10px] font-bold text-neutral-400">Checking...</span>
+                  ) : usernameStatus.available ? (
+                    <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                      <Check className="w-3 h-3" /> @{usernameStatus.normalized} available
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold text-rose-400 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Taken / Invalid
+                    </span>
+                  )}
+                </div>
                 <div className="relative">
                   <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-500 font-bold text-sm">
                     @
@@ -756,10 +1192,17 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                     required
                     value={editUsername}
                     onChange={(e) => setEditUsername(e.target.value)}
-                    placeholder="username"
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-8 pr-3.5 py-2.5 text-sm text-white focus:outline-hidden focus:border-pink-500"
+                    placeholder="unique_handle"
+                    className={`w-full bg-neutral-900 border rounded-xl pl-8 pr-3.5 py-2.5 text-sm text-white focus:outline-hidden ${
+                      usernameStatus.available
+                        ? 'border-neutral-800 focus:border-pink-500'
+                        : 'border-rose-500/70 focus:border-rose-400'
+                    }`}
                   />
                 </div>
+                {!usernameStatus.available && usernameStatus.reason && (
+                  <p className="text-[11px] text-rose-400 font-medium">{usernameStatus.reason}</p>
+                )}
               </div>
 
               {/* Bio */}
@@ -786,11 +1229,11 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSavingProfile}
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:to-cyan-500 disabled:opacity-60 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
+                  disabled={isSavingProfile || !usernameStatus.available}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:to-cyan-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  <span>{isSavingProfile ? 'Saving...' : 'Save Changes'}</span>
+                  <span>{isSavingProfile ? 'Saving...' : 'Save Channel'}</span>
                 </button>
               </div>
             </form>

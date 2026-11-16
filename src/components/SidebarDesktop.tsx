@@ -16,10 +16,12 @@ import {
   Film,
   User as UserIcon,
   Bell,
+  Search,
 } from 'lucide-react';
 import { FeedTab, UserAccount } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
+import { PWAInstallButton } from './PWAInstallButton';
 
 
 interface SidebarDesktopProps {
@@ -27,6 +29,7 @@ interface SidebarDesktopProps {
   onSelectTab: (tab: FeedTab) => void;
   onOpenUpload: () => void;
   onOpenTrends: () => void;
+  onOpenCreatorSearch?: () => void;
   onOpenLive: () => void;
   onOpenProCamera?: () => void;
   isMuted: boolean;
@@ -44,6 +47,7 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
   onSelectTab,
   onOpenUpload,
   onOpenTrends,
+  onOpenCreatorSearch,
   onOpenLive,
   onOpenProCamera,
   isMuted,
@@ -114,6 +118,18 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             <Compass className="w-5 h-5 shrink-0" />
             <span>Trending Feed</span>
           </button>
+
+          {/* Find Creators Action */}
+          {onOpenCreatorSearch && (
+            <button
+              type="button"
+              onClick={onOpenCreatorSearch}
+              className="w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl font-bold text-sm text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/25 transition-all shadow-xs cursor-pointer"
+            >
+              <Search className="w-5 h-5 text-cyan-400 shrink-0" />
+              <span>Find Creators</span>
+            </button>
+          )}
 
           {/* Trends Dashboard Action */}
           <button
@@ -259,6 +275,8 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             <PlusSquare className="w-4 h-4 text-pink-400" />
             <span>Upload From Device</span>
           </button>
+
+          <PWAInstallButton variant="sidebar" />
         </div>
 
 

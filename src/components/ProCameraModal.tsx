@@ -26,9 +26,9 @@ import {
   uploadMediaToReelsBucket,
   createGlobalPostInSupabase,
   getOrCreateUserProfileId,
-  fileToPersistentDataUrl,
   saveLocalPostRecord,
 } from '../lib/supabaseService';
+import { savePostForOffline } from '../lib/offlineMediaStore';
 
 interface ProCameraModalProps {
   isOpen: boolean;
@@ -40,7 +40,7 @@ interface ProCameraModalProps {
   onShowToast: (msg: string) => void;
 }
 
-type ResolutionFpsMode = '4K/60FPS' | '1080p/60FPS' | '1080p/30FPS';
+type ResolutionFpsMode = '4K/60FPS' | '4K/30FPS' | '1080p/60FPS';
 
 export interface CameraFilterDef {
   id: string;
@@ -154,7 +154,7 @@ export const CAMERA_FILTERS: CameraFilterDef[] = [
     id: 'soft_beauty',
     name: 'Soft Beauty',
     shortLabel: 'Soft Beauty',
-    cssFilter: 'brightness(1.09) contrast(0.95) saturate(1.16) blur(0.35px)',
+    cssFilter: 'brightness(1.09) contrast(0.95) saturate(1.18)',
     swatchClass: 'from-rose-300 via-pink-400 to-fuchsia-400',
     drawOverlay: (ctx, w, h) => {
       ctx.save();
@@ -182,13 +182,13 @@ function getSupportedRecorderOptions(): MediaRecorderOptions {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeType)) {
       return {
         mimeType,
-        videoBitsPerSecond: 12_000_000,
+        videoBitsPerSecond: 24_000_000,
         audioBitsPerSecond: 192_000,
       };
     }
   }
   return {
-    videoBitsPerSecond: 10_000_000,
+    videoBitsPerSecond: 20_000_000,
     audioBitsPerSecond: 192_000,
   };
 }
@@ -204,7 +204,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
 }) => {
   // Camera Settings
   const [resFps, setResFps] = useState<ResolutionFpsMode>('4K/60FPS');
-  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('4K UHD · 60fps');
+  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('3840x2160 · 60fps');
+  const [is4KActive, setIs4KActive] = useState<boolean>(true);
   const [selectedFilterId, setSelectedFilterId] = useState<string>('normal');
   const [nightModeLevel, setNightModeLevel] = useState<number>(0); // 0 = off, 1 = 1.5x, 2 = 3.0x
   const [isFlashOn, setIsFlashOn] = useState<boolean>(false);
@@ -213,6 +214,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isSimulatedFeed, setIsSimulatedFeed] = useState<boolean>(false);
   const [cameraBlockedInWebView, setCameraBlockedInWebView] = useState<boolean>(false);
+  const [isCameraReady, setIsCameraReady] = useState<boolean>(false);
 
   // Recording & Capture State
   const [isRecording, setIsRecording] = useState<boolean>(false);
@@ -229,6 +231,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   // Refs for camera stream, canvas rendering, and MediaRecorder
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
   const canvasPreviewRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -317,14 +320,21 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       }
       setIsRecording(false);
       setRecordingSeconds(0);
-      setRecordedClipUrl(null);
+      setRecordedClipUrl((prevUrl) => {
+        if (prevUrl && prevUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(prevUrl);
+        }
+        return null;
+      });
       setIsSavedToGallery(false);
       recordedBlobRef.current = null;
       setCameraBlockedInWebView(false);
+      setIsCameraReady(false);
       return;
     }
 
     let isMounted = true;
+    setIsCameraReady(false);
 
     async function acquireBestCameraStream(): Promise<MediaStream> {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -343,9 +353,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               {
                 video: {
                   facingMode,
-                  width: { ideal: 3840 },
-                  height: { ideal: 2160 },
-                  frameRate: { ideal: 60, min: 30 },
+                  width: { ideal: 3840, min: 2560 },
+                  height: { ideal: 2160, min: 1440 },
+                  frameRate: { ideal: 60 },
+                },
+                audio: audioHighQuality,
+              },
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 3840, min: 2560 },
+                  height: { ideal: 2160, min: 1440 },
+                  frameRate: { ideal: 30 },
                 },
                 audio: audioHighQuality,
               },
@@ -354,21 +373,39 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   facingMode,
                   width: { ideal: 1920 },
                   height: { ideal: 1080 },
-                  frameRate: { ideal: 60, min: 24 },
+                  frameRate: { ideal: 60 },
+                },
+                audio: audioHighQuality,
+              },
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 1920 },
+                  height: { ideal: 1080 },
+                  frameRate: { ideal: 30 },
                 },
                 audio: audioHighQuality,
               },
               { video: { facingMode }, audio: true },
               { video: { facingMode }, audio: false },
             ]
-          : resFps === '1080p/60FPS'
+          : resFps === '4K/30FPS'
           ? [
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 3840, min: 2560 },
+                  height: { ideal: 2160, min: 1440 },
+                  frameRate: { ideal: 30 },
+                },
+                audio: audioHighQuality,
+              },
               {
                 video: {
                   facingMode,
                   width: { ideal: 1920 },
                   height: { ideal: 1080 },
-                  frameRate: { ideal: 60, min: 30 },
+                  frameRate: { ideal: 30 },
                 },
                 audio: audioHighQuality,
               },
@@ -376,6 +413,15 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               { video: { facingMode }, audio: false },
             ]
           : [
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 1920 },
+                  height: { ideal: 1080 },
+                  frameRate: { ideal: 60 },
+                },
+                audio: audioHighQuality,
+              },
               {
                 video: {
                   facingMode,
@@ -420,9 +466,10 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           const settings = videoTrack.getSettings();
           const w = settings.width || 1920;
           const h = settings.height || 1080;
-          const fps = Math.round(settings.frameRate || 60);
-          const qualityTag = w >= 3840 || h >= 2160 ? '4K' : w >= 1920 || h >= 1080 ? '1080p' : `${w}x${h}`;
-          setStreamInfoLabel(`${qualityTag} (${w}x${h}) · ${fps}fps`);
+          const fps = Math.round(settings.frameRate || (resFps.includes('60FPS') ? 60 : 30));
+          const isTrue4K = w >= 2560 || h >= 1440;
+          setIs4KActive(isTrue4K);
+          setStreamInfoLabel(`${w}x${h} · ${fps}fps`);
         }
 
         if (videoPreviewRef.current) {
@@ -470,9 +517,16 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       if (canvas.width !== targetW || canvas.height !== targetH) {
         canvas.width = targetW;
         canvas.height = targetH;
+        canvasCtxRef.current = null;
       }
 
-      const ctx = canvas.getContext('2d', { alpha: false });
+      if (!canvasCtxRef.current) {
+        canvasCtxRef.current = canvas.getContext('2d', {
+          alpha: false,
+          desynchronized: true,
+        } as CanvasRenderingContext2DSettings);
+      }
+      const ctx = canvasCtxRef.current;
       if (!ctx) return false;
 
       const filterDef = activeFilterRef.current;
@@ -636,8 +690,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       const needsCanvasBake =
         selectedFilterId !== 'normal' ||
         nightModeLevel > 0 ||
-        zoomLevel > 1.0 ||
-        facingMode === 'user';
+        zoomLevel > 1.0;
 
       let combinedStream: MediaStream;
       if (!needsCanvasBake || typeof canvas.captureStream !== 'function') {
@@ -752,11 +805,11 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     onShowToast(`Switched Camera: ${nextMode === 'environment' ? 'Back (Rear)' : 'Front (Selfie)'}`);
   };
 
-  // Cycle 4K / 60FPS modes
+  // Cycle 4K Ultra HD / 1080p modes
   const handleCycleResFps = () => {
     if (isRecording) return;
     soundEngine.playCameraShutter();
-    const modes: ResolutionFpsMode[] = ['4K/60FPS', '1080p/60FPS', '1080p/30FPS'];
+    const modes: ResolutionFpsMode[] = ['4K/60FPS', '4K/30FPS', '1080p/60FPS'];
     const nextIdx = (modes.indexOf(resFps) + 1) % modes.length;
     setResFps(modes[nextIdx]);
     onShowToast(`Target quality: ${modes[nextIdx]}`);
@@ -826,8 +879,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       const cleanTitle = clipTitle.trim() || `Shot with Jatt VibeReels (${selectedFilter.name})`;
       const caption = `${cleanTitle} (${streamInfoLabel} · ${selectedFilter.name}) ${clipHashtags}`.trim();
 
+      const isDeviceOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
       let finalMediaUrl = recordedClipUrl;
-      if (recordedBlobRef.current && isSupabaseConfigured) {
+      if (recordedBlobRef.current && isSupabaseConfigured && isDeviceOnline) {
         onShowToast('Uploading high-quality capture to global feed...');
         const ext = recordedMediaType === 'image' ? 'jpg' : recordedMimeRef.current.includes('mp4') ? 'mp4' : 'webm';
         const uploadedUrl = await uploadMediaToReelsBucket(
@@ -839,19 +893,20 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           finalMediaUrl = uploadedUrl;
         }
       } else if (recordedBlobRef.current) {
-        const dataUrl = await fileToPersistentDataUrl(recordedBlobRef.current);
-        if (dataUrl) finalMediaUrl = dataUrl;
+        finalMediaUrl = URL.createObjectURL(recordedBlobRef.current);
       }
 
-      const supabasePost = await createGlobalPostInSupabase({
-        userId,
-        username: authorUsername,
-        displayName: authorName,
-        avatarUrl: authorAvatar,
-        mediaUrl: finalMediaUrl,
-        mediaType: recordedMediaType,
-        caption,
-      });
+      const supabasePost = isDeviceOnline
+        ? await createGlobalPostInSupabase({
+            userId,
+            username: authorUsername,
+            displayName: authorName,
+            avatarUrl: authorAvatar,
+            mediaUrl: finalMediaUrl,
+            mediaType: recordedMediaType,
+            caption,
+          })
+        : null;
 
       const tags = clipHashtags
         .split(/[\s,]+/)
@@ -899,11 +954,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         };
 
       saveLocalPostRecord(newPost);
+      await savePostForOffline(newPost, {
+        mediaBlob: recordedBlobRef.current || undefined,
+        sourceType: 'recorded',
+        skipRemoteFetch: true,
+      });
       onRecordSuccess(newPost);
       soundEngine.playDownloadComplete();
       onShowToast(
         supabasePost
           ? `Published ${recordedMediaType === 'image' ? 'photo' : 'HD video'} to global feed!`
+          : !isDeviceOnline
+          ? `Saved ${recordedMediaType === 'image' ? 'photo' : 'HD video'} offline! Play anytime in Saved / Downloads.`
           : `Published ${recordedMediaType === 'image' ? 'photo' : 'HD video'} to For You feed!`
       );
       onClose();
@@ -962,13 +1024,23 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           </button>
         </div>
 
-        {/* Center: Active Stream Resolution & FPS */}
+        {/* Center: Crisp 4K UHD Badge + Active Stream Resolution & FPS */}
         <div className="flex items-center gap-1.5">
+          <span
+            className={`px-2 py-1 rounded-full text-[10px] font-black tracking-wider border shadow-sm ${
+              is4KActive || resFps.startsWith('4K')
+                ? 'bg-gradient-to-r from-amber-500/25 via-pink-500/25 to-cyan-500/25 border-amber-400/70 text-amber-300'
+                : 'bg-neutral-900/90 border-cyan-500/50 text-cyan-300'
+            }`}
+          >
+            {is4KActive || resFps.startsWith('4K') ? '4K UHD' : '1080p FHD'}
+          </span>
+
           <button
             type="button"
             onClick={handleCycleResFps}
             className="px-3 py-1.5 rounded-full bg-neutral-900/90 hover:bg-neutral-800 border border-pink-500/50 text-white text-[11px] font-black flex items-center gap-1.5 shadow-lg shadow-pink-500/15 active:scale-95 transition-transform"
-            title="Tap to cycle target resolution & FPS"
+            title="Tap to cycle target resolution & FPS (4K Ultra HD / 1080p Full HD)"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="tracking-wide">{isSimulatedFeed ? resFps : streamInfoLabel}</span>
@@ -1051,6 +1123,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  if (recordedClipUrl && recordedClipUrl.startsWith('blob:')) {
+                    URL.revokeObjectURL(recordedClipUrl);
+                  }
                   setRecordedClipUrl(null);
                   setIsSavedToGallery(false);
                   recordedBlobRef.current = null;
@@ -1126,6 +1201,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   autoPlay
                   playsInline
                   muted
+                  onLoadedData={() => setIsCameraReady(true)}
                   style={{
                     filter: activeCanvasFallbackFilter,
                     transform: `translate3d(0, 0, 0) scale(${zoomLevel}) scaleX(${facingMode === 'user' ? -1 : 1})`,
@@ -1133,6 +1209,14 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   }}
                   className="w-full h-full object-cover"
                 />
+                {!isCameraReady && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/75 pointer-events-none">
+                    <div className="px-4 py-2 rounded-full bg-neutral-900/90 border border-pink-500/40 text-xs font-bold text-neutral-200 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
+                      <span>Starting 60fps HD camera...</span>
+                    </div>
+                  </div>
+                )}
                 {selectedFilterId === 'warm_glow' && (
                   <div className="absolute inset-0 pointer-events-none bg-radial from-amber-300/15 via-transparent to-orange-500/15 mix-blend-screen" />
                 )}

@@ -18,8 +18,15 @@ import { VideoCard } from './components/VideoCard';
 import { SidebarDesktop } from './components/SidebarDesktop';
 import { MobileNavigation } from './components/MobileNavigation';
 import { TopBar } from './components/TopBar';
+import { OfflineBanner } from './components/OfflineBanner';
 import { soundEngine } from './utils/soundEngine';
 import { compressImageFile } from './utils/imageOptimize';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
+import {
+  getAllOfflineSavedPosts,
+  hydratePostWithOfflineRecord,
+  savePostForOffline,
+} from './lib/offlineMediaStore';
 
 // Lazy-load offscreen tabs and modals so initial page load is fast
 const CommentsDrawer = lazy(() =>
@@ -57,6 +64,12 @@ const CreatorProfileView = lazy(() =>
 );
 const CreatorActivityView = lazy(() =>
   import('./components/CreatorActivityView').then((m) => ({ default: m.CreatorActivityView }))
+);
+const CreatorDirectoryModal = lazy(() =>
+  import('./components/CreatorDirectoryModal').then((m) => ({ default: m.CreatorDirectoryModal }))
+);
+const PublicCreatorProfileView = lazy(() =>
+  import('./components/PublicCreatorProfileView').then((m) => ({ default: m.PublicCreatorProfileView }))
 );
 
 const LazyTabFallback = () => (
@@ -98,6 +111,7 @@ import {
   getStoredPostMetrics,
   getStoredPostComments,
   savePostCommentsForPost,
+  getPostAudioMeta,
   getStoredActivityEvents,
   getActivityLastReadAt,
   setActivityLastReadAt,
@@ -116,6 +130,8 @@ import {
   mapSupabaseRowToVideoPost,
   mapSupabaseCommentRow,
   mapSupabaseInteractionRow,
+  adjustCreatorFollowerDelta,
+  normalizeCreatorUsername,
 } from './lib/supabaseService';
 
 const CREATOR_PROFILE_STORAGE_KEY = 'jatt_creator_profile';
@@ -222,9 +238,12 @@ function hydrateVideosFromStorage(
       Boolean(v.isUserUploaded) ||
       v.creator.username.toLowerCase() === currentUsername.toLowerCase();
 
+    const savedSound = getPostAudioMeta(v.id, v.videoUrl);
+
     return {
       ...v,
       isUserUploaded: isMine,
+      sound: savedSound || v.sound,
       isLiked: likedIds.has(v.id) ? true : v.isLiked && m?.likes === undefined ? v.isLiked : likedIds.has(v.id),
       isSaved: savedIds.has(v.id) ? true : v.isSaved && m?.saves === undefined ? v.isSaved : savedIds.has(v.id),
       creator: {
@@ -277,13 +296,20 @@ export default function App() {
   const [commentsVideo, setCommentsVideo] = useState<VideoPost | null>(null);
   const [shareVideo, setShareVideo] = useState<VideoPost | null>(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [preselectedUploadFile, setPreselectedUploadFile] = useState<File | null>(null);
   const [isProCameraOpen, setIsProCameraOpen] = useState(false);
   const [isTrendsOpen, setIsTrendsOpen] = useState(false);
   const [isLiveOpen, setIsLiveOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [isCreatorSearchOpen, setIsCreatorSearchOpen] = useState(false);
+  const [selectedChannelUsername, setSelectedChannelUsername] = useState<string | null>(null);
+  const [profileInitialSubTab, setProfileInitialSubTab] = useState<
+    'videos' | 'saved' | 'liked' | 'activity' | undefined
+  >(undefined);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const isOnline = useOnlineStatus();
 
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -377,7 +403,33 @@ export default function App() {
       }
     };
 
-    void loadCloudData();
+    // Hydrate locally cached offline videos/audio blobs from IndexedDB on startup / offline mode
+    const hydrateFromOfflineDB = async () => {
+      const offlineRecords = await getAllOfflineSavedPosts();
+      if (isCancelled || offlineRecords.length === 0) return;
+      const offlineMap = new Map(offlineRecords.map((r) => [r.id, r]));
+
+      setVideos((prev) => {
+        const updated = prev.map((v) => {
+          const rec = offlineMap.get(v.id);
+          if (!rec) return v;
+          if (!isOnline || !v.videoUrl || v.videoUrl.startsWith('blob:')) {
+            return hydratePostWithOfflineRecord(v, rec);
+          }
+          return v;
+        });
+        const existingIds = new Set(updated.map((v) => v.id));
+        const missingOfflinePosts = offlineRecords
+          .filter((rec) => !existingIds.has(rec.id))
+          .map((rec) => hydratePostWithOfflineRecord(rec.post, rec));
+        return missingOfflinePosts.length > 0 ? [...missingOfflinePosts, ...updated] : updated;
+      });
+    };
+
+    void hydrateFromOfflineDB();
+    if (isOnline) {
+      void loadCloudData();
+    }
 
     // Idle-preload heavy tab/modal chunks so tab switches are instant
     const preloadChunks = () => {
@@ -386,6 +438,8 @@ export default function App() {
       void import('./components/TrendsDashboard');
       void import('./components/CreatorActivityView');
       void import('./components/ProCameraModal');
+      void import('./components/CreatorDirectoryModal');
+      void import('./components/PublicCreatorProfileView');
     };
     const idleWin = window as Window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
@@ -513,7 +567,7 @@ export default function App() {
       }
       client.removeChannel(channel);
     };
-  }, [creatorProfile.id, creatorProfile.username]);
+  }, [creatorProfile.id, creatorProfile.username, isOnline]);
 
   // Update creator profile and persist to localStorage + Supabase
   const handleUpdateCreatorProfile = useCallback(
@@ -615,7 +669,8 @@ export default function App() {
       currentTab === 'live' ||
       currentTab === 'downloads' ||
       currentTab === 'profile' ||
-      currentTab === 'activity'
+      currentTab === 'activity' ||
+      currentTab === 'channel'
     ) {
       return [];
     }
@@ -848,19 +903,31 @@ export default function App() {
         )
       );
 
-      showToast(willSave ? 'Saved to Profile Saved Videos!' : 'Removed from Saved Videos');
-      void updatePostMetricsInSupabase(
-        id,
-        { saves: nextSaves },
-        targetVideo.isSupabasePost
+      showToast(
+        willSave
+          ? 'Saved to Profile Saved / Downloads (Offline Ready)!'
+          : 'Removed from Saved Videos'
       );
-
       if (willSave) {
+        void savePostForOffline(targetVideo, { sourceType: 'saved' });
         logActivity(targetVideo, 'save');
       }
+      if (isOnline) {
+        void updatePostMetricsInSupabase(
+          id,
+          { saves: nextSaves },
+          targetVideo.isSupabasePost
+        );
+      }
     },
-    [videos, showToast, logActivity]
+    [videos, showToast, logActivity, isOnline]
   );
+
+  const handleOpenSavedDownloadsOffline = useCallback(() => {
+    setSelectedTag(null);
+    setProfileInitialSubTab('saved');
+    setCurrentTab('profile');
+  }, []);
 
   // Track real-time views when watched
   const handleViewTracked = useCallback(
@@ -923,7 +990,7 @@ export default function App() {
     [videos, logActivity]
   );
 
-  // Follow toggle (persisted)
+  // Follow toggle (persisted + updates creator follower delta)
   const handleFollowToggle = useCallback((username: string) => {
     const followed = getStoredFollowedUsernames();
     const isCurrentlyFollowing = followed.has(username);
@@ -933,21 +1000,36 @@ export default function App() {
       followed.add(username);
     }
     saveStoredFollowedUsernames(followed);
+    adjustCreatorFollowerDelta(username, isCurrentlyFollowing ? -1 : 1);
 
     setVideos((prev) =>
       prev.map((v) => {
-        if (v.creator.username === username) {
+        if (
+          v.creator.username === username ||
+          normalizeCreatorUsername(v.creator.username) === normalizeCreatorUsername(username)
+        ) {
           return {
             ...v,
             creator: {
               ...v.creator,
-              isFollowing: !v.creator.isFollowing,
+              isFollowing: !isCurrentlyFollowing,
             },
           };
         }
         return v;
       })
     );
+  }, []);
+
+  const handleOpenCreatorProfile = useCallback((username: string) => {
+    const clean = normalizeCreatorUsername(username) || username.trim().replace(/^@+/, '');
+    if (!clean) return;
+    setIsCreatorSearchOpen(false);
+    setIsTrendsOpen(false);
+    setCommentsVideo(null);
+    setSelectedTag(null);
+    setSelectedChannelUsername(clean);
+    setCurrentTab('channel');
   }, []);
 
   const handleOpenComments = useCallback((vid: VideoPost) => setCommentsVideo(vid), []);
@@ -1041,7 +1123,14 @@ export default function App() {
     setVideos((prev) => [newPost, ...prev.filter((v) => v.id !== newPost.id)]);
     setSelectedTag(null);
     setCurrentTab('foryou');
-    showToast('Published to global feed!');
+    setActiveIndex(0);
+    setIsMuted(false);
+    soundEngine.setMuted(false);
+    showToast(
+      newPost.sound?.hasAttachedAudio
+        ? `Published with "${newPost.sound.title}"!`
+        : 'Published to global feed!'
+    );
 
     // Increment video count for current user
     if (currentUser) {
@@ -1057,9 +1146,14 @@ export default function App() {
     }, 100);
   };
 
-  // Quick Mobile Upload Handler (Live Recording or Gallery Video/Image -> Supabase Storage + posts table)
+  // Quick Mobile Upload Handler (Gallery selection opens UploadModal with Song/Naat editor; Live Capture posts fast)
   const handleQuickGalleryUpload = useCallback(
     async (file: File, source?: 'live' | 'gallery') => {
+      if (source === 'gallery') {
+        setPreselectedUploadFile(file);
+        setIsUploadOpen(true);
+        return;
+      }
       try {
         const isImage = file.type.startsWith('image/');
         const mediaType: 'video' | 'image' = isImage ? 'image' : 'video';
@@ -1314,6 +1408,9 @@ export default function App() {
       {/* Top Bar with Registration, Login, Video Upload, Go Live & Admin Panel */}
       <TopBar
         currentUser={currentUser}
+        videos={videos}
+        ownProfile={creatorProfile}
+        onSelectCreator={(uname) => handleOpenCreatorProfile(uname)}
         onOpenLogin={() => {
           setAuthMode('login');
           setIsAuthOpen(true);
@@ -1330,8 +1427,10 @@ export default function App() {
         onOpenAdmin={() => setIsAdminPanelOpen(true)}
         onOpenProfile={() => {
           setSelectedTag(null);
+          setProfileInitialSubTab('videos');
           setCurrentTab('profile');
         }}
+        onOpenCreatorSearch={() => setIsCreatorSearchOpen(true)}
         onOpenActivity={() => {
           setSelectedTag(null);
           setCurrentTab('activity');
@@ -1341,6 +1440,9 @@ export default function App() {
         onLogout={handleLogout}
         currentTab={currentTab}
       />
+
+      {/* Offline Mode Connectivity Banner */}
+      <OfflineBanner onOpenSavedOffline={handleOpenSavedDownloadsOffline} />
 
       {/* Toast Notification */}
       {toastMessage && (
@@ -1357,11 +1459,13 @@ export default function App() {
           currentTab={currentTab}
           onSelectTab={(tab) => {
             setSelectedTag(null);
+            if (tab === 'profile') setProfileInitialSubTab('videos');
             setCurrentTab(tab);
             setActiveIndex(0);
           }}
           onOpenUpload={() => setIsUploadOpen(true)}
           onOpenTrends={() => setIsTrendsOpen(true)}
+          onOpenCreatorSearch={() => setIsCreatorSearchOpen(true)}
           onOpenLive={handleOpenLive}
           onOpenProCamera={() => setIsProCameraOpen(true)}
           isMuted={isMuted}
@@ -1397,6 +1501,10 @@ export default function App() {
             }}
             onOpenUpload={() => setIsUploadOpen(true)}
             onOpenTrends={() => setIsTrendsOpen(true)}
+            onOpenCreatorSearch={() => setIsCreatorSearchOpen(true)}
+            videos={videos}
+            ownProfile={creatorProfile}
+            onSelectCreator={(uname) => handleOpenCreatorProfile(uname)}
             onOpenLive={handleOpenLive}
             onOpenProCamera={() => setIsProCameraOpen(true)}
             onQuickVideoUpload={handleQuickGalleryUpload}
@@ -1441,6 +1549,7 @@ export default function App() {
                   setCurrentTab('foryou');
                   setActiveIndex(0);
                 }}
+                onOpenSavedOffline={handleOpenSavedDownloadsOffline}
                 onShowToast={showToast}
                 isMuted={isMuted}
                 onToggleMute={handleToggleMute}
@@ -1459,11 +1568,33 @@ export default function App() {
                 onMarkActivityRead={handleMarkActivityRead}
                 totalProfileLikes={totalProfileLikes}
                 followingCount={followingCount}
+                initialSubTab={profileInitialSubTab}
                 onPlayVideo={handlePlayVideoFromProfile}
                 onOpenUpload={() => setIsUploadOpen(true)}
+                onOpenPublicChannel={() => handleOpenCreatorProfile(creatorProfile.username)}
                 onBackToFeed={() => {
                   setSelectedTag(null);
                   setCurrentTab('foryou');
+                }}
+                onShowToast={showToast}
+              />
+            </Suspense>
+          ) : currentTab === 'channel' && selectedChannelUsername ? (
+            /* TIKTOK-STYLE PUBLIC CREATOR CHANNEL PAGE */
+            <Suspense fallback={<LazyTabFallback />}>
+              <PublicCreatorProfileView
+                username={selectedChannelUsername}
+                videos={videos}
+                ownProfile={creatorProfile}
+                onBack={() => {
+                  setSelectedChannelUsername(null);
+                  setCurrentTab('foryou');
+                }}
+                onFollowToggle={handleFollowToggle}
+                onPlayVideo={handlePlayVideoFromProfile}
+                onEditOwnProfile={() => {
+                  setSelectedChannelUsername(null);
+                  setCurrentTab('profile');
                 }}
                 onShowToast={showToast}
               />
@@ -1501,8 +1632,8 @@ export default function App() {
                 </div>
               )}
 
-              {/* Center Vertical Reel Stage */}
-              <div className="relative w-full h-full sm:max-w-[460px] mx-auto bg-black border-x border-neutral-900/60 flex flex-col justify-center [transform:translateZ(0)]">
+              {/* Center Snap Reel Stage (adapts cleanly to 9:16 vertical reels and 16:9 widescreen videos) */}
+              <div className="relative w-full h-full max-w-5xl mx-auto bg-black flex flex-col justify-center [transform:translateZ(0)]">
                 {displayedVideos.length === 0 ? (
                   <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center">
                     <Compass className="w-12 h-12 text-neutral-600 mb-3" />
@@ -1546,6 +1677,7 @@ export default function App() {
                         onViewTracked={handleViewTracked}
                         onDownloadTracked={handleDownloadTracked}
                         onHashtagClick={handleHashtagClick}
+                        onOpenCreatorProfile={(uname) => handleOpenCreatorProfile(uname)}
                         onShowToast={showToast}
                       />
                     ))}
@@ -1660,6 +1792,7 @@ export default function App() {
             onLikeComment={handleLikeComment}
             activeUsername={currentUser?.username || creatorProfile.username}
             activeAvatar={currentUser?.avatar || creatorProfile.avatar}
+            onOpenCreatorProfile={(uname) => handleOpenCreatorProfile(uname)}
           />
         </Suspense>
       )}
@@ -1679,9 +1812,13 @@ export default function App() {
         <Suspense fallback={null}>
           <UploadModal
             isOpen={isUploadOpen}
-            onClose={() => setIsUploadOpen(false)}
+            onClose={() => {
+              setIsUploadOpen(false);
+              setPreselectedUploadFile(null);
+            }}
             currentUser={currentUser}
             creatorProfile={creatorProfile}
+            preselectedFile={preselectedUploadFile}
             onUploadSuccess={handleUploadSuccess}
             onShowToast={showToast}
           />
@@ -1741,6 +1878,20 @@ export default function App() {
             isOpen={isLiveOpen}
             onClose={() => setIsLiveOpen(false)}
             currentUser={currentUser}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
+
+      {isCreatorSearchOpen && (
+        <Suspense fallback={null}>
+          <CreatorDirectoryModal
+            isOpen={isCreatorSearchOpen}
+            onClose={() => setIsCreatorSearchOpen(false)}
+            videos={videos}
+            ownProfile={creatorProfile}
+            onSelectCreator={(uname) => handleOpenCreatorProfile(uname)}
+            onFollowToggle={handleFollowToggle}
             onShowToast={showToast}
           />
         </Suspense>

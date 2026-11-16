@@ -2,6 +2,7 @@ import { supabase, REELS_MEDIA_BUCKET, isSupabaseConfigured } from './supabase';
 import {
   ActivityEvent,
   CommentItem,
+  CreatorChannelSummary,
   CreatorProfileData,
   InteractionType,
   VideoPost,
@@ -16,6 +17,10 @@ export const POST_METRICS_OVERRIDES_KEY = 'jatt_post_metrics_v1';
 export const POST_COMMENTS_KEY = 'jatt_post_comments_v1';
 export const ACTIVITY_EVENTS_KEY = 'jatt_activity_events_v1';
 export const ACTIVITY_LAST_READ_KEY = 'jatt_activity_last_read_v1';
+export const CREATOR_PROFILE_VIEWS_KEY = 'jatt_creator_profile_views_v1';
+export const CREATOR_FOLLOWER_DELTAS_KEY = 'jatt_creator_follower_deltas_v1';
+export const CREATOR_DIRECTORY_CACHE_KEY = 'jatt_creator_directory_v1';
+export const POST_AUDIO_META_KEY = 'jatt_post_audio_meta_v1';
 
 export interface SupabasePostRow {
   id: string;
@@ -32,6 +37,12 @@ export interface SupabasePostRow {
   saves_count?: number;
   downloads_count?: number;
   shares_count?: number;
+  audio_url?: string;
+  audio_title?: string;
+  audio_artist?: string;
+  audio_category?: string;
+  original_volume?: number;
+  bg_audio_volume?: number;
   created_at?: string;
 }
 
@@ -80,6 +91,7 @@ const schemaCapabilities = {
   postsHasSaves: false,
   postsHasDownloads: false,
   postsHasShares: false,
+  postsHasAudioUrl: false,
   profilesTableAvailable: true,
   commentsTableAvailable: true,
   interactionsTableAvailable: true,
@@ -104,6 +116,7 @@ function detectPostsColumns(rows: Record<string, unknown>[]): void {
   if ('saves_count' in sample) schemaCapabilities.postsHasSaves = true;
   if ('downloads_count' in sample) schemaCapabilities.postsHasDownloads = true;
   if ('shares_count' in sample) schemaCapabilities.postsHasShares = true;
+  if ('audio_url' in sample) schemaCapabilities.postsHasAudioUrl = true;
 }
 
 export function getSchemaSyncStatus() {
@@ -128,6 +141,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   bio text DEFAULT '',
   avatar_url text DEFAULT '',
   followers_count bigint DEFAULT 12400,
+  profile_views bigint DEFAULT 0,
   updated_at timestamptz DEFAULT now()
 );
 
@@ -339,6 +353,46 @@ export function savePostCommentsForPost(postId: string, comments: CommentItem[])
   }
 }
 
+function getStoredPostAudioMetaMap(): Record<string, VideoPost['sound']> {
+  try {
+    const raw = localStorage.getItem(POST_AUDIO_META_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function savePostAudioMeta(keys: string[], sound: VideoPost['sound']): void {
+  try {
+    const map = getStoredPostAudioMetaMap();
+    const safeSound: VideoPost['sound'] = {
+      ...sound,
+      audioUrl:
+        sound.audioUrl && sound.audioUrl.startsWith('blob:') ? undefined : sound.audioUrl,
+    };
+    for (const k of keys) {
+      if (k && !k.startsWith('blob:')) {
+        map[k] = safeSound;
+      }
+    }
+    // Keep map bounded
+    const entries = Object.entries(map);
+    const trimmed = entries.length > 160 ? Object.fromEntries(entries.slice(-160)) : map;
+    localStorage.setItem(POST_AUDIO_META_KEY, JSON.stringify(trimmed));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+export function getPostAudioMeta(postId: string, mediaUrl?: string): VideoPost['sound'] | null {
+  const map = getStoredPostAudioMetaMap();
+  if (postId && map[postId]) return map[postId];
+  if (mediaUrl && !mediaUrl.startsWith('blob:') && map[mediaUrl]) return map[mediaUrl];
+  return null;
+}
+
 export function getStoredActivityEvents(): ActivityEvent[] {
   try {
     const raw = localStorage.getItem(ACTIVITY_EVENTS_KEY);
@@ -433,6 +487,37 @@ export function mapSupabaseRowToVideoPost(
     (Boolean(currentUsername) &&
       username.toLowerCase() === currentUsername!.toLowerCase());
 
+  const savedAudio = getPostAudioMeta(id, row.media_url);
+  const resolvedSound: VideoPost['sound'] = savedAudio
+    ? savedAudio
+    : row.audio_url || row.audio_title
+    ? {
+        title: row.audio_title || `${displayName}'s Attached Audio`,
+        artist: row.audio_artist || displayName,
+        trackType: 'future_bass',
+        audioUrl: row.audio_url || undefined,
+        category:
+          row.audio_category === 'naat' ||
+          row.audio_category === 'song' ||
+          row.audio_category === 'beat'
+            ? row.audio_category
+            : 'song',
+        originalVolume:
+          typeof row.original_volume === 'number' ? row.original_volume : 1,
+        bgAudioVolume:
+          typeof row.bg_audio_volume === 'number' ? row.bg_audio_volume : 0.75,
+        hasAttachedAudio: true,
+      }
+    : {
+        title: `${displayName}'s Original Audio`,
+        artist: displayName,
+        trackType: 'future_bass',
+        category: 'original',
+        originalVolume: 1,
+        bgAudioVolume: 0,
+        hasAttachedAudio: false,
+      };
+
   return {
     id,
     title: caption.slice(0, 60),
@@ -467,11 +552,7 @@ export function mapSupabaseRowToVideoPost(
     },
     isLiked: likedIds.has(id),
     isSaved: savedIds.has(id),
-    sound: {
-      title: `${displayName}'s Original Audio`,
-      artist: displayName,
-      trackType: 'future_bass',
-    },
+    sound: resolvedSound,
     commentsList: localComments,
   };
 }
@@ -481,7 +562,7 @@ export function mapSupabaseRowToVideoPost(
 // =========================================================================
 export async function uploadMediaToReelsBucket(
   fileOrBlob: File | Blob,
-  folder: 'posts' | 'avatars',
+  folder: 'posts' | 'avatars' | 'audio',
   filenameHint?: string
 ): Promise<string | null> {
   if (!supabase || !isSupabaseConfigured) {
@@ -491,7 +572,8 @@ export async function uploadMediaToReelsBucket(
   try {
     const rawExt = filenameHint?.split('.').pop()?.toLowerCase();
     const mimeExt = fileOrBlob.type?.split('/').pop()?.split('+')[0]?.toLowerCase();
-    const ext = rawExt || mimeExt || (folder === 'avatars' ? 'jpg' : 'mp4');
+    const ext =
+      rawExt || mimeExt || (folder === 'avatars' ? 'jpg' : folder === 'audio' ? 'mp3' : 'mp4');
     const cleanRandom = Math.random().toString(36).slice(2, 8);
     const filePath = `${folder}/${Date.now()}-${cleanRandom}.${ext}`;
 
@@ -620,6 +702,7 @@ export async function createGlobalPostInSupabase(params: {
   mediaUrl: string;
   mediaType: 'video' | 'image';
   caption: string;
+  sound?: VideoPost['sound'];
 }): Promise<VideoPost | null> {
   if (!supabase || !isSupabaseConfigured) {
     return null;
@@ -641,6 +724,18 @@ export async function createGlobalPostInSupabase(params: {
     if (schemaCapabilities.postsHasComments) basePayload.comments_count = 0;
     if (schemaCapabilities.postsHasSaves) basePayload.saves_count = 0;
     if (schemaCapabilities.postsHasDownloads) basePayload.downloads_count = 0;
+    if (schemaCapabilities.postsHasAudioUrl && params.sound) {
+      if (params.sound.audioUrl) basePayload.audio_url = params.sound.audioUrl;
+      basePayload.audio_title = params.sound.title;
+      basePayload.audio_artist = params.sound.artist;
+      basePayload.audio_category = params.sound.category || 'original';
+      if (typeof params.sound.originalVolume === 'number') {
+        basePayload.original_volume = params.sound.originalVolume;
+      }
+      if (typeof params.sound.bgAudioVolume === 'number') {
+        basePayload.bg_audio_volume = params.sound.bgAudioVolume;
+      }
+    }
 
     const { data, error } = await supabase
       .from('posts')
@@ -740,11 +835,136 @@ export async function updatePostMetricsInSupabase(
 }
 
 // =========================================================================
-// Profiles Sync (Cross-Device Recovery)
+// Profiles Sync, Public Creator Channels, Search & Profile Views
 // =========================================================================
+export function normalizeCreatorUsername(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^@+/, '')
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .slice(0, 24);
+}
+
+function getProfileViewsMap(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(CREATOR_PROFILE_VIEWS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function getProfileViewsForUsername(username: string, baseFallback = 0): number {
+  const clean = normalizeCreatorUsername(username);
+  if (!clean) return baseFallback;
+  const map = getProfileViewsMap();
+  const stored = typeof map[clean] === 'number' ? map[clean] : undefined;
+  if (stored !== undefined) {
+    return Math.max(stored, baseFallback);
+  }
+  return baseFallback;
+}
+
+export function incrementProfileViewsForUsername(
+  username: string,
+  baseFallback = 0
+): number {
+  const clean = normalizeCreatorUsername(username);
+  if (!clean) return baseFallback;
+  const map = getProfileViewsMap();
+  const current = Math.max(typeof map[clean] === 'number' ? map[clean] : 0, baseFallback);
+  const next = current + 1;
+  map[clean] = next;
+  try {
+    localStorage.setItem(CREATOR_PROFILE_VIEWS_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+
+  // Best-effort sync to Supabase `profiles.profile_views` if available
+  if (supabase && isSupabaseConfigured && schemaCapabilities.profilesTableAvailable) {
+    void supabase
+      .from('profiles')
+      .update({ profile_views: next })
+      .eq('username', clean)
+      .then(() => {}, () => {});
+  }
+
+  return next;
+}
+
+function getFollowerDeltasMap(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(CREATOR_FOLLOWER_DELTAS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function getCreatorFollowerDelta(username: string): number {
+  const clean = normalizeCreatorUsername(username);
+  if (!clean) return 0;
+  const map = getFollowerDeltasMap();
+  return typeof map[clean] === 'number' ? map[clean] : 0;
+}
+
+export function adjustCreatorFollowerDelta(username: string, delta: 1 | -1): number {
+  const clean = normalizeCreatorUsername(username);
+  if (!clean) return 0;
+  const map = getFollowerDeltasMap();
+  const next = (typeof map[clean] === 'number' ? map[clean] : 0) + delta;
+  map[clean] = next;
+  try {
+    localStorage.setItem(CREATOR_FOLLOWER_DELTAS_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+  return next;
+}
+
+function getLocalCreatorDirectory(): CreatorProfileData[] {
+  try {
+    const raw = localStorage.getItem(CREATOR_DIRECTORY_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalCreatorDirectoryEntry(profile: CreatorProfileData): void {
+  try {
+    const clean = normalizeCreatorUsername(profile.username);
+    if (!clean) return;
+    const normalized: CreatorProfileData = { ...profile, username: clean };
+    const existing = getLocalCreatorDirectory();
+    const next = [
+      normalized,
+      ...existing.filter(
+        (p) =>
+          p.id !== normalized.id &&
+          normalizeCreatorUsername(p.username) !== clean
+      ),
+    ].slice(0, 60);
+    localStorage.setItem(CREATOR_DIRECTORY_CACHE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
 export async function upsertUserProfileInSupabase(
   profile: CreatorProfileData
 ): Promise<boolean> {
+  saveLocalCreatorDirectoryEntry(profile);
+
   if (!supabase || !isSupabaseConfigured) {
     return false;
   }
@@ -753,7 +973,7 @@ export async function upsertUserProfileInSupabase(
     if (schemaCapabilities.profilesTableAvailable) {
       const { error } = await supabase.from('profiles').upsert({
         id: profile.id,
-        username: profile.username,
+        username: normalizeCreatorUsername(profile.username) || profile.username,
         display_name: profile.name,
         bio: profile.bio,
         avatar_url: profile.avatar,
@@ -772,79 +992,357 @@ export async function upsertUserProfileInSupabase(
   return false;
 }
 
+export async function checkUsernameAvailability(
+  rawUsername: string,
+  currentUserId: string,
+  allVideos: VideoPost[]
+): Promise<{ available: boolean; normalized: string; reason?: string }> {
+  const normalized = normalizeCreatorUsername(rawUsername);
+  if (normalized.length < 3) {
+    return {
+      available: false,
+      normalized,
+      reason: 'Username must be at least 3 characters (letters, numbers, underscores).',
+    };
+  }
+
+  // Check in-memory feed & local directory first
+  const localConflict = allVideos.some(
+    (v) =>
+      normalizeCreatorUsername(v.creator.username) === normalized &&
+      v.userId !== currentUserId &&
+      !v.isUserUploaded
+  );
+  if (localConflict) {
+    return {
+      available: false,
+      normalized,
+      reason: `@${normalized} is already claimed by another creator.`,
+    };
+  }
+
+  const dirConflict = getLocalCreatorDirectory().some(
+    (p) => normalizeCreatorUsername(p.username) === normalized && p.id !== currentUserId
+  );
+  if (dirConflict) {
+    return {
+      available: false,
+      normalized,
+      reason: `@${normalized} is already in use.`,
+    };
+  }
+
+  if (supabase && isSupabaseConfigured) {
+    try {
+      if (schemaCapabilities.profilesTableAvailable) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('username', normalized)
+          .limit(1)
+          .maybeSingle();
+
+        if (error && isMissingRelationError(error)) {
+          schemaCapabilities.profilesTableAvailable = false;
+        } else if (data && String(data.id) !== currentUserId) {
+          return {
+            available: false,
+            normalized,
+            reason: `@${normalized} is already registered on another channel.`,
+          };
+        }
+      }
+
+      const { data: postOwner } = await supabase
+        .from('posts')
+        .select('user_id')
+        .eq('username', normalized)
+        .limit(1)
+        .maybeSingle();
+
+      if (postOwner && String(postOwner.user_id) !== currentUserId) {
+        return {
+          available: false,
+          normalized,
+          reason: `@${normalized} is already used by another creator.`,
+        };
+      }
+    } catch {
+      // fall through as available if offline
+    }
+  }
+
+  return { available: true, normalized };
+}
+
 export async function fetchUserProfileFromSupabase(params: {
   id?: string;
   username?: string;
 }): Promise<CreatorProfileData | null> {
-  if (!supabase || !isSupabaseConfigured) {
-    return null;
-  }
+  const cleanUsername = params.username ? normalizeCreatorUsername(params.username) : undefined;
 
-  const cleanUsername = params.username?.trim().replace(/^@+/, '').toLowerCase();
+  if (supabase && isSupabaseConfigured) {
+    try {
+      if (schemaCapabilities.profilesTableAvailable) {
+        let query = supabase.from('profiles').select('*');
+        if (cleanUsername && params.id) {
+          query = query.or(`id.eq.${params.id},username.eq.${cleanUsername}`);
+        } else if (cleanUsername) {
+          query = query.eq('username', cleanUsername);
+        } else if (params.id) {
+          query = query.eq('id', params.id);
+        } else {
+          return null;
+        }
 
-  try {
-    if (schemaCapabilities.profilesTableAvailable) {
-      let query = supabase.from('profiles').select('*');
-      if (cleanUsername && params.id) {
-        query = query.or(`id.eq.${params.id},username.eq.${cleanUsername}`);
-      } else if (cleanUsername) {
-        query = query.eq('username', cleanUsername);
-      } else if (params.id) {
-        query = query.eq('id', params.id);
-      } else {
-        return null;
+        const { data, error } = await query.limit(1).maybeSingle();
+        if (error && isMissingRelationError(error)) {
+          schemaCapabilities.profilesTableAvailable = false;
+        } else if (data) {
+          const uname = data.username || 'jatt_official';
+          return {
+            id: String(data.id),
+            name: data.display_name || uname,
+            username: uname,
+            bio: data.bio || '',
+            avatar:
+              data.avatar_url ||
+              'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
+            baseFollowers:
+              typeof data.followers_count === 'number' ? data.followers_count : 12400,
+            profileViews: getProfileViewsForUsername(
+              uname,
+              typeof data.profile_views === 'number' ? data.profile_views : 0
+            ),
+          };
+        }
       }
 
-      const { data, error } = await query.limit(1).maybeSingle();
+      // Fallback: reconstruct profile from user's latest global post in `posts`
+      if (cleanUsername || params.id) {
+        let postQuery = supabase
+          .from('posts')
+          .select('user_id, username, display_name, avatar_url')
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (cleanUsername) {
+          postQuery = postQuery.eq('username', cleanUsername);
+        } else if (params.id) {
+          postQuery = postQuery.eq('user_id', params.id);
+        }
+
+        const { data: postRow } = await postQuery.maybeSingle();
+        if (postRow) {
+          const uname = postRow.username || cleanUsername || 'jatt_official';
+          return {
+            id: String(postRow.user_id || params.id || getOrCreateUserProfileId()),
+            name: postRow.display_name || uname,
+            username: uname,
+            bio: 'Creator on Jatt VibeReels',
+            avatar:
+              postRow.avatar_url ||
+              'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
+            baseFollowers: 12400,
+            profileViews: getProfileViewsForUsername(uname, 0),
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Fallback to local creator directory
+  const localMatch = getLocalCreatorDirectory().find(
+    (p) =>
+      (cleanUsername && normalizeCreatorUsername(p.username) === cleanUsername) ||
+      (params.id && p.id === params.id)
+  );
+  if (localMatch) {
+    return {
+      ...localMatch,
+      profileViews: getProfileViewsForUsername(localMatch.username, localMatch.profileViews || 0),
+    };
+  }
+
+  return null;
+}
+
+function estimateBaseFollowersForCreator(username: string, totalLikes: number): number {
+  const clean = normalizeCreatorUsername(username);
+  // Deterministic realistic baseline from likes when explicit DB followers aren't present
+  const hashSeed = clean.split('').reduce((acc, ch) => acc + ch.charCodeAt(0) * 17, 0);
+  const base = Math.max(120, Math.round(totalLikes * 0.14) + (hashSeed % 950));
+  return base;
+}
+
+export function buildCreatorChannelSummary(
+  username: string,
+  allVideos: VideoPost[],
+  ownProfile: CreatorProfileData,
+  remoteProfile?: CreatorProfileData | null
+): CreatorChannelSummary {
+  const clean = normalizeCreatorUsername(username) || username.toLowerCase();
+  const isOwn =
+    normalizeCreatorUsername(ownProfile.username) === clean ||
+    (Boolean(remoteProfile?.id) && remoteProfile?.id === ownProfile.id);
+
+  const creatorVideos = allVideos.filter((v) => {
+    const vUname = normalizeCreatorUsername(v.creator.username);
+    if (isOwn) {
+      return (
+        vUname === clean ||
+        v.userId === ownProfile.id ||
+        Boolean(v.isUserUploaded)
+      );
+    }
+    return vUname === clean;
+  });
+
+  const latestPost = creatorVideos[0];
+  const totalLikes = creatorVideos.reduce((sum, v) => sum + (v.stats.likes || 0), 0);
+  const totalViews = creatorVideos.reduce((sum, v) => sum + (v.stats.views || 0), 0);
+  const followedSet = getStoredFollowedUsernames();
+
+  const resolvedName = isOwn
+    ? ownProfile.name
+    : remoteProfile?.name || latestPost?.creator.name || `@${clean}`;
+  const resolvedUsername = isOwn
+    ? ownProfile.username
+    : remoteProfile?.username || latestPost?.creator.username || clean;
+  const resolvedBio = isOwn
+    ? ownProfile.bio
+    : remoteProfile?.bio || latestPost?.creator.bio || 'Sharing reels and vibes on Jatt VibeReels.';
+  const resolvedAvatar = isOwn
+    ? ownProfile.avatar
+    : remoteProfile?.avatar ||
+      latestPost?.creator.avatar ||
+      `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(clean)}&backgroundColor=ec4899`;
+
+  const baseFollowers = isOwn
+    ? ownProfile.baseFollowers
+    : remoteProfile?.baseFollowers || estimateBaseFollowersForCreator(clean, totalLikes);
+  const followerDelta = getCreatorFollowerDelta(clean);
+  const isFollowing =
+    followedSet.has(resolvedUsername) ||
+    followedSet.has(clean) ||
+    Boolean(latestPost?.creator.isFollowing);
+
+  const baseProfileViews = isOwn
+    ? ownProfile.profileViews ?? Math.max(creatorVideos.length * 48, Math.round(totalViews * 0.04))
+    : remoteProfile?.profileViews ?? Math.max(creatorVideos.length * 32, Math.round(totalViews * 0.05));
+
+  return {
+    id: isOwn ? ownProfile.id : remoteProfile?.id || latestPost?.userId || `channel-${clean}`,
+    name: resolvedName,
+    username: resolvedUsername,
+    bio: resolvedBio,
+    avatar: resolvedAvatar,
+    isVerified: isOwn ? true : Boolean(latestPost?.creator.isVerified ?? totalLikes >= 50000),
+    isFollowing,
+    followersCount: Math.max(0, baseFollowers + followerDelta),
+    followingCount: isOwn ? followedSet.size : Math.max(14, (clean.length * 19) % 180),
+    totalLikes,
+    profileViews: getProfileViewsForUsername(clean, baseProfileViews),
+    videosCount: creatorVideos.length,
+  };
+}
+
+export async function searchCreatorsDirectory(
+  rawQuery: string,
+  allVideos: VideoPost[],
+  ownProfile: CreatorProfileData
+): Promise<CreatorChannelSummary[]> {
+  const q = rawQuery.trim().replace(/^@+/, '').toLowerCase();
+  const remoteProfilesByUsername = new Map<string, CreatorProfileData>();
+
+  if (supabase && isSupabaseConfigured && schemaCapabilities.profilesTableAvailable) {
+    try {
+      let queryBuilder = supabase
+        .from('profiles')
+        .select('*')
+        .order('followers_count', { ascending: false })
+        .limit(30);
+
+      if (q) {
+        queryBuilder = queryBuilder.or(`username.ilike.%${q}%,display_name.ilike.%${q}%`);
+      }
+
+      const { data, error } = await queryBuilder;
       if (error && isMissingRelationError(error)) {
         schemaCapabilities.profilesTableAvailable = false;
-      } else if (data) {
-        return {
-          id: String(data.id),
-          name: data.display_name || data.username || 'Jatt Creator',
-          username: data.username || 'jatt_official',
-          bio: data.bio || '',
-          avatar:
-            data.avatar_url ||
-            'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
-          baseFollowers:
-            typeof data.followers_count === 'number' ? data.followers_count : 12400,
-        };
+      } else if (Array.isArray(data)) {
+        for (const row of data) {
+          const uname = normalizeCreatorUsername(String(row.username || ''));
+          if (!uname) continue;
+          remoteProfilesByUsername.set(uname, {
+            id: String(row.id),
+            name: row.display_name || uname,
+            username: String(row.username || uname),
+            bio: row.bio || '',
+            avatar:
+              row.avatar_url ||
+              `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(uname)}&backgroundColor=ec4899`,
+            baseFollowers: typeof row.followers_count === 'number' ? row.followers_count : 1200,
+            profileViews: typeof row.profile_views === 'number' ? row.profile_views : undefined,
+          });
+        }
       }
+    } catch {
+      // ignore offline errors
     }
-
-    // Fallback: reconstruct profile from user's latest global post in `posts`
-    if (cleanUsername || params.id) {
-      let postQuery = supabase
-        .from('posts')
-        .select('user_id, username, display_name, avatar_url')
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (cleanUsername) {
-        postQuery = postQuery.eq('username', cleanUsername);
-      } else if (params.id) {
-        postQuery = postQuery.eq('user_id', params.id);
-      }
-
-      const { data: postRow } = await postQuery.maybeSingle();
-      if (postRow) {
-        return {
-          id: String(postRow.user_id || params.id || getOrCreateUserProfileId()),
-          name: postRow.display_name || postRow.username || 'Jatt Creator',
-          username: postRow.username || cleanUsername || 'jatt_official',
-          bio: 'Creator on Jatt VibeReels',
-          avatar:
-            postRow.avatar_url ||
-            'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
-          baseFollowers: 12400,
-        };
-      }
-    }
-  } catch {
-    // ignore
   }
-  return null;
+
+  for (const localProf of getLocalCreatorDirectory()) {
+    const uname = normalizeCreatorUsername(localProf.username);
+    if (uname && !remoteProfilesByUsername.has(uname)) {
+      remoteProfilesByUsername.set(uname, localProf);
+    }
+  }
+
+  const uniqueUsernames = new Set<string>();
+  const ownClean = normalizeCreatorUsername(ownProfile.username);
+  if (ownClean) uniqueUsernames.add(ownClean);
+
+  for (const uname of remoteProfilesByUsername.keys()) {
+    uniqueUsernames.add(uname);
+  }
+  for (const vid of allVideos) {
+    const uname = normalizeCreatorUsername(vid.creator.username);
+    if (uname) uniqueUsernames.add(uname);
+  }
+
+  const results: CreatorChannelSummary[] = [];
+  for (const uname of uniqueUsernames) {
+    const summary = buildCreatorChannelSummary(
+      uname,
+      allVideos,
+      ownProfile,
+      remoteProfilesByUsername.get(uname)
+    );
+    if (q) {
+      const matchName = summary.name.toLowerCase().includes(q);
+      const matchUser = summary.username.toLowerCase().includes(q);
+      const matchBio = summary.bio.toLowerCase().includes(q);
+      if (!matchName && !matchUser && !matchBio) continue;
+    }
+    results.push(summary);
+  }
+
+  results.sort((a, b) => {
+    if (q) {
+      const aExact = normalizeCreatorUsername(a.username) === q ? 1 : 0;
+      const bExact = normalizeCreatorUsername(b.username) === q ? 1 : 0;
+      if (aExact !== bExact) return bExact - aExact;
+      const aStarts = normalizeCreatorUsername(a.username).startsWith(q) ? 1 : 0;
+      const bStarts = normalizeCreatorUsername(b.username).startsWith(q) ? 1 : 0;
+      if (aStarts !== bStarts) return bStarts - aStarts;
+    }
+    return b.totalLikes - a.totalLikes || b.followersCount - a.followersCount;
+  });
+
+  return results;
 }
 
 // =========================================================================

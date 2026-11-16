@@ -26,11 +26,16 @@ import {
   Link2,
   Bookmark,
   Globe,
+  Maximize2,
+  Minimize2,
+  WifiOff,
+  ArrowRight,
 } from 'lucide-react';
 import { DownloadItem, DownloadCategory } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
 import { soundEngine } from '../utils/soundEngine';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 
 const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
 
@@ -317,6 +322,7 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
 
 interface DownloadHubProps {
   onBackToFeed: () => void;
+  onOpenSavedOffline?: () => void;
   onShowToast: (msg: string) => void;
   isMuted: boolean;
   onToggleMute: () => void;
@@ -333,10 +339,12 @@ interface DownloadProgressState {
 
 export const DownloadHub: React.FC<DownloadHubProps> = ({
   onBackToFeed,
+  onOpenSavedOffline,
   onShowToast,
   isMuted,
   onToggleMute,
 }) => {
+  const isOnline = useOnlineStatus();
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const [items] = useState<DownloadItem[]>(INITIAL_DOWNLOADS);
   const [selectedCategory, setSelectedCategory] = useState<string>(() => {
@@ -367,8 +375,9 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     return {};
   });
 
-  // Track active video player item
+  // Track active video player item & optional expanded 16:9 cinema mode
   const [previewItem, setPreviewItem] = useState<DownloadItem | null>(null);
+  const [isCinemaMode, setIsCinemaMode] = useState<boolean>(false);
 
   // YouTube Search States
   const [isSearchingYouTube, setIsSearchingYouTube] = useState<boolean>(false);
@@ -454,6 +463,9 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
   const openVideoPlayer = (item: DownloadItem) => {
     setPreviewItem(item);
     setActiveTab('marketplace');
+    if (!isOnline && item.youtubeId) {
+      onShowToast('You are offline. Online YouTube streaming needs internet — check Saved / Downloads!');
+    }
     setTimeout(() => {
       scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     }, 30);
@@ -461,6 +473,10 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
   // Play any custom YouTube link or video ID directly in standard embed player
   const handlePlayDirectUrl = () => {
+    if (!isOnline) {
+      onShowToast('Offline Mode: Connect to internet to stream YouTube links, or open Saved / Downloads.');
+      return;
+    }
     const ytid = extractYouTubeId(directUrlInput);
     if (!ytid) {
       onShowToast('Please enter a valid YouTube video link or 11-char ID.');
@@ -557,6 +573,10 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     tabCacheKey?: GlobalHubTab['id'],
     displayLabel?: string
   ) => {
+    if (!isOnline) {
+      onShowToast('Offline Mode: Online YouTube search needs internet. Watch Saved / Downloads offline!');
+      return;
+    }
     const query = (targetQuery !== undefined ? targetQuery : searchQuery).trim();
     if (!query) {
       onShowToast('Type a movie, drama, or song title to search.');
@@ -1115,7 +1135,20 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => setPreviewItem(null)}
+                      onClick={() => setIsCinemaMode((prev) => !prev)}
+                      className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-cyan-500/35 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      title="Expand 16:9 Widescreen Theater"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">16:9 Theater</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCinemaMode(false);
+                        setPreviewItem(null);
+                      }}
                       className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                     >
                       <X className="w-4 h-4" />
@@ -1124,10 +1157,125 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   </div>
                 </div>
 
-                <div className="relative w-full aspect-video max-h-[36vh] sm:max-h-[340px] mx-auto rounded-xl sm:rounded-2xl overflow-hidden bg-black border border-neutral-800">
-                  {previewItem.youtubeId ? (
+                {/* Pure 16:9 Widescreen Player Container (no conflicting max-h cropping) */}
+                {!isCinemaMode && (
+                  <div className="relative w-[min(100%,calc(38vh*16/9))] sm:w-[min(100%,calc(44vh*16/9))] max-w-4xl aspect-video mx-auto rounded-xl sm:rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl">
+                    {!isOnline && previewItem.youtubeId ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950/95 space-y-3">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center">
+                          <WifiOff className="w-6 h-6" />
+                        </div>
+                        <div className="space-y-1 max-w-md">
+                          <h3 className="text-sm sm:text-base font-black text-white">
+                            You&apos;re in Offline Mode
+                          </h3>
+                          <p className="text-xs text-neutral-300 leading-relaxed">
+                            Online YouTube streaming needs an internet connection. Your saved reels, photos, songs, and naats are ready in <strong>Saved / Downloads</strong>!
+                          </p>
+                        </div>
+                        {onOpenSavedOffline && (
+                          <button
+                            type="button"
+                            onClick={onOpenSavedOffline}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-lg"
+                          >
+                            <HardDrive className="w-3.5 h-3.5" />
+                            <span>Open Saved / Downloads</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ) : previewItem.youtubeId ? (
+                      <iframe
+                        key={previewItem.youtubeId}
+                        src={`https://www.youtube-nocookie.com/embed/${previewItem.youtubeId}?autoplay=1&rel=0&playsinline=1`}
+                        title={previewItem.title}
+                        className="w-full h-full border-0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <div className="w-full h-full relative flex flex-col items-center justify-center p-4 text-center">
+                        <img
+                          src={previewItem.thumbnailUrl}
+                          alt={previewItem.title}
+                          className="absolute inset-0 w-full h-full object-cover opacity-40"
+                        />
+                        <div className="relative z-10 flex flex-col items-center gap-2">
+                          <Film className="w-10 h-10 text-cyan-400" />
+                          <p className="text-sm text-white font-bold">{previewItem.title}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Optional Fullscreen Centered 16:9 Widescreen Cinema Lightbox */}
+          {previewItem && isCinemaMode && (
+            <div
+              className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150"
+              onClick={() => setIsCinemaMode(false)}
+            >
+              <div
+                className="w-[min(95vw,calc(80vh*16/9))] max-w-6xl space-y-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3 px-1">
+                  <div className="min-w-0">
+                    <h2 className="text-sm sm:text-base font-black text-white truncate">
+                      {previewItem.title}
+                    </h2>
+                    <p className="text-xs text-neutral-400 truncate">{previewItem.subtitle}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setIsCinemaMode(false)}
+                      className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-neutral-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Minimize2 className="w-3.5 h-3.5" />
+                      <span>Minimize</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCinemaMode(false);
+                        setPreviewItem(null);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                      <span>Close</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl">
+                  {!isOnline && previewItem.youtubeId ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-neutral-950 space-y-3">
+                      <WifiOff className="w-10 h-10 text-amber-400" />
+                      <h3 className="text-base font-black text-white">Online YouTube Streaming Unavailable Offline</h3>
+                      <p className="text-xs text-neutral-400 max-w-md">
+                        Connect to Wi-Fi or mobile data to watch YouTube streams, or play your downloaded reels, songs &amp; naats in Profile &rarr; Saved / Downloads.
+                      </p>
+                      {onOpenSavedOffline && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCinemaMode(false);
+                            onOpenSavedOffline();
+                          }}
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 text-white text-xs font-black cursor-pointer"
+                        >
+                          Go to Saved / Downloads
+                        </button>
+                      )}
+                    </div>
+                  ) : previewItem.youtubeId ? (
                     <iframe
-                      key={previewItem.youtubeId}
+                      key={`cinema-${previewItem.youtubeId}`}
                       src={`https://www.youtube-nocookie.com/embed/${previewItem.youtubeId}?autoplay=1&rel=0&playsinline=1`}
                       title={previewItem.title}
                       className="w-full h-full border-0"
@@ -1135,15 +1283,15 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                       allowFullScreen
                     />
                   ) : (
-                    <div className="w-full h-full relative flex flex-col items-center justify-center p-4 text-center">
+                    <div className="w-full h-full relative flex flex-col items-center justify-center p-6 text-center">
                       <img
                         src={previewItem.thumbnailUrl}
                         alt={previewItem.title}
                         className="absolute inset-0 w-full h-full object-cover opacity-40"
                       />
                       <div className="relative z-10 flex flex-col items-center gap-2">
-                        <Film className="w-10 h-10 text-cyan-400" />
-                        <p className="text-sm text-white font-bold">{previewItem.title}</p>
+                        <Film className="w-12 h-12 text-cyan-400" />
+                        <p className="text-base text-white font-bold">{previewItem.title}</p>
                       </div>
                     </div>
                   )}
@@ -1157,6 +1305,34 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
             ref={scrollContainerRef}
             className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 space-y-4 pb-24 lg:pb-8"
           >
+            {/* Friendly Offline Notice inside Movie Box when internet is disconnected */}
+            {!isOnline && (
+              <div className="max-w-6xl mx-auto p-3.5 rounded-2xl bg-amber-950/35 border border-amber-500/45 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                    <WifiOff className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-amber-300">
+                      Offline Mode — Online YouTube Streaming Unavailable
+                    </p>
+                    <p className="text-[11px] text-neutral-300">
+                      Reconnect to stream YouTube movies, or watch your locally saved reels, songs &amp; naats in Profile.
+                    </p>
+                  </div>
+                </div>
+                {onOpenSavedOffline && (
+                  <button
+                    type="button"
+                    onClick={onOpenSavedOffline}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 text-white text-xs font-black flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <HardDrive className="w-3.5 h-3.5" />
+                    <span>Open Saved / Downloads</span>
+                  </button>
+                )}
+              </div>
+            )}
             {/* Top Search & Filter Bar */}
             <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
               {/* Search Input with Search CTA Button in Form */}

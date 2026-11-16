@@ -19,6 +19,7 @@ import { VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
 import { ProceduralCanvas } from './ProceduralCanvas';
 import { formatRelativeTime } from '../lib/supabaseService';
+import { savePostForOffline } from '../lib/offlineMediaStore';
 
 interface VideoCardProps {
   video: VideoPost;
@@ -35,6 +36,7 @@ interface VideoCardProps {
   onViewTracked?: (id: string) => void;
   onDownloadTracked?: (id: string) => void;
   onHashtagClick?: (tag: string) => void;
+  onOpenCreatorProfile?: (username: string, creator?: VideoPost['creator'], userId?: string) => void;
   onShowToast: (msg: string) => void;
 }
 
@@ -60,14 +62,17 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   onViewTracked,
   onDownloadTracked,
   onHashtagClick,
+  onOpenCreatorProfile,
   onShowToast,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const bgAudioRef = useRef<HTMLAudioElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [isLandscape, setIsLandscape] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -77,6 +82,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
 
   const lastTapRef = useRef<number>(0);
   const viewRecordedForActiveRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    setIsLandscape(false);
+    setVideoError(false);
+  }, [video.id]);
 
   // Increment real-time post view count once the reel has been actively watched for 1.2s
   useEffect(() => {
@@ -96,6 +106,43 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     return () => window.clearTimeout(timer);
   }, [isActive, video.id, onViewTracked]);
 
+  const originalVol =
+    typeof video.sound.originalVolume === 'number' ? video.sound.originalVolume : 1;
+  const bgVol =
+    typeof video.sound.bgAudioVolume === 'number' ? video.sound.bgAudioVolume : 0.75;
+  const hasExternalAudio = Boolean(video.sound.audioUrl);
+  const shouldPlaySynthTrack =
+    !hasExternalAudio &&
+    (video.mediaType === 'image' ||
+      Boolean(video.sound.hasAttachedAudio) ||
+      (!video.isUserUploaded && !video.isSupabasePost));
+
+  // Helper to start/stop background audio (external MP3/M4A or synthesized Naat/Song)
+  const syncBackgroundAudio = (shouldPlay: boolean) => {
+    const audioEl = bgAudioRef.current;
+    if (hasExternalAudio && audioEl) {
+      soundEngine.stopTrack();
+      audioEl.muted = isMuted;
+      audioEl.volume = Math.max(0, Math.min(1, bgVol));
+      if (shouldPlay) {
+        void audioEl.play().catch(() => {});
+      } else {
+        audioEl.pause();
+      }
+      return;
+    }
+
+    if (audioEl) {
+      audioEl.pause();
+    }
+
+    if (shouldPlay && !isMuted && shouldPlaySynthTrack && bgVol > 0.01) {
+      soundEngine.playTrack(video.sound.trackType, bgVol);
+    } else {
+      soundEngine.stopTrack();
+    }
+  };
+
   // Strict Lazy-Loading & Virtualization:
   // 1) Active reel: plays immediately at 60fps
   // 2) Very next reel (isNext): strictly preload="metadata" to save RAM & bandwidth
@@ -107,9 +154,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         prefetch.decoding = 'async';
         prefetch.src = video.videoUrl;
       }
-      if (isActive && !isMuted) {
-        soundEngine.playTrack(video.sound.trackType);
-      } else if (!isActive) {
+      if (isActive) {
+        setIsPlaying(true);
+        syncBackgroundAudio(true);
+      } else {
+        if (bgAudioRef.current) bgAudioRef.current.pause();
         soundEngine.stopTrack();
       }
       return;
@@ -123,24 +172,24 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         el.setAttribute('src', video.videoUrl);
       }
       el.preload = 'auto';
-      el.muted = isMuted;
+      el.volume = Math.max(0, Math.min(1, originalVol));
+      el.muted = isMuted || originalVol <= 0.01;
       const playPromise = el.play();
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
             setIsPlaying(true);
             setVideoError(false);
-            if (!isMuted) {
-              soundEngine.playTrack(video.sound.trackType);
-            }
+            syncBackgroundAudio(true);
           })
           .catch(() => {
             setIsPlaying(false);
+            syncBackgroundAudio(false);
           });
       }
     } else if (isNext) {
-      // Very next video only: pause and strictly preload="metadata"
       el.pause();
+      if (bgAudioRef.current) bgAudioRef.current.pause();
       setIsPlaying(false);
       el.muted = true;
       el.preload = 'metadata';
@@ -148,8 +197,8 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         el.setAttribute('src', video.videoUrl);
       }
     } else {
-      // Off-screen: immediately pause, unload src & release hardware decoder
       el.pause();
+      if (bgAudioRef.current) bgAudioRef.current.pause();
       setIsPlaying(false);
       if (el.hasAttribute('src')) {
         el.removeAttribute('src');
@@ -161,9 +210,20 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         }
       }
     }
-  }, [isActive, isNext, isMuted, video.videoUrl, video.mediaType, video.sound.trackType]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isActive,
+    isNext,
+    isMuted,
+    video.videoUrl,
+    video.mediaType,
+    video.sound.trackType,
+    video.sound.audioUrl,
+    originalVol,
+    bgVol,
+  ]);
 
-  // Clean up decoder on unmount
+  // Clean up decoder & audio on unmount
   useEffect(() => {
     return () => {
       if (videoRef.current) {
@@ -175,22 +235,23 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           // ignore
         }
       }
+      if (bgAudioRef.current) {
+        bgAudioRef.current.pause();
+      }
     };
   }, []);
 
   // Sync mute state
   useEffect(() => {
     if (videoRef.current && isActive) {
-      videoRef.current.muted = isMuted;
+      videoRef.current.volume = Math.max(0, Math.min(1, originalVol));
+      videoRef.current.muted = isMuted || originalVol <= 0.01;
     }
     if (isActive) {
-      if (!isMuted) {
-        soundEngine.playTrack(video.sound.trackType);
-      } else {
-        soundEngine.stopTrack();
-      }
+      syncBackgroundAudio(isPlaying);
     }
-  }, [isMuted, isActive, video.sound.trackType]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMuted, isActive, isPlaying, video.sound.trackType, video.sound.audioUrl, originalVol, bgVol]);
 
   // Handle single tap (play/pause) & double tap (like with burst)
   const handleVideoAreaClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -241,12 +302,14 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const togglePlayPause = () => {
     if (video.mediaType === 'image') {
       if (isPlaying) {
-        soundEngine.stopTrack();
+        syncBackgroundAudio(false);
         setIsPlaying(false);
       } else {
-        if (!isMuted) soundEngine.playTrack(video.sound.trackType);
+        syncBackgroundAudio(true);
         setIsPlaying(true);
       }
+      setShowPlayIcon(true);
+      setTimeout(() => setShowPlayIcon(false), 700);
       return;
     }
 
@@ -255,11 +318,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
 
     if (isPlaying) {
       if (el) el.pause();
-      soundEngine.stopTrack();
+      syncBackgroundAudio(false);
       setIsPlaying(false);
     } else {
       if (el) el.play().catch(() => {});
-      if (!isMuted) soundEngine.playTrack(video.sound.trackType);
+      syncBackgroundAudio(true);
       setIsPlaying(true);
     }
 
@@ -323,13 +386,14 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     try {
       let downloadHref = video.videoUrl;
       let createdObjectUrl: string | null = null;
+      let fetchedMediaBlob: Blob | undefined;
 
       if (!video.videoUrl.startsWith('blob:') && !video.videoUrl.startsWith('data:')) {
         try {
           const response = await fetch(video.videoUrl);
           if (response.ok) {
-            const blob = await response.blob();
-            createdObjectUrl = URL.createObjectURL(blob);
+            fetchedMediaBlob = await response.blob();
+            createdObjectUrl = URL.createObjectURL(fetchedMediaBlob);
             downloadHref = createdObjectUrl;
           }
         } catch {
@@ -349,10 +413,17 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         setTimeout(() => URL.revokeObjectURL(createdObjectUrl!), 8000);
       }
 
+      // Also store inside Profile -> Saved / Downloads for instant offline playback
+      void savePostForOffline(video, {
+        mediaBlob: fetchedMediaBlob,
+        sourceType: 'downloaded',
+      });
+
       onDownloadTracked?.(video.id);
       soundEngine.playDownloadComplete();
-      onShowToast('Downloaded! Check your phone Gallery / Downloads.');
+      onShowToast('Downloaded & saved for Offline Mode! Check Saved / Downloads.');
     } catch {
+      void savePostForOffline(video, { sourceType: 'downloaded' });
       onDownloadTracked?.(video.id);
       onShowToast('Download triggered (check browser downloads).');
     } finally {
@@ -384,43 +455,94 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
 
   return (
     <div className="relative w-full h-[100dvh] snap-item flex items-center justify-center bg-black select-none overflow-hidden">
+      {/* Attached Custom Song / Naat Audio Player (when audioUrl exists) */}
+      {hasExternalAudio && (
+        <audio
+          ref={bgAudioRef}
+          src={isActive || isNext ? video.sound.audioUrl : undefined}
+          loop
+          playsInline
+          crossOrigin="anonymous"
+          preload={isActive ? 'auto' : isNext ? 'metadata' : 'none'}
+          className="hidden"
+        />
+      )}
+
       {/* Video / Procedural Viewport Area */}
       <div
         className="relative w-full h-full flex items-center justify-center cursor-pointer"
         onClick={handleVideoAreaClick}
       >
-        {/* Image Post OR HTML5 Video element */}
+        {/* Image Post OR HTML5 Video element (16:9 centered for landscape, 9:16 crisp portrait for vertical reels) */}
         {video.mediaType === 'image' ? (
-          <img
-            src={video.videoUrl}
-            alt={video.title}
-            loading={isActive || isNext ? 'eager' : 'lazy'}
-            decoding="async"
-            className="w-full h-full object-contain sm:max-w-md mx-auto [transform:translate3d(0,0,0)] will-change-transform"
-          />
+          <div
+            className={
+              isLandscape
+                ? 'relative w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
+                : 'relative w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center'
+            }
+          >
+            <img
+              src={video.videoUrl}
+              alt={video.title}
+              loading={isActive || isNext ? 'eager' : 'lazy'}
+              decoding="async"
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                if (img.naturalWidth > img.naturalHeight * 1.12) {
+                  setIsLandscape(true);
+                }
+              }}
+              className="w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform"
+            />
+            {isPlaying && (
+              <div className="absolute top-16 left-4 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none">
+                <Music className="w-3 h-3 text-pink-400 animate-pulse" />
+                <span className="text-[10px] font-black text-pink-200 tracking-wide">
+                  {video.sound.category === 'naat' ? 'Naat Audio-Visual' : 'Photo + Audio'}
+                </span>
+              </div>
+            )}
+          </div>
         ) : (
           <>
             {!videoError && (
-              <video
-                ref={videoRef}
-                src={isActive || isNext ? video.videoUrl : undefined}
-                poster={video.posterUrl}
-                playsInline
-                loop
-                muted={isMuted || !isActive}
-                preload={isActive ? 'auto' : isNext ? 'metadata' : 'none'}
-                crossOrigin="anonymous"
-                onTimeUpdate={handleTimeUpdate}
-                onLoadedMetadata={() => {
-                  if (videoRef.current) {
-                    setDuration(videoRef.current.duration);
+              <div
+                className={
+                  isLandscape
+                    ? 'w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
+                    : 'w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center'
+                }
+              >
+                <video
+                  ref={videoRef}
+                  src={isActive || isNext ? video.videoUrl : undefined}
+                  poster={video.posterUrl}
+                  playsInline
+                  loop
+                  muted={isMuted || !isActive}
+                  preload={isActive ? 'auto' : isNext ? 'metadata' : 'none'}
+                  crossOrigin="anonymous"
+                  onTimeUpdate={handleTimeUpdate}
+                  onLoadedMetadata={() => {
+                    if (videoRef.current) {
+                      setDuration(videoRef.current.duration);
+                      const { videoWidth, videoHeight } = videoRef.current;
+                      if (videoWidth > 0 && videoHeight > 0) {
+                        setIsLandscape(videoWidth > videoHeight * 1.12);
+                      }
+                    }
+                  }}
+                  onError={() => {
+                    if (isActive) setVideoError(true);
+                  }}
+                  className={
+                    isLandscape
+                      ? 'w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform'
+                      : 'w-full h-full object-cover sm:object-contain [transform:translate3d(0,0,0)] will-change-transform'
                   }
-                }}
-                onError={() => {
-                  if (isActive) setVideoError(true);
-                }}
-                className="w-full h-full object-cover sm:object-contain sm:max-w-md mx-auto [transform:translate3d(0,0,0)] will-change-transform"
-              />
+                />
+              </div>
             )}
 
             {/* Fallback procedural 60fps canvas if video fails or is unsupported */}
@@ -464,30 +586,42 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       </div>
 
       {/* Top Scrim Bar for Controls */}
-      <div className="absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:max-w-md sm:mx-auto [transform:translateZ(0)]">
+      <div
+        className={`absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:mx-auto [transform:translateZ(0)] ${
+          isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
+        }`}
+      >
         {/* Audio Mute / Unmute Button */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleMute();
-            soundEngine.setMuted(!isMuted);
-          }}
-          className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white hover:bg-neutral-800 active:scale-95 transition-all text-xs font-semibold [transform:translateZ(0)]"
-          aria-label={isMuted ? 'Unmute video' : 'Mute video'}
-        >
-          {isMuted ? (
-            <>
-              <VolumeX className="w-4 h-4 text-neutral-300" />
-              <span className="text-[11px] text-neutral-300">Tap to unmute</span>
-            </>
-          ) : (
-            <>
-              <Volume2 className="w-4 h-4 text-pink-400 animate-pulse" />
-              <span className="text-[11px] text-pink-400">Audio on</span>
-            </>
+        <div className="flex items-center gap-2 pointer-events-auto">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleMute();
+              soundEngine.setMuted(!isMuted);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white hover:bg-neutral-800 active:scale-95 transition-all text-xs font-semibold [transform:translateZ(0)]"
+            aria-label={isMuted ? 'Unmute video' : 'Mute video'}
+          >
+            {isMuted ? (
+              <>
+                <VolumeX className="w-4 h-4 text-neutral-300" />
+                <span className="text-[11px] text-neutral-300">Tap to unmute</span>
+              </>
+            ) : (
+              <>
+                <Volume2 className="w-4 h-4 text-pink-400 animate-pulse" />
+                <span className="text-[11px] text-pink-400">Audio on</span>
+              </>
+            )}
+          </button>
+
+          {isLandscape && (
+            <span className="px-2 py-1 rounded-full bg-cyan-600/25 border border-cyan-400/40 text-cyan-300 text-[10px] font-black tracking-wide">
+              16:9 HD
+            </span>
           )}
-        </button>
+        </div>
 
         {/* Live View Counter Pill */}
         <div
@@ -505,11 +639,16 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         <div className="relative mb-1 flex flex-col items-center">
           <button
             type="button"
-            className="relative w-11 h-11 rounded-full p-0.5 border-2 border-white/80 overflow-hidden shadow-md hover:scale-105 active:scale-95 transition-transform bg-neutral-900 [transform:translateZ(0)]"
+            className="relative w-11 h-11 rounded-full p-0.5 border-2 border-white/80 overflow-hidden shadow-md hover:scale-105 active:scale-95 transition-transform bg-neutral-900 cursor-pointer [transform:translateZ(0)]"
             onClick={(e) => {
               e.stopPropagation();
-              onShowToast(`Viewing profile @${video.creator.username}`);
+              if (onOpenCreatorProfile) {
+                onOpenCreatorProfile(video.creator.username, video.creator, video.userId);
+              } else {
+                onShowToast(`Viewing profile @${video.creator.username}`);
+              }
             }}
+            title={`Open @${video.creator.username} channel`}
           >
             <img
               src={video.creator.avatar}
@@ -687,13 +826,29 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       </div>
 
       {/* Bottom Information & Caption Scrim */}
-      <div className="absolute bottom-0 left-0 right-0 z-20 pt-16 pb-6 px-4 bg-gradient-to-t from-black/95 via-black/50 to-transparent pointer-events-none flex flex-col justify-end sm:max-w-md sm:mx-auto">
+      <div
+        className={`absolute bottom-0 left-0 right-0 z-20 pt-16 pb-6 px-4 bg-gradient-to-t from-black/95 via-black/50 to-transparent pointer-events-none flex flex-col justify-end sm:mx-auto ${
+          isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
+        }`}
+      >
         <div className="pointer-events-auto pr-14">
-          {/* Creator handle */}
+          {/* Clickable Creator Handle */}
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-bold text-white tracking-tight drop-shadow-md">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onOpenCreatorProfile) {
+                  onOpenCreatorProfile(video.creator.username, video.creator, video.userId);
+                } else {
+                  onShowToast(`Viewing profile @${video.creator.username}`);
+                }
+              }}
+              className="text-sm font-bold text-white hover:text-pink-400 hover:underline tracking-tight drop-shadow-md transition-colors cursor-pointer"
+              title={`Visit @${video.creator.username} channel`}
+            >
               @{video.creator.username}
-            </span>
+            </button>
             {video.creator.isVerified && (
               <CheckCircle2 className="w-4 h-4 text-sky-400 fill-sky-400/20" />
             )}
@@ -737,8 +892,13 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           </div>
 
           {/* Sound Ticker Marquee */}
-          <div className="flex items-center gap-2 text-xs text-neutral-200 overflow-hidden max-w-[240px]">
-            <Music className="w-3.5 h-3.5 text-neutral-300 shrink-0" />
+          <div className="flex items-center gap-2 text-xs text-neutral-200 overflow-hidden max-w-[260px]">
+            <Music className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+            {video.sound.category === 'naat' && (
+              <span className="px-1.5 py-0.2 rounded-sm bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[9px] font-black uppercase shrink-0">
+                Naat
+              </span>
+            )}
             <div className="overflow-hidden whitespace-nowrap">
               <span className="animate-marquee inline-block font-medium">
                 {video.sound.title} · {video.sound.artist} &nbsp;&nbsp;&nbsp;&nbsp; {video.sound.title} · {video.sound.artist}

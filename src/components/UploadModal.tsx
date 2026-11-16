@@ -1,20 +1,39 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { X, Upload, Video, Sparkles } from 'lucide-react';
-import { VideoPost, UserAccount, CreatorProfileData } from '../types';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import {
+  X,
+  Upload,
+  Video,
+  Image as ImageIcon,
+  Sparkles,
+  Music,
+  Search,
+  Play,
+  Pause,
+  Volume2,
+  FileAudio,
+  Check,
+  Trash2,
+} from 'lucide-react';
+import { VideoPost, UserAccount, CreatorProfileData, AudioTrackOption } from '../types';
 import {
   uploadMediaToReelsBucket,
   createGlobalPostInSupabase,
   getOrCreateUserProfileId,
   fileToPersistentDataUrl,
   saveLocalPostRecord,
+  savePostAudioMeta,
 } from '../lib/supabaseService';
 import { compressImageFile } from '../utils/imageOptimize';
+import { searchAudioLibrary } from '../data/audioLibrary';
+import { soundEngine } from '../utils/soundEngine';
+import { savePostForOffline } from '../lib/offlineMediaStore';
 
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserAccount | null;
   creatorProfile?: CreatorProfileData;
+  preselectedFile?: File | null;
   onUploadSuccess: (newPost: VideoPost) => void;
   onShowToast?: (msg: string) => void;
 }
@@ -24,6 +43,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   onClose,
   currentUser,
   creatorProfile,
+  preselectedFile,
   onUploadSuccess,
   onShowToast,
 }) => {
@@ -39,11 +59,23 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [selectedMediaType, setSelectedMediaType] = useState<'video' | 'image'>('video');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [category, setCategory] = useState<VideoPost['category']>('trending');
-  const [soundTrack, setSoundTrack] = useState<VideoPost['sound']['trackType']>('future_bass');
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
+  // Song / Naat / Background Audio Picker State
+  const [isAudioPanelOpen, setIsAudioPanelOpen] = useState(true);
+  const [audioSearch, setAudioSearch] = useState('');
+  const [audioCategory, setAudioCategory] = useState<'all' | 'naat' | 'song' | 'beat'>('all');
+  const [selectedLibraryTrack, setSelectedLibraryTrack] = useState<AudioTrackOption | null>(null);
+  const [selectedAudioFile, setSelectedAudioFile] = useState<File | null>(null);
+  const [selectedAudioPreviewUrl, setSelectedAudioPreviewUrl] = useState<string | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [originalVolume, setOriginalVolume] = useState<number>(100);
+  const [bgAudioVolume, setBgAudioVolume] = useState<number>(80);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+  const customAudioPreviewRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -53,16 +85,54 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   }, [currentUser, creatorProfile]);
 
+  // Apply preselected file when opened from Mobile "+" sheet
+  useEffect(() => {
+    if (isOpen && preselectedFile) {
+      processFile(preselectedFile);
+      setVideoSourceType('file');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, preselectedFile]);
+
+  // Stop any audio previews on close or unmount
+  useEffect(() => {
+    if (!isOpen) {
+      soundEngine.stopPreviewTrack();
+      setPreviewingId(null);
+      if (customAudioPreviewRef.current) {
+        customAudioPreviewRef.current.pause();
+      }
+    }
+    return () => {
+      soundEngine.stopPreviewTrack();
+      if (customAudioPreviewRef.current) {
+        customAudioPreviewRef.current.pause();
+      }
+    };
+  }, [isOpen]);
+
+  const filteredAudioTracks = useMemo(
+    () => searchAudioLibrary(audioSearch, audioCategory),
+    [audioSearch, audioCategory]
+  );
+
   if (!isOpen) return null;
 
   const processFile = (file: File) => {
     if (file && (file.type.startsWith('video/') || file.type.startsWith('image/'))) {
       setSelectedFile(file);
-      setSelectedMediaType(file.type.startsWith('image/') ? 'image' : 'video');
+      const isImg = file.type.startsWith('image/');
+      setSelectedMediaType(isImg ? 'image' : 'video');
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
+      }
       const objectUrl = URL.createObjectURL(file);
       setPreviewUrl(objectUrl);
       if (!title) {
-        setTitle(file.name.replace(/\.[^/.]+$/, ''));
+        setTitle(file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '));
+      }
+      if (isImg) {
+        setIsAudioPanelOpen(true);
       }
     }
   };
@@ -72,6 +142,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     if (file) {
       processFile(file);
     }
+    e.target.value = '';
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -83,8 +154,74 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   };
 
+  const handleAudioFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    soundEngine.stopPreviewTrack();
+    if (selectedAudioPreviewUrl && selectedAudioPreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedAudioPreviewUrl);
+    }
+
+    const objUrl = URL.createObjectURL(file);
+    setSelectedAudioFile(file);
+    setSelectedAudioPreviewUrl(objUrl);
+    setSelectedLibraryTrack(null);
+    setPreviewingId(null);
+    onShowToast?.(`Attached audio: ${file.name}`);
+    e.target.value = '';
+  };
+
+  const handleTogglePreviewLibraryTrack = (track: AudioTrackOption) => {
+    if (customAudioPreviewRef.current) {
+      customAudioPreviewRef.current.pause();
+    }
+    if (previewingId === track.id) {
+      soundEngine.stopPreviewTrack();
+      setPreviewingId(null);
+    } else {
+      soundEngine.playPreviewTrack(track.trackType, bgAudioVolume / 100);
+      setPreviewingId(track.id);
+    }
+  };
+
+  const handleTogglePreviewCustomAudio = () => {
+    soundEngine.stopPreviewTrack();
+    const audioEl = customAudioPreviewRef.current;
+    if (!audioEl || !selectedAudioPreviewUrl) return;
+
+    if (previewingId === 'custom-file') {
+      audioEl.pause();
+      setPreviewingId(null);
+    } else {
+      audioEl.volume = bgAudioVolume / 100;
+      void audioEl.play().catch(() => {});
+      setPreviewingId('custom-file');
+    }
+  };
+
+  const handleClearAttachedAudio = () => {
+    soundEngine.stopPreviewTrack();
+    if (customAudioPreviewRef.current) {
+      customAudioPreviewRef.current.pause();
+    }
+    if (selectedAudioPreviewUrl && selectedAudioPreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedAudioPreviewUrl);
+    }
+    setSelectedLibraryTrack(null);
+    setSelectedAudioFile(null);
+    setSelectedAudioPreviewUrl(null);
+    setPreviewingId(null);
+  };
+
+  const hasCustomAudioAttached = Boolean(selectedAudioFile || selectedLibraryTrack);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    soundEngine.stopPreviewTrack();
+    if (customAudioPreviewRef.current) {
+      customAudioPreviewRef.current.pause();
+    }
     setIsUploading(true);
 
     try {
@@ -92,7 +229,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const inferredUrlMediaType: 'video' | 'image' =
         /\.(jpg|jpeg|png|gif|webp|avif)(\?|$)/i.test(urlTrimmed) ? 'image' : 'video';
 
-      let mediaType: 'video' | 'image' =
+      const mediaType: 'video' | 'image' =
         videoSourceType === 'file' && selectedFile ? selectedMediaType : inferredUrlMediaType;
 
       let finalMediaUrl =
@@ -102,7 +239,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             'https://upload.wikimedia.org/wikipedia/commons/4/47/Astrophysics_Holiday_Vertical_Video_%28SVS14800_-_Fermi_YuleLog_Rotate_Reel%29.webm';
 
       const userId = creatorProfile?.id || currentUser?.id || getOrCreateUserProfileId();
-      const authorName = currentUser?.name || creatorProfile?.name || creatorName.trim() || 'Jatt Creator';
+      const authorName =
+        currentUser?.name || creatorProfile?.name || creatorName.trim() || 'Jatt Creator';
       const authorUsername =
         currentUser?.username ||
         creatorProfile?.username ||
@@ -121,38 +259,116 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         description.trim() ? ` - ${description.trim()}` : ''
       } ${tags.map((t) => `#${t}`).join(' ')}`.trim();
 
+      const isDeviceOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
+      let processedMediaBlob: Blob | undefined = selectedFile || undefined;
+
       if (videoSourceType === 'file' && selectedFile) {
-        onShowToast?.('Uploading media to Supabase Storage...');
         const fileToUpload =
           selectedMediaType === 'image'
-            ? await compressImageFile(selectedFile, 1080, 0.8)
+            ? await compressImageFile(selectedFile, 1080, 0.82)
             : selectedFile;
-        const uploadedUrl = await uploadMediaToReelsBucket(
-          fileToUpload,
-          'posts',
-          fileToUpload.name
-        );
-        if (uploadedUrl) {
-          finalMediaUrl = uploadedUrl;
+        processedMediaBlob = fileToUpload;
+
+        if (isDeviceOnline) {
+          onShowToast?.(`Uploading ${mediaType} to Supabase Storage...`);
+          const uploadedUrl = await uploadMediaToReelsBucket(
+            fileToUpload,
+            'posts',
+            fileToUpload.name
+          );
+          if (uploadedUrl) {
+            finalMediaUrl = uploadedUrl;
+          } else {
+            const dataUrl = await fileToPersistentDataUrl(fileToUpload);
+            if (dataUrl) finalMediaUrl = dataUrl;
+          }
         } else {
-          const dataUrl = await fileToPersistentDataUrl(fileToUpload);
-          if (dataUrl) finalMediaUrl = dataUrl;
+          finalMediaUrl = URL.createObjectURL(fileToUpload);
         }
       }
 
-      const supabasePost = await createGlobalPostInSupabase({
-        userId,
-        username: authorUsername,
-        displayName: authorName,
-        avatarUrl: authorAvatar,
-        mediaUrl: finalMediaUrl,
-        mediaType,
-        caption: captionText,
-      });
+      // Upload custom audio file (MP3/M4A/WAV) if picked
+      let finalAudioUrl: string | undefined = undefined;
+      if (selectedAudioFile) {
+        if (isDeviceOnline) {
+          onShowToast?.('Uploading attached audio track...');
+          const uploadedAudioUrl = await uploadMediaToReelsBucket(
+            selectedAudioFile,
+            'audio',
+            selectedAudioFile.name
+          );
+          if (uploadedAudioUrl) {
+            finalAudioUrl = uploadedAudioUrl;
+          } else {
+            const audioDataUrl = await fileToPersistentDataUrl(selectedAudioFile, 3_500_000);
+            finalAudioUrl = audioDataUrl || selectedAudioPreviewUrl || undefined;
+          }
+        } else {
+          finalAudioUrl = URL.createObjectURL(selectedAudioFile);
+        }
+      }
+
+      const finalSound: VideoPost['sound'] = selectedAudioFile
+        ? {
+            title: selectedAudioFile.name.replace(/\.[^/.]+$/, ''),
+            artist: authorName,
+            trackType: 'ambient_lofi',
+            audioUrl: finalAudioUrl,
+            category: 'song',
+            originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
+            bgAudioVolume: bgAudioVolume / 100,
+            hasAttachedAudio: true,
+          }
+        : selectedLibraryTrack
+        ? {
+            title: selectedLibraryTrack.title,
+            artist: selectedLibraryTrack.artist,
+            trackType: selectedLibraryTrack.trackType,
+            category: selectedLibraryTrack.category,
+            originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
+            bgAudioVolume: bgAudioVolume / 100,
+            hasAttachedAudio: true,
+          }
+        : {
+            title:
+              mediaType === 'image'
+                ? `${authorName}'s Photo Vibe`
+                : `${authorName}'s Original Audio`,
+            artist: authorName,
+            trackType: mediaType === 'image' ? 'ambient_lofi' : 'future_bass',
+            category: mediaType === 'image' ? 'beat' : 'original',
+            originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
+            bgAudioVolume: mediaType === 'image' ? bgAudioVolume / 100 : 0,
+            hasAttachedAudio: mediaType === 'image',
+          };
+
+      const supabasePost = isDeviceOnline
+        ? await createGlobalPostInSupabase({
+            userId,
+            username: authorUsername,
+            displayName: authorName,
+            avatarUrl: authorAvatar,
+            mediaUrl: finalMediaUrl,
+            mediaType,
+            caption: captionText,
+            sound: finalSound,
+          })
+        : null;
 
       if (supabasePost) {
-        saveLocalPostRecord(supabasePost);
-        onUploadSuccess(supabasePost);
+        const enrichedSupabasePost: VideoPost = {
+          ...supabasePost,
+          sound: finalSound,
+        };
+        savePostAudioMeta([enrichedSupabasePost.id, finalMediaUrl], finalSound);
+        saveLocalPostRecord(enrichedSupabasePost);
+        await savePostForOffline(enrichedSupabasePost, {
+          mediaBlob: processedMediaBlob,
+          audioBlob: selectedAudioFile || undefined,
+          sourceType: 'uploaded',
+          skipRemoteFetch: true,
+        });
+        onUploadSuccess(enrichedSupabasePost);
         onClose();
         return;
       }
@@ -188,15 +404,21 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         },
         isLiked: false,
         isSaved: false,
-        sound: {
-          title: `${authorName}'s Original Audio`,
-          artist: authorName,
-          trackType: soundTrack,
-        },
+        sound: finalSound,
         commentsList: [],
       };
 
+      savePostAudioMeta([newPost.id, finalMediaUrl], finalSound);
       saveLocalPostRecord(newPost);
+      await savePostForOffline(newPost, {
+        mediaBlob: processedMediaBlob,
+        audioBlob: selectedAudioFile || undefined,
+        sourceType: 'uploaded',
+        skipRemoteFetch: true,
+      });
+      if (!isDeviceOnline) {
+        onShowToast?.('Saved locally in Offline Mode! Available in Saved / Downloads.');
+      }
       onUploadSuccess(newPost);
       onClose();
     } finally {
@@ -206,27 +428,41 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto"
       onClick={onClose}
     >
+      {/* Hidden audio preview element for picked MP3/M4A files */}
+      <audio
+        ref={customAudioPreviewRef}
+        src={selectedAudioPreviewUrl || undefined}
+        onEnded={() => setPreviewingId(null)}
+        className="hidden"
+      />
+
       <div
-        className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-2xl animate-in fade-in duration-200 my-auto"
+        className="w-full max-w-xl bg-neutral-900 border border-neutral-800 rounded-2xl p-5 sm:p-6 shadow-2xl animate-in fade-in duration-150 my-auto max-h-[92vh] overflow-y-auto no-scrollbar"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Modal Header */}
         <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-pink-500/20 text-pink-500 flex items-center justify-center">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-pink-600/30 to-cyan-500/30 border border-pink-500/40 text-pink-400 flex items-center justify-center">
               <Upload className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white tracking-tight">Upload Short Reel</h3>
-              <p className="text-xs text-neutral-400">Add a vertical video directly to the feed</p>
+              <h3 className="text-base font-black text-white tracking-tight">
+                Upload Video or Photo + Song / Naat
+              </h3>
+              <p className="text-xs text-neutral-400">
+                Post videos or images with background Songs, Naats, or MP3 audio
+              </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="p-1.5 text-neutral-400 hover:text-white rounded-full hover:bg-neutral-800 transition-colors"
+            aria-label="Close upload modal"
           >
             <X className="w-5 h-5" />
           </button>
@@ -238,20 +474,25 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             <button
               type="button"
               onClick={() => setVideoSourceType('file')}
-              className={`flex-1 py-2 rounded-lg transition-colors ${
-                videoSourceType === 'file' ? 'bg-neutral-800 text-white shadow-xs' : 'text-neutral-400 hover:text-white'
+              className={`flex-1 py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+                videoSourceType === 'file'
+                  ? 'bg-neutral-800 text-white shadow-xs'
+                  : 'text-neutral-400 hover:text-white'
               }`}
             >
-              Choose Video File
+              <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Choose Video / Image File</span>
             </button>
             <button
               type="button"
               onClick={() => setVideoSourceType('url')}
               className={`flex-1 py-2 rounded-lg transition-colors ${
-                videoSourceType === 'url' ? 'bg-neutral-800 text-white shadow-xs' : 'text-neutral-400 hover:text-white'
+                videoSourceType === 'url'
+                  ? 'bg-neutral-800 text-white shadow-xs'
+                  : 'text-neutral-400 hover:text-white'
               }`}
             >
-              Paste Video URL
+              Paste Media URL
             </button>
           </div>
 
@@ -273,7 +514,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 }}
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={handleDrop}
-                className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all ${
+                className={`border-2 border-dashed rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer transition-all ${
                   isDragging
                     ? 'border-pink-500 bg-pink-500/10 scale-[1.01]'
                     : 'border-neutral-700 hover:border-pink-500/80 bg-neutral-950/40 hover:bg-pink-950/10'
@@ -281,33 +522,47 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               >
                 {previewUrl ? (
                   <div className="flex flex-col items-center">
-                    {selectedMediaType === 'image' ? (
-                      <img
-                        src={previewUrl}
-                        alt="Preview"
-                        className="w-24 h-40 object-cover rounded-lg shadow-lg mb-2 border border-neutral-700"
-                      />
-                    ) : (
-                      <video
-                        src={previewUrl}
-                        className="w-24 h-40 object-cover rounded-lg shadow-lg mb-2 border border-neutral-700"
-                        muted
-                        autoPlay
-                        loop
-                      />
-                    )}
+                    <div className="relative">
+                      {selectedMediaType === 'image' ? (
+                        <img
+                          src={previewUrl}
+                          alt="Preview"
+                          className="w-28 h-44 object-cover rounded-xl shadow-lg mb-2 border border-neutral-700"
+                        />
+                      ) : (
+                        <video
+                          src={previewUrl}
+                          className="w-28 h-44 object-cover rounded-xl shadow-lg mb-2 border border-neutral-700"
+                          muted
+                          autoPlay
+                          loop
+                        />
+                      )}
+                      {selectedMediaType === 'image' && hasCustomAudioAttached && (
+                        <span className="absolute bottom-3 left-1.5 right-1.5 px-2 py-0.5 rounded-full bg-black/85 border border-pink-500/50 text-[9px] font-black text-pink-300 text-center truncate">
+                          🎵 Audio-Visual
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-pink-400 font-semibold truncate max-w-xs">
                       {selectedFile?.name}
                     </p>
-                    <p className="text-[11px] text-neutral-500">Click or drop another video/image to replace</p>
+                    <p className="text-[11px] text-neutral-500">
+                      Click or drop another video or photo to replace
+                    </p>
                   </div>
                 ) : (
                   <>
-                    <div className="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 mb-2">
-                      <Video className="w-6 h-6 text-pink-400" />
+                    <div className="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 mb-2 gap-1">
+                      <Video className="w-5 h-5 text-pink-400" />
+                      <ImageIcon className="w-4 h-4 text-cyan-400" />
                     </div>
-                    <p className="text-sm font-semibold text-white">Select video or image to upload</p>
-                    <p className="text-xs text-neutral-400 mt-1">Drag & drop or browse MP4, WebM, JPG, PNG</p>
+                    <p className="text-sm font-semibold text-white">
+                      Select video or image (photo) to upload
+                    </p>
+                    <p className="text-xs text-neutral-400 mt-1">
+                      Supports MP4, WebM, MOV, JPG, PNG, WebP
+                    </p>
                   </>
                 )}
               </div>
@@ -315,75 +570,331 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           ) : (
             <div>
               <label className="block text-xs font-semibold text-neutral-300 mb-1">
-                Direct Video URL (.mp4 / .webm)
+                Direct Video or Image URL (.mp4 / .webm / .jpg / .png)
               </label>
               <input
                 type="url"
                 value={videoUrlInput}
                 onChange={(e) => setVideoUrlInput(e.target.value)}
-                placeholder="https://example.com/video.mp4"
+                placeholder="https://example.com/video.mp4 or photo.jpg"
                 className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-hidden focus:border-pink-500"
               />
             </div>
           )}
 
+          {/* ===================================================== */}
+          {/* ADD SONG / NAAT / AUDIO SECTION                        */}
+          {/* ===================================================== */}
+          <div className="rounded-2xl bg-neutral-950/90 border border-neutral-800 p-3.5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAudioPanelOpen(!isAudioPanelOpen)}
+                className="flex items-center gap-2 text-left"
+              >
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-pink-600/25 to-purple-600/25 border border-pink-500/40 flex items-center justify-center text-pink-400">
+                  <Music className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                    <span>Add Song / Naat / Audio</span>
+                    {hasCustomAudioAttached && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-black">
+                        Attached
+                      </span>
+                    )}
+                  </h4>
+                  <p className="text-[11px] text-neutral-400">
+                    Search songs &amp; naats or pick MP3/M4A from device
+                  </p>
+                </div>
+              </button>
+
+              <div className="flex items-center gap-1.5">
+                <input
+                  ref={audioFileInputRef}
+                  type="file"
+                  accept="audio/*,.mp3,.m4a,.wav,.ogg"
+                  className="hidden"
+                  onChange={handleAudioFileSelected}
+                />
+                <button
+                  type="button"
+                  onClick={() => audioFileInputRef.current?.click()}
+                  className="px-2.5 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                  title="Pick MP3 / M4A / WAV audio file from device"
+                >
+                  <FileAudio className="w-3.5 h-3.5" />
+                  <span>Pick MP3/M4A</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Active Selected Audio Banner */}
+            {(selectedAudioFile || selectedLibraryTrack) && (
+              <div className="p-2.5 rounded-xl bg-gradient-to-r from-pink-600/15 via-purple-600/15 to-cyan-500/15 border border-pink-500/40 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {selectedAudioFile && (
+                    <button
+                      type="button"
+                      onClick={handleTogglePreviewCustomAudio}
+                      className="w-7 h-7 rounded-full bg-pink-600 text-white flex items-center justify-center shrink-0"
+                    >
+                      {previewingId === 'custom-file' ? (
+                        <Pause className="w-3.5 h-3.5" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5 translate-x-0.2" />
+                      )}
+                    </button>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-white truncate">
+                      {selectedAudioFile
+                        ? selectedAudioFile.name
+                        : selectedLibraryTrack?.title}
+                    </p>
+                    <p className="text-[10px] text-cyan-300 truncate">
+                      {selectedAudioFile
+                        ? 'Custom Device Audio · Ready to mix'
+                        : `${selectedLibraryTrack?.artist} · ${selectedLibraryTrack?.category.toUpperCase()}`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleClearAttachedAudio}
+                  className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-rose-400 transition-colors shrink-0"
+                  title="Remove attached audio"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Search & Curated Songs / Naats List */}
+            {isAudioPanelOpen && (
+              <div className="space-y-2.5">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-3.5 h-3.5 text-pink-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={audioSearch}
+                      onChange={(e) => setAudioSearch(e.target.value)}
+                      placeholder="Search songs, naats, Sufi, Punjabi..."
+                      className="w-full bg-neutral-900 text-xs text-white placeholder-neutral-500 pl-8 pr-3 py-2 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] font-bold">
+                    {(['all', 'naat', 'song', 'beat'] as const).map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setAudioCategory(cat)}
+                        className={`px-2.5 py-1.5 rounded-lg border transition-colors capitalize cursor-pointer ${
+                          audioCategory === cat
+                            ? 'bg-pink-600/25 border-pink-500/60 text-pink-300'
+                            : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        {cat === 'all' ? 'All' : cat === 'naat' ? 'Naats' : `${cat}s`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Scrollable matching tracks */}
+                <div className="max-h-40 overflow-y-auto no-scrollbar space-y-1.5 pr-0.5">
+                  {filteredAudioTracks.length === 0 ? (
+                    <p className="text-[11px] text-neutral-500 text-center py-3">
+                      No matching songs or naats found. Try another search or pick an MP3/M4A file.
+                    </p>
+                  ) : (
+                    filteredAudioTracks.map((track) => {
+                      const isSelected = selectedLibraryTrack?.id === track.id;
+                      const isPreviewing = previewingId === track.id;
+                      return (
+                        <div
+                          key={track.id}
+                          className={`p-2 rounded-xl border flex items-center justify-between gap-2 transition-all ${
+                            isSelected
+                              ? 'bg-pink-600/15 border-pink-500/60'
+                              : 'bg-neutral-900/80 hover:bg-neutral-900 border-neutral-800'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePreviewLibraryTrack(track)}
+                              className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                isPreviewing
+                                  ? 'bg-pink-600 text-white'
+                                  : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'
+                              }`}
+                              title={isPreviewing ? 'Stop preview' : 'Preview audio'}
+                            >
+                              {isPreviewing ? (
+                                <Pause className="w-3.5 h-3.5" />
+                              ) : (
+                                <Play className="w-3.5 h-3.5 translate-x-0.2" />
+                              )}
+                            </button>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-bold text-white truncate">
+                                  {track.title}
+                                </p>
+                                <span
+                                  className={`px-1.5 py-0.2 rounded-sm text-[9px] font-black uppercase shrink-0 ${
+                                    track.category === 'naat'
+                                      ? 'bg-emerald-500/20 text-emerald-300'
+                                      : track.category === 'song'
+                                      ? 'bg-cyan-500/20 text-cyan-300'
+                                      : 'bg-purple-500/20 text-purple-300'
+                                  }`}
+                                >
+                                  {track.category}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-neutral-400 truncate">
+                                {track.artist} · {track.duration} · {track.mood}
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedAudioFile(null);
+                              setSelectedAudioPreviewUrl(null);
+                              setSelectedLibraryTrack(isSelected ? null : track);
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 flex items-center gap-1 transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-pink-600 text-white'
+                                : 'bg-neutral-800 hover:bg-pink-600/80 text-neutral-200 hover:text-white'
+                            }`}
+                          >
+                            {isSelected ? (
+                              <>
+                                <Check className="w-3 h-3" />
+                                <span>Attached</span>
+                              </>
+                            ) : (
+                              <span>Use</span>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Volume Mixer Sliders */}
+            {(selectedMediaType === 'video' || hasCustomAudioAttached) && (
+              <div className="pt-2 border-t border-neutral-800/80 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {selectedMediaType === 'video' && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-neutral-300 flex items-center gap-1">
+                        <Volume2 className="w-3 h-3 text-cyan-400" />
+                        Original Video Vol
+                      </span>
+                      <span className="font-bold text-cyan-300 tabular-nums">
+                        {originalVolume}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={originalVolume}
+                      onChange={(e) => setOriginalVolume(Number(e.target.value))}
+                      className="w-full accent-cyan-400 cursor-pointer"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-semibold text-neutral-300 flex items-center gap-1">
+                      <Music className="w-3 h-3 text-pink-400" />
+                      Song / Naat Vol
+                    </span>
+                    <span className="font-bold text-pink-300 tabular-nums">
+                      {bgAudioVolume}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={bgAudioVolume}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setBgAudioVolume(val);
+                      if (customAudioPreviewRef.current) {
+                        customAudioPreviewRef.current.volume = val / 100;
+                      }
+                    }}
+                    className="w-full accent-pink-500 cursor-pointer"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Title & Caption */}
           <div>
-            <label className="block text-xs font-semibold text-neutral-300 mb-1">Title / Caption</label>
+            <label className="block text-xs font-semibold text-neutral-300 mb-1">
+              Title / Caption
+            </label>
             <input
               type="text"
               required
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Midnight city lights or Epic sunset trick"
+              placeholder="e.g. Peaceful Ramadan Sunset or Midnight City Vibes"
               className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
             />
           </div>
 
-          {/* Hashtags */}
-          <div>
-            <label className="block text-xs font-semibold text-neutral-300 mb-1">Hashtags</label>
-            <input
-              type="text"
-              value={hashtagsStr}
-              onChange={(e) => setHashtagsStr(e.target.value)}
-              placeholder="#tokyo #aesthetic #vibes"
-              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          {/* Hashtags & Category */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-neutral-300 mb-1">Category</label>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                Hashtags
+              </label>
+              <input
+                type="text"
+                value={hashtagsStr}
+                onChange={(e) => setHashtagsStr(e.target.value)}
+                placeholder="#jattvibereels #naat #punjabi"
+                className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                Category
+              </label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as VideoPost['category'])}
                 className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden"
               >
                 <option value="trending">Trending</option>
-                <option value="nature">Nature & Animals</option>
-                <option value="urban">Urban & Skate</option>
-                <option value="music">Music & Dance</option>
-                <option value="cute">Cute & Pets</option>
-                <option value="creative">Creative & Art</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-neutral-300 mb-1">Music Beat</label>
-              <select
-                value={soundTrack}
-                onChange={(e) => setSoundTrack(e.target.value as VideoPost['sound']['trackType'])}
-                className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden"
-              >
-                <option value="future_bass">Future Bass Beat</option>
-                <option value="ambient_lofi">Ambient Lo-Fi</option>
-                <option value="tokyo_drift">Tokyo Drift Rhythm</option>
-                <option value="chill_synth">Chill Synthwave</option>
-                <option value="cosmic_pulse">Cosmic Pulse</option>
+                <option value="music">Music &amp; Naats</option>
+                <option value="nature">Nature &amp; Scenery</option>
+                <option value="urban">Urban &amp; Cars</option>
+                <option value="cute">Cute &amp; Lifestyle</option>
+                <option value="creative">Creative &amp; Art</option>
               </select>
             </div>
           </div>
 
+          {/* Action Buttons */}
           <div className="pt-2 flex items-center justify-end gap-2">
             <button
               type="button"

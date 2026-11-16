@@ -1,24 +1,27 @@
 /**
  * Web Audio Procedural Sound Engine
- * Provides haptic-like UI audio feedback and synthesized musical loops for video tracks.
+ * Provides haptic-like UI audio feedback and synthesized musical/devotional loops for video & audio-visual posts.
  */
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = true;
   private currentTrackStop: (() => void) | null = null;
+  private previewTrackStop: (() => void) | null = null;
   private masterGain: GainNode | null = null;
 
   private initContext() {
     if (!this.ctx) {
-      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AudioContextClass();
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.value = this.isMuted ? 0 : 0.6;
       this.masterGain.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      void this.ctx.resume();
     }
   }
 
@@ -44,7 +47,7 @@ class SoundEngine {
       this.initContext();
       if (!this.ctx || !this.masterGain) return;
       const t = this.ctx.currentTime;
-      
+
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
 
@@ -72,7 +75,7 @@ class SoundEngine {
       this.initContext();
       if (!this.ctx || !this.masterGain) return;
       const t = this.ctx.currentTime;
-      
+
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
 
@@ -102,7 +105,6 @@ class SoundEngine {
       if (!this.ctx || !this.masterGain) return;
       const t = this.ctx.currentTime;
 
-      // Arpeggiated golden fanfare
       [587.33, 739.99, 880, 1174.66].forEach((freq, i) => {
         if (!this.ctx || !this.masterGain) return;
         const osc = this.ctx.createOscillator();
@@ -146,62 +148,127 @@ class SoundEngine {
     }
   }
 
-  // Play a procedural musical beat loop matching the video's theme
-  public playTrack(trackType: string) {
-    if (this.currentTrackStop) {
-      this.currentTrackStop();
-      this.currentTrackStop = null;
+  private startSynthesizedLoop(
+    trackType: string,
+    volumeMultiplier: number,
+    bypassMasterMute: boolean
+  ): () => void {
+    this.initContext();
+    if (!this.ctx || !this.masterGain) return () => {};
+
+    const ctx = this.ctx;
+    const trackGain = ctx.createGain();
+    const clampedVol = Math.max(0, Math.min(1, volumeMultiplier));
+    trackGain.gain.value = 0.38 * clampedVol;
+
+    if (bypassMasterMute) {
+      trackGain.connect(ctx.destination);
+    } else {
+      trackGain.connect(this.masterGain);
     }
 
-    if (this.isMuted) return;
+    let isRunning = true;
+    let timer: number | null = null;
+    let step = 0;
 
-    try {
-      this.initContext();
-      if (!this.ctx || !this.masterGain) return;
+    const scales: Record<string, number[]> = {
+      ambient_lofi: [220, 261.63, 293.66, 329.63, 392], // Am pentatonic
+      future_bass: [261.63, 329.63, 392, 493.88, 523.25], // Cmaj7
+      chill_synth: [196, 246.94, 293.66, 370, 440], // Gmaj7
+      cosmic_pulse: [146.83, 174.61, 220, 261.63, 293.66], // Dm7
+      tokyo_drift: [164.81, 196, 220, 246.94, 293.66], // Em pentatonic
+      naat_serene: [293.66, 311.13, 370.0, 392.0, 440.0, 466.16, 523.25], // D Hijaz serene
+      naat_medina: [261.63, 293.66, 311.13, 392.0, 440.0, 523.25], // Warm devotional scale
+      punjabi_dhol: [196.0, 220.0, 261.63, 293.66, 329.63, 392.0], // Energetic G pentatonic
+      sufi_acoustic: [220.0, 246.94, 261.63, 329.63, 349.23, 440.0], // Soulful A natural minor
+    };
 
-      const ctx = this.ctx;
-      const trackGain = ctx.createGain();
-      trackGain.gain.value = 0.35;
-      trackGain.connect(this.masterGain);
+    const isDevotional = trackType === 'naat_serene' || trackType === 'naat_medina';
+    const isSufi = trackType === 'sufi_acoustic';
+    const isPunjabi = trackType === 'punjabi_dhol';
 
-      let isRunning = true;
-      let timer: number | null = null;
-      let step = 0;
+    const scale = scales[trackType] || scales.ambient_lofi;
+    const bpm = isPunjabi
+      ? 128
+      : trackType === 'tokyo_drift'
+      ? 120
+      : trackType === 'future_bass'
+      ? 110
+      : isDevotional
+      ? 68
+      : isSufi
+      ? 78
+      : 85;
+    const stepDuration = 60 / bpm / 2;
 
-      // Note scales based on track
-      const scales: Record<string, number[]> = {
-        ambient_lofi: [220, 261.63, 293.66, 329.63, 392], // Am pentatonic
-        future_bass: [261.63, 329.63, 392, 493.88, 523.25], // Cmaj7
-        chill_synth: [196, 246.94, 293.66, 370, 440], // Gmaj7
-        cosmic_pulse: [146.83, 174.61, 220, 261.63, 293.66], // Dm7
-        tokyo_drift: [164.81, 196, 220, 246.94, 293.66], // Em pentatonic
-      };
+    const playStep = () => {
+      if (!isRunning || !ctx) return;
+      const now = ctx.currentTime;
 
-      const scale = scales[trackType] || scales.ambient_lofi;
-      const bpm = trackType === 'tokyo_drift' ? 120 : trackType === 'future_bass' ? 110 : 85;
-      const stepDuration = 60 / bpm / 2; // eighth notes
+      if (isDevotional || isSufi) {
+        // Gentle sustained warm drone root every 8 steps
+        if (step % 8 === 0) {
+          const droneOsc = ctx.createOscillator();
+          const droneGain = ctx.createGain();
+          droneOsc.type = 'sine';
+          droneOsc.frequency.setValueAtTime(scale[0] / 2, now);
+          droneGain.gain.setValueAtTime(0.01, now);
+          droneGain.gain.linearRampToValueAtTime(0.14, now + 0.25);
+          droneGain.gain.exponentialRampToValueAtTime(0.001, now + stepDuration * 7.5);
+          droneOsc.connect(droneGain);
+          droneGain.connect(trackGain);
+          droneOsc.start(now);
+          droneOsc.stop(now + stepDuration * 7.5);
+        }
 
-      const playStep = () => {
-        if (!isRunning || !ctx) return;
-        const now = ctx.currentTime;
+        // Expressive devotional chime / vocal-like triangle-sine phrase
+        if (step % 2 === 0 || step % 5 === 0) {
+          const idx = (step + Math.floor(step / 4)) % scale.length;
+          const freq = scale[idx];
+          const melOsc = ctx.createOscillator();
+          const overOsc = ctx.createOscillator();
+          const melGain = ctx.createGain();
 
-        // Kick drum on 1 and 3 (step 0, 4)
-        if (step % 4 === 0) {
+          melOsc.type = 'sine';
+          melOsc.frequency.setValueAtTime(freq, now);
+          overOsc.type = 'triangle';
+          overOsc.frequency.setValueAtTime(freq * 2, now);
+
+          const overGain = ctx.createGain();
+          overGain.gain.setValueAtTime(0.05, now);
+
+          melGain.gain.setValueAtTime(0.01, now);
+          melGain.gain.linearRampToValueAtTime(0.22, now + 0.06);
+          melGain.gain.exponentialRampToValueAtTime(0.001, now + stepDuration * 2.6);
+
+          melOsc.connect(melGain);
+          overOsc.connect(overGain);
+          overGain.connect(melGain);
+          melGain.connect(trackGain);
+
+          melOsc.start(now);
+          overOsc.start(now);
+          melOsc.stop(now + stepDuration * 2.6);
+          overOsc.stop(now + stepDuration * 2.6);
+        }
+      } else {
+        // Kick drum on 1 and 3 (or heavier syncopation for Punjabi Dhol)
+        if (step % 4 === 0 || (isPunjabi && step % 8 === 6)) {
           const kickOsc = ctx.createOscillator();
           const kickGain = ctx.createGain();
           kickOsc.type = 'sine';
-          kickOsc.frequency.setValueAtTime(120, now);
-          kickOsc.frequency.exponentialRampToValueAtTime(35, now + 0.15);
-          kickGain.gain.setValueAtTime(0.5, now);
-          kickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+          kickOsc.frequency.setValueAtTime(isPunjabi ? 145 : 120, now);
+          kickOsc.frequency.exponentialRampToValueAtTime(isPunjabi ? 48 : 35, now + 0.16);
+          kickGain.gain.setValueAtTime(isPunjabi ? 0.58 : 0.5, now);
+          kickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
           kickOsc.connect(kickGain);
           kickGain.connect(trackGain);
           kickOsc.start(now);
-          kickOsc.stop(now + 0.18);
+          kickOsc.stop(now + 0.19);
         }
 
-        // Snare / clap on 2 and 4 (step 2, 6)
-        if (step % 8 === 4) {
+        // Snare / clap on 2 and 4
+        if (step % 8 === 4 || (isPunjabi && step % 8 === 2)) {
           const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 0.1, ctx.sampleRate);
           const output = noiseBuffer.getChannelData(0);
           for (let i = 0; i < noiseBuffer.length; i++) {
@@ -227,7 +294,7 @@ class SoundEngine {
           const freq = scale[noteIndex];
           const melOsc = ctx.createOscillator();
           const melGain = ctx.createGain();
-          melOsc.type = 'sine';
+          melOsc.type = isPunjabi ? 'triangle' : 'sine';
           melOsc.frequency.setValueAtTime(freq, now);
           melGain.gain.setValueAtTime(0.18, now);
           melGain.gain.exponentialRampToValueAtTime(0.001, now + stepDuration * 1.8);
@@ -236,27 +303,58 @@ class SoundEngine {
           melOsc.start(now);
           melOsc.stop(now + stepDuration * 1.8);
         }
+      }
 
-        step = (step + 1) % 16;
-        timer = window.setTimeout(playStep, stepDuration * 1000);
-      };
+      step = (step + 1) % 16;
+      timer = window.setTimeout(playStep, stepDuration * 1000);
+    };
 
-      playStep();
+    playStep();
 
-      this.currentTrackStop = () => {
-        isRunning = false;
-        if (timer) clearTimeout(timer);
-        try {
-          trackGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-          setTimeout(() => {
-            trackGain.disconnect();
-          }, 200);
-        } catch {
-          // ignore
-        }
-      };
+    return () => {
+      isRunning = false;
+      if (timer) clearTimeout(timer);
+      try {
+        trackGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+        setTimeout(() => {
+          trackGain.disconnect();
+        }, 160);
+      } catch {
+        // ignore
+      }
+    };
+  }
+
+  // Play a procedural musical beat loop matching the video's theme
+  public playTrack(trackType: string, volumeMultiplier: number = 1) {
+    if (this.currentTrackStop) {
+      this.currentTrackStop();
+      this.currentTrackStop = null;
+    }
+
+    if (this.isMuted || volumeMultiplier <= 0.01) return;
+
+    try {
+      this.currentTrackStop = this.startSynthesizedLoop(trackType, volumeMultiplier, false);
     } catch {
       // AudioContext policy
+    }
+  }
+
+  // Preview a Song / Naat / Beat in UploadModal regardless of feed mute state
+  public playPreviewTrack(trackType: string, volumeMultiplier: number = 0.8) {
+    this.stopPreviewTrack();
+    try {
+      this.previewTrackStop = this.startSynthesizedLoop(trackType, volumeMultiplier, true);
+    } catch {
+      // AudioContext policy
+    }
+  }
+
+  public stopPreviewTrack() {
+    if (this.previewTrackStop) {
+      this.previewTrackStop();
+      this.previewTrackStop = null;
     }
   }
 
@@ -361,4 +459,3 @@ class SoundEngine {
 }
 
 export const soundEngine = new SoundEngine();
-
