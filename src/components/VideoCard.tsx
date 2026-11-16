@@ -30,6 +30,14 @@ import {
   savePlaybackState,
   saveVideoTimestamp,
 } from '../lib/playbackPersistence';
+import {
+  getFullscreenElement,
+  isPortraitViewport,
+  requestElementFullscreen,
+  lockScreenLandscape,
+  unlockOrientationToPortrait,
+  addFullscreenChangeListener,
+} from '../utils/fullscreenOrientation';
 
 interface VideoCardProps {
   video: VideoPost;
@@ -92,7 +100,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const [isLandscape, setIsLandscape] = useState(false);
   const [isWidescreenMode, setIsWidescreenMode] = useState(false);
   const [isFillScreen, setIsFillScreen] = useState(false);
+  const [orientationLockBlocked, setOrientationLockBlocked] = useState(false);
+  const [viewportPortrait, setViewportPortrait] = useState(() => isPortraitViewport());
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+
+  const cssLandscapeActive = isWidescreenMode && orientationLockBlocked && viewportPortrait;
   const [currentTime, setCurrentTime] = useState(() => getSavedVideoTimestamp(video.id));
   const [duration, setDuration] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -376,49 +388,37 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, video.id, video.videoUrl, video.mediaType, isMuted, originalVol]);
 
+  // Keep viewport portrait state synced for CSS landscape rotation fallback
+  useEffect(() => {
+    const syncViewport = () => setViewportPortrait(isPortraitViewport());
+    window.addEventListener('resize', syncViewport);
+    window.addEventListener('orientationchange', syncViewport);
+    return () => {
+      window.removeEventListener('resize', syncViewport);
+      window.removeEventListener('orientationchange', syncViewport);
+    };
+  }, []);
+
   // Helper to toggle 16:9 Widescreen Landscape Cinema Mode + mobile screen.orientation lock
   const exitWidescreenMode = async () => {
+    didEnterFullscreenForWidescreenRef.current = false;
     setIsWidescreenMode(false);
-    try {
-      const orient = window.screen?.orientation as
-        | (ScreenOrientation & { unlock?: () => void })
-        | undefined;
-      if (orient && typeof orient.unlock === 'function') {
-        orient.unlock();
-      }
-    } catch {
-      // ignore on unsupported browsers
-    }
-    try {
-      if (document.fullscreenElement && didEnterFullscreenForWidescreenRef.current) {
-        didEnterFullscreenForWidescreenRef.current = false;
-        await document.exitFullscreen();
-      }
-    } catch {
-      // ignore
-    }
+    setOrientationLockBlocked(false);
+    await unlockOrientationToPortrait();
   };
 
   const enterWidescreenMode = async () => {
     setIsWidescreenMode(true);
-    try {
-      const targetEl = widescreenContainerRef.current || document.documentElement;
-      if (targetEl && typeof targetEl.requestFullscreen === 'function' && !document.fullscreenElement) {
-        await targetEl.requestFullscreen();
-        didEnterFullscreenForWidescreenRef.current = true;
-      }
-    } catch {
-      // ignore if fullscreen request blocked; CSS cinema viewport still engages
-    }
-    try {
-      const orient = window.screen?.orientation as
-        | (ScreenOrientation & { lock?: (orientation: 'landscape' | 'portrait') => Promise<void> })
-        | undefined;
-      if (orient && typeof orient.lock === 'function') {
-        await orient.lock('landscape');
-      }
-    } catch {
-      // ignore if desktop or iOS Safari doesn't allow orientation.lock
+    const targetEl = widescreenContainerRef.current || document.documentElement;
+    const enteredFs = await requestElementFullscreen(targetEl);
+    didEnterFullscreenForWidescreenRef.current = enteredFs;
+
+    const locked = await lockScreenLandscape();
+    if (!locked) {
+      setOrientationLockBlocked(true);
+      setViewportPortrait(isPortraitViewport());
+    } else {
+      setOrientationLockBlocked(false);
     }
   };
 
@@ -429,7 +429,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       onShowToast('Switched to 9:16 Vertical Reels');
     } else {
       void enterWidescreenMode();
-      onShowToast('16:9 Widescreen Cinema Mode');
+      onShowToast('16:9 Widescreen Landscape Mode');
     }
   };
 
@@ -437,38 +437,22 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   useEffect(() => {
     if (!isWidescreenMode) return;
     const handleFsChange = () => {
-      if (!document.fullscreenElement && didEnterFullscreenForWidescreenRef.current) {
+      if (!getFullscreenElement() && didEnterFullscreenForWidescreenRef.current) {
         didEnterFullscreenForWidescreenRef.current = false;
         setIsWidescreenMode(false);
-        try {
-          const orient = window.screen?.orientation as
-            | (ScreenOrientation & { unlock?: () => void })
-            | undefined;
-          orient?.unlock?.();
-        } catch {
-          // ignore
-        }
+        setOrientationLockBlocked(false);
+        void unlockOrientationToPortrait();
       }
     };
-    document.addEventListener('fullscreenchange', handleFsChange);
-    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+    return addFullscreenChangeListener(handleFsChange);
   }, [isWidescreenMode]);
 
   // Clean up decoder, fullscreen orientation lock & audio on unmount
   useEffect(() => {
     return () => {
       if (didEnterFullscreenForWidescreenRef.current) {
-        try {
-          const orient = window.screen?.orientation as
-            | (ScreenOrientation & { unlock?: () => void })
-            | undefined;
-          orient?.unlock?.();
-          if (document.fullscreenElement) {
-            void document.exitFullscreen().catch(() => {});
-          }
-        } catch {
-          // ignore
-        }
+        didEnterFullscreenForWidescreenRef.current = false;
+        void unlockOrientationToPortrait();
       }
       if (videoRef.current) {
         if (isActive && videoRef.current.currentTime > 0.2) {
@@ -717,10 +701,31 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       ref={widescreenContainerRef}
       className={
         isWidescreenMode
-          ? 'fixed inset-0 z-55 bg-black flex flex-col items-center justify-center select-none overflow-hidden'
+          ? 'fixed inset-0 z-[70] bg-black flex flex-col items-center justify-center select-none overflow-hidden'
           : 'relative w-full h-full snap-item flex items-center justify-center bg-black select-none overflow-hidden'
       }
     >
+      {/* Inner Stage: Rotates 90deg via CSS when screen.orientation.lock('landscape') is blocked on portrait viewport */}
+      <div
+        style={
+          cssLandscapeActive
+            ? {
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                width: '100dvh',
+                height: '100vw',
+                transform: 'translate3d(-50%, -50%, 0) rotate(90deg)',
+                transformOrigin: 'center center',
+              }
+            : undefined
+        }
+        className={
+          cssLandscapeActive
+            ? 'bg-black flex items-center justify-center overflow-hidden'
+            : 'relative w-full h-full flex items-center justify-center overflow-hidden'
+        }
+      >
       {/* Attached Custom Song / Naat Audio Player (when audioUrl exists) */}
       {hasExternalAudio && (
         <audio
@@ -744,7 +749,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           <div
             className={
               isWidescreenMode
-                ? 'relative w-full max-w-[min(100vw,calc(100dvh*16/9))] aspect-video mx-auto overflow-hidden bg-black flex items-center justify-center'
+                ? cssLandscapeActive
+                  ? isFillScreen
+                    ? 'relative w-full h-full overflow-hidden bg-black flex items-center justify-center'
+                    : 'relative h-full aspect-video max-w-full mx-auto overflow-hidden bg-black flex items-center justify-center'
+                  : 'relative w-full max-w-[min(100vw,calc(100dvh*16/9))] aspect-video mx-auto overflow-hidden bg-black flex items-center justify-center'
                 : isFillScreen
                 ? 'relative w-full h-full flex items-center justify-center overflow-hidden bg-black'
                 : isLandscape
@@ -782,7 +791,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               <div
                 className={
                   isWidescreenMode
-                    ? 'w-full max-w-[min(100vw,calc(100dvh*16/9))] aspect-video mx-auto overflow-hidden bg-black flex items-center justify-center shadow-2xl'
+                    ? cssLandscapeActive
+                      ? isFillScreen
+                        ? 'w-full h-full overflow-hidden bg-black flex items-center justify-center'
+                        : 'h-full aspect-video max-w-full mx-auto overflow-hidden bg-black flex items-center justify-center shadow-2xl'
+                      : 'w-full max-w-[min(100vw,calc(100dvh*16/9))] aspect-video mx-auto overflow-hidden bg-black flex items-center justify-center shadow-2xl'
                     : isFillScreen
                     ? 'w-full h-full flex items-center justify-center overflow-hidden bg-black'
                     : isLandscape
@@ -1318,6 +1331,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

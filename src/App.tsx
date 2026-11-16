@@ -2050,7 +2050,7 @@ export default function App() {
                     setIsStoriesBarOpen(true);
                   }
                 }}
-                className="relative w-full flex-1 min-h-0 max-w-5xl mx-auto bg-black flex flex-col overflow-hidden [transform:translateZ(0)]"
+                className="relative w-full flex-1 min-h-0 max-w-5xl mx-auto bg-black flex flex-col overflow-hidden"
               >
                 {(currentTab === 'foryou' || currentTab === 'following') && (
                   <LiveStoriesBar
@@ -2158,7 +2158,7 @@ export default function App() {
                   <div
                     ref={containerRef}
                     onScroll={handleScroll}
-                    className="flex-1 min-h-0 w-full snap-container overflow-y-scroll overflow-x-hidden overscroll-y-contain no-scrollbar [transform:translateZ(0)] [will-change:scroll-position]"
+                    className="flex-1 min-h-0 w-full snap-container overflow-y-scroll overflow-x-hidden overscroll-y-contain no-scrollbar [will-change:scroll-position]"
                   >
                     {displayedVideos.map((video, idx) => (
                       <VideoCard
