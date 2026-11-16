@@ -20,8 +20,20 @@ import {
   Music,
   Play,
   Pause,
+  Send,
+  Clock,
+  Search,
+  CheckCircle2,
 } from 'lucide-react';
-import { VideoPost, UserAccount, CreatorProfileData, AudioTrackOption } from '../types';
+import {
+  VideoPost,
+  UserAccount,
+  CreatorProfileData,
+  AudioTrackOption,
+  LiveStoryItem,
+  DirectSnapMessage,
+  DirectSnapRecipient,
+} from '../types';
 import { soundEngine } from '../utils/soundEngine';
 import { isSupabaseConfigured } from '../lib/supabase';
 import {
@@ -31,20 +43,26 @@ import {
   saveLocalPostRecord,
   savePostAudioMeta,
 } from '../lib/supabaseService';
+import { publishLiveStory, sendDirectSnap } from '../lib/liveSnapService';
 import { savePostForOffline } from '../lib/offlineMediaStore';
 import { CURATED_AUDIO_LIBRARY } from '../data/audioLibrary';
+import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 
 interface ProCameraModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserAccount | null;
   creatorProfile?: CreatorProfileData;
+  directRecipients?: DirectSnapRecipient[];
+  initialSnapRecipient?: DirectSnapRecipient | null;
+  onPostLiveStory?: (story: LiveStoryItem) => void;
+  onDirectSnapSent?: (snap: DirectSnapMessage) => void;
   onRecordSuccess: (newPost: VideoPost) => void;
   onSwitchToUploadFile: () => void;
   onShowToast: (msg: string) => void;
 }
 
-type ResolutionFpsMode = '4K/60FPS' | '4K/30FPS' | '1080p/60FPS';
+type ResolutionFpsMode = '1080p/60FPS' | '720p/60FPS';
 
 export interface CameraFilterDef {
   id: string;
@@ -57,119 +75,80 @@ export interface CameraFilterDef {
 
 export const CAMERA_FILTERS: CameraFilterDef[] = [
   {
-    id: 'normal',
-    name: 'Normal',
-    shortLabel: 'Normal',
+    id: 'natural',
+    name: 'Natural',
+    shortLabel: 'Natural',
     cssFilter: 'none',
     swatchClass: 'from-neutral-700 to-neutral-900',
   },
   {
-    id: 'warm_glow',
-    name: 'Warm Glow',
-    shortLabel: 'Warm Glow',
-    cssFilter: 'sepia(0.28) saturate(1.38) brightness(1.06) contrast(1.04) hue-rotate(-8deg)',
-    swatchClass: 'from-amber-400 via-orange-500 to-rose-500',
+    id: 'vivid_hd',
+    name: 'Vivid HD',
+    shortLabel: 'Vivid HD',
+    cssFilter: 'saturate(1.48) contrast(1.12) brightness(1.04)',
+    swatchClass: 'from-pink-500 via-rose-500 to-cyan-400',
+  },
+  {
+    id: 'cinema_pro',
+    name: 'Cinema Pro',
+    shortLabel: 'Cinema Pro',
+    cssFilter: 'contrast(1.18) saturate(1.12) brightness(0.97) hue-rotate(-4deg)',
+    swatchClass: 'from-cyan-500 via-slate-700 to-amber-500',
     drawOverlay: (ctx, w, h) => {
       ctx.save();
-      const grad = ctx.createRadialGradient(w * 0.5, h * 0.45, w * 0.1, w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
-      grad.addColorStop(0, 'rgba(255, 196, 112, 0.14)');
-      grad.addColorStop(1, 'rgba(255, 107, 53, 0.12)');
       ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = grad;
+      ctx.fillStyle = 'rgba(14, 165, 233, 0.08)';
       ctx.fillRect(0, 0, w, h);
       ctx.restore();
     },
   },
   {
-    id: 'cool_breeze',
-    name: 'Cool Breeze',
-    shortLabel: 'Cool Breeze',
-    cssFilter: 'saturate(1.14) contrast(1.06) brightness(1.04) hue-rotate(14deg)',
-    swatchClass: 'from-cyan-400 via-sky-500 to-indigo-600',
+    id: 'golden_glow',
+    name: 'Golden Glow',
+    shortLabel: 'Golden Glow',
+    cssFilter: 'sepia(0.22) saturate(1.34) brightness(1.06) contrast(1.04) hue-rotate(-6deg)',
+    swatchClass: 'from-amber-300 via-orange-500 to-rose-500',
     drawOverlay: (ctx, w, h) => {
       ctx.save();
-      const grad = ctx.createLinearGradient(0, 0, w, h);
-      grad.addColorStop(0, 'rgba(56, 189, 248, 0.14)');
-      grad.addColorStop(1, 'rgba(99, 102, 241, 0.12)');
       ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = grad;
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.1)';
       ctx.fillRect(0, 0, w, h);
       ctx.restore();
     },
-  },
-  {
-    id: 'vintage_retro',
-    name: 'Vintage Retro',
-    shortLabel: 'Vintage Retro',
-    cssFilter: 'sepia(0.55) contrast(1.14) brightness(0.96) saturate(0.85)',
-    swatchClass: 'from-yellow-600 via-amber-700 to-stone-800',
-    drawOverlay: (ctx, w, h) => {
-      ctx.save();
-      const vignette = ctx.createRadialGradient(w * 0.5, h * 0.5, w * 0.25, w * 0.5, h * 0.5, Math.max(w, h) * 0.72);
-      vignette.addColorStop(0, 'rgba(255, 224, 160, 0.06)');
-      vignette.addColorStop(1, 'rgba(24, 16, 8, 0.42)');
-      ctx.fillStyle = vignette;
-      ctx.fillRect(0, 0, w, h);
-      ctx.restore();
-    },
-  },
-  {
-    id: 'noir_bw',
-    name: 'Black & White (Noir)',
-    shortLabel: 'Noir B&W',
-    cssFilter: 'grayscale(1) contrast(1.34) brightness(0.96)',
-    swatchClass: 'from-zinc-200 via-zinc-500 to-black',
-    drawOverlay: (ctx, w, h) => {
-      ctx.save();
-      const vignette = ctx.createRadialGradient(w * 0.5, h * 0.5, w * 0.2, w * 0.5, h * 0.5, Math.max(w, h) * 0.72);
-      vignette.addColorStop(0, 'rgba(255, 255, 255, 0.04)');
-      vignette.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
-      ctx.fillStyle = vignette;
-      ctx.fillRect(0, 0, w, h);
-      ctx.restore();
-    },
-  },
-  {
-    id: 'cyberpunk_neon',
-    name: 'Cyberpunk Neon',
-    shortLabel: 'Cyberpunk Neon',
-    cssFilter: 'contrast(1.3) saturate(1.75) hue-rotate(20deg) brightness(1.04)',
-    swatchClass: 'from-fuchsia-500 via-purple-600 to-cyan-400',
-    drawOverlay: (ctx, w, h) => {
-      ctx.save();
-      const neon = ctx.createLinearGradient(0, 0, w, h);
-      neon.addColorStop(0, 'rgba(236, 72, 153, 0.18)');
-      neon.addColorStop(0.5, 'rgba(139, 92, 246, 0.08)');
-      neon.addColorStop(1, 'rgba(34, 211, 238, 0.2)');
-      ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = neon;
-      ctx.fillRect(0, 0, w, h);
-      ctx.restore();
-    },
-  },
-  {
-    id: 'vivid_pop',
-    name: 'Vivid Pop',
-    shortLabel: 'Vivid Pop',
-    cssFilter: 'saturate(1.65) contrast(1.18) brightness(1.06)',
-    swatchClass: 'from-pink-500 via-rose-500 to-yellow-400',
   },
   {
     id: 'soft_beauty',
     name: 'Soft Beauty',
     shortLabel: 'Soft Beauty',
-    cssFilter: 'brightness(1.09) contrast(0.95) saturate(1.18)',
-    swatchClass: 'from-rose-300 via-pink-400 to-fuchsia-400',
+    cssFilter: 'brightness(1.08) contrast(0.96) saturate(1.15)',
+    swatchClass: 'from-rose-200 via-pink-400 to-fuchsia-400',
     drawOverlay: (ctx, w, h) => {
       ctx.save();
-      const glow = ctx.createRadialGradient(w * 0.5, h * 0.45, w * 0.1, w * 0.5, h * 0.5, Math.max(w, h) * 0.7);
-      glow.addColorStop(0, 'rgba(255, 228, 238, 0.12)');
-      glow.addColorStop(1, 'rgba(244, 114, 182, 0.08)');
       ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = glow;
+      ctx.fillStyle = 'rgba(244, 114, 182, 0.08)';
       ctx.fillRect(0, 0, w, h);
       ctx.restore();
     },
+  },
+  {
+    id: 'dark_moody',
+    name: 'Dark Moody',
+    shortLabel: 'Dark Moody',
+    cssFilter: 'contrast(1.26) brightness(0.9) saturate(0.84)',
+    swatchClass: 'from-slate-800 via-indigo-950 to-black',
+    drawOverlay: (ctx, w, h) => {
+      ctx.save();
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.18)';
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    },
+  },
+  {
+    id: 'black_white',
+    name: 'Black & White',
+    shortLabel: 'B&W',
+    cssFilter: 'grayscale(1) contrast(1.28) brightness(1.02)',
+    swatchClass: 'from-zinc-100 via-zinc-500 to-black',
   },
 ];
 
@@ -202,15 +181,19 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   onClose,
   currentUser,
   creatorProfile,
+  directRecipients = [],
+  initialSnapRecipient = null,
+  onPostLiveStory,
+  onDirectSnapSent,
   onRecordSuccess,
   onSwitchToUploadFile,
   onShowToast,
 }) => {
-  // Camera Settings
-  const [resFps, setResFps] = useState<ResolutionFpsMode>('4K/60FPS');
-  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('3840x2160 · 60fps');
-  const [is4KActive, setIs4KActive] = useState<boolean>(true);
-  const [selectedFilterId, setSelectedFilterId] = useState<string>('normal');
+  // Camera Settings (Default 1080p/60FPS low-latency for zero ghosting/motion blur)
+  const [resFps, setResFps] = useState<ResolutionFpsMode>('1080p/60FPS');
+  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('1080p · 60fps');
+  const [isHighFpsActive, setIsHighFpsActive] = useState<boolean>(true);
+  const [selectedFilterId, setSelectedFilterId] = useState<string>('natural');
   const [nightModeLevel, setNightModeLevel] = useState<number>(0); // 0 = off, 1 = 1.5x, 2 = 3.0x
   const [isFlashOn, setIsFlashOn] = useState<boolean>(false);
   const [showGrid, setShowGrid] = useState<boolean>(false);
@@ -228,9 +211,15 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const [isSavedToGallery, setIsSavedToGallery] = useState<boolean>(false);
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
 
+  // Live Snap & Direct Send State
+  const [isSnapSendSheetOpen, setIsSnapSendSheetOpen] = useState<boolean>(false);
+  const [isSendingSnap, setIsSendingSnap] = useState<boolean>(false);
+  const [snapFriendSearch, setSnapFriendSearch] = useState<string>('');
+  const [sentRecipientIds, setSentRecipientIds] = useState<string[]>([]);
+
   // Post-recording caption & song form
   const [clipTitle, setClipTitle] = useState('');
-  const [clipHashtags, setClipHashtags] = useState('#JattVibe #4K60FPS #LiveFilter #Trending');
+  const [clipHashtags, setClipHashtags] = useState('#JattVibe #60FPS #LiveFilter #Trending');
   const [selectedMusicTrack, setSelectedMusicTrack] = useState<AudioTrackOption | null>(null);
   const [previewMusicId, setPreviewMusicId] = useState<string | null>(null);
   const [showMusicPicker, setShowMusicPicker] = useState<boolean>(false);
@@ -335,6 +324,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         return null;
       });
       setIsSavedToGallery(false);
+      setIsSnapSendSheetOpen(false);
+      setSentRecipientIds([]);
+      setSnapFriendSearch('');
       recordedBlobRef.current = null;
       setCameraBlockedInWebView(false);
       setIsCameraReady(false);
@@ -356,63 +348,40 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       };
 
       const targetConstraints: MediaStreamConstraints[] =
-        resFps === '4K/60FPS'
+        resFps === '1080p/60FPS'
           ? [
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 3840 },
-                  height: { ideal: 2160 },
-                  frameRate: { ideal: 60, min: 24 },
-                },
-                audio: audioHighQuality,
-              },
               {
                 video: {
                   facingMode,
                   width: { ideal: 1920 },
                   height: { ideal: 1080 },
-                  frameRate: { ideal: 60 },
-                },
-                audio: audioHighQuality,
-              },
-              { video: { facingMode }, audio: true },
-              { video: { facingMode }, audio: false },
-            ]
-          : resFps === '4K/30FPS'
-          ? [
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 3840 },
-                  height: { ideal: 2160 },
-                  frameRate: { ideal: 30 },
+                  frameRate: { ideal: 60, min: 30 },
                 },
                 audio: audioHighQuality,
               },
               {
                 video: {
                   facingMode,
-                  width: { ideal: 1920 },
-                  height: { ideal: 1080 },
-                  frameRate: { ideal: 30 },
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                  frameRate: { ideal: 60, min: 30 },
                 },
                 audio: audioHighQuality,
               },
-              { video: { facingMode }, audio: true },
+              { video: { facingMode, frameRate: { ideal: 60 } }, audio: true },
               { video: { facingMode }, audio: false },
             ]
           : [
               {
                 video: {
                   facingMode,
-                  width: { ideal: 1920 },
-                  height: { ideal: 1080 },
-                  frameRate: { ideal: 60 },
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                  frameRate: { ideal: 60, min: 30 },
                 },
                 audio: audioHighQuality,
               },
-              { video: { facingMode }, audio: true },
+              { video: { facingMode, frameRate: { ideal: 60 } }, audio: true },
               { video: { facingMode }, audio: false },
             ];
 
@@ -445,11 +414,10 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
           const settings = videoTrack.getSettings();
-          const w = settings.width || 1920;
-          const h = settings.height || 1080;
-          const fps = Math.round(settings.frameRate || (resFps.includes('60FPS') ? 60 : 30));
-          const isTrue4K = w >= 2560 || h >= 1440;
-          setIs4KActive(isTrue4K);
+          const w = settings.width || 1280;
+          const h = settings.height || 720;
+          const fps = Math.round(settings.frameRate || 60);
+          setIsHighFpsActive(fps >= 45);
           setStreamInfoLabel(`${w}x${h} · ${fps}fps`);
         }
 
@@ -676,7 +644,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
 
     try {
       const needsCanvasBake =
-        selectedFilterId !== 'normal' ||
+        selectedFilterId !== 'natural' ||
         nightModeLevel > 0 ||
         zoomLevel > 1.0;
 
@@ -685,8 +653,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         combinedStream = rawStream;
       } else {
         startRecordingFramePump();
-        const targetFps = resFps.includes('60FPS') ? 60 : 30;
-        const canvasStream = canvas.captureStream(targetFps);
+        const canvasStream = canvas.captureStream(60);
         combinedStream = new MediaStream([
           ...canvasStream.getVideoTracks(),
           ...rawStream.getAudioTracks(),
@@ -720,12 +687,12 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           setRecordedMediaType('video');
           setRecordedClipUrl(url);
           setClipTitle(
-            `${selectedFilter.name !== 'Normal' ? `${selectedFilter.shortLabel} ` : ''}HD Reel #${Math.floor(
+            `${selectedFilter.name !== 'Natural' ? `${selectedFilter.shortLabel} ` : ''}HD Reel #${Math.floor(
               Math.random() * 900 + 100
             )}`
           );
           onShowToast(
-            `Recorded in ${streamInfoLabel} with ${selectedFilter.name} filter!`
+            `Recorded in ${streamInfoLabel} (${selectedFilter.name})!`
           );
         } else {
           onShowToast('No video data captured. Please try recording for at least 1 second.');
@@ -770,7 +737,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         setRecordedMediaType('image');
         setRecordedClipUrl(URL.createObjectURL(blob));
         setClipTitle(
-          `${selectedFilter.name !== 'Normal' ? `${selectedFilter.shortLabel} ` : ''}Shot #${Math.floor(
+          `${selectedFilter.name !== 'Natural' ? `${selectedFilter.shortLabel} ` : ''}Shot #${Math.floor(
             Math.random() * 900 + 100
           )}`
         );
@@ -793,14 +760,13 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     onShowToast(`Switched Camera: ${nextMode === 'environment' ? 'Back (Rear)' : 'Front (Selfie)'}`);
   };
 
-  // Cycle 4K Ultra HD / 1080p modes
+  // Toggle Low-Latency 1080p/60FPS & 720p/60FPS
   const handleCycleResFps = () => {
     if (isRecording) return;
     soundEngine.playCameraShutter();
-    const modes: ResolutionFpsMode[] = ['4K/60FPS', '4K/30FPS', '1080p/60FPS'];
-    const nextIdx = (modes.indexOf(resFps) + 1) % modes.length;
-    setResFps(modes[nextIdx]);
-    onShowToast(`Target quality: ${modes[nextIdx]}`);
+    const nextMode: ResolutionFpsMode = resFps === '1080p/60FPS' ? '720p/60FPS' : '1080p/60FPS';
+    setResFps(nextMode);
+    onShowToast(`Low-Latency Camera: ${nextMode}`);
   };
 
   // Cycle Night Mode Booster
@@ -986,7 +952,112 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
   };
 
+  // Post recorded snap to 24-Hour Live Stories Bar
+  const handlePostToLiveStories = async () => {
+    if (!recordedClipUrl || isSendingSnap) return;
+    setIsSendingSnap(true);
+    try {
+      const senderId = currentUser?.id || creatorProfile?.id || getOrCreateUserProfileId();
+      const senderName = currentUser?.name || creatorProfile?.name || 'Jatt Creator';
+      const senderUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
+      const senderAvatar =
+        currentUser?.avatar ||
+        creatorProfile?.avatar ||
+        'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+
+      const createdStory = await publishLiveStory({
+        userId: senderId,
+        username: senderUsername,
+        displayName: senderName,
+        avatarUrl: senderAvatar,
+        mediaBlob: recordedBlobRef.current,
+        fallbackMediaUrl: recordedClipUrl,
+        mediaType: recordedMediaType,
+        caption: clipTitle.trim() || undefined,
+        filterName: selectedFilter.name,
+      });
+
+      onPostLiveStory?.(createdStory);
+      soundEngine.playDownloadComplete();
+      onShowToast('Live Snap added to your 24-Hour Live Stories!');
+      setIsSnapSendSheetOpen(false);
+      onClose();
+    } catch {
+      onShowToast('Could not post Live Story. Please try again.');
+    } finally {
+      setIsSendingSnap(false);
+    }
+  };
+
+  // Direct Send live snap privately to a selected friend/user
+  const handleDirectSendToFriend = async (recipient: DirectSnapRecipient) => {
+    if (!recordedClipUrl || isSendingSnap) return;
+    setIsSendingSnap(true);
+    try {
+      const senderId = currentUser?.id || creatorProfile?.id || getOrCreateUserProfileId();
+      const senderName = currentUser?.name || creatorProfile?.name || 'Jatt Creator';
+      const senderUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
+      const senderAvatar =
+        currentUser?.avatar ||
+        creatorProfile?.avatar ||
+        'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+
+      const sentMsg = await sendDirectSnap({
+        sender: {
+          id: senderId,
+          name: senderName,
+          username: senderUsername,
+          avatar: senderAvatar,
+        },
+        recipient,
+        mediaBlob: recordedBlobRef.current,
+        fallbackMediaUrl: recordedClipUrl,
+        mediaType: recordedMediaType,
+        caption: clipTitle.trim() || undefined,
+        filterName: selectedFilter.name,
+      });
+
+      onDirectSnapSent?.(sentMsg);
+      setSentRecipientIds((prev) => Array.from(new Set([...prev, recipient.username])));
+      soundEngine.playDownloadComplete();
+      onShowToast(`Live Snap sent directly to @${recipient.username}!`);
+    } catch {
+      onShowToast('Failed to send Direct Snap.');
+    } finally {
+      setIsSendingSnap(false);
+    }
+  };
+
   if (!isOpen) return null;
+
+  const filteredDirectRecipients = (() => {
+    const combined = [...directRecipients];
+    if (
+      initialSnapRecipient &&
+      !combined.some(
+        (r) => r.username.toLowerCase() === initialSnapRecipient.username.toLowerCase()
+      )
+    ) {
+      combined.unshift(initialSnapRecipient);
+    }
+    const q = snapFriendSearch.trim().toLowerCase().replace(/^@+/, '');
+    const list = !q
+      ? combined
+      : combined.filter(
+          (r) =>
+            r.name.toLowerCase().includes(q) ||
+            r.username.toLowerCase().includes(q)
+        );
+    if (initialSnapRecipient) {
+      return [...list].sort((a, b) => {
+        const aTarget = a.username.toLowerCase() === initialSnapRecipient.username.toLowerCase();
+        const bTarget = b.username.toLowerCase() === initialSnapRecipient.username.toLowerCase();
+        if (aTarget === bTarget) return 0;
+        return aTarget ? -1 : 1;
+      });
+    }
+    return list;
+  })();
 
   const formattedTimer = `00:${recordingSeconds < 10 ? `0${recordingSeconds}` : recordingSeconds}`;
   const activeCanvasFallbackFilter = buildCompositeFilter(selectedFilter, nightModeLevel);
@@ -1036,23 +1107,23 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           </button>
         </div>
 
-        {/* Center: Crisp 4K UHD Badge + Active Stream Resolution & FPS */}
+        {/* Center: Low-Latency 60FPS Badge + Active Stream Resolution & FPS */}
         <div className="flex items-center gap-1.5">
           <span
             className={`px-2 py-1 rounded-full text-[10px] font-black tracking-wider border shadow-sm ${
-              is4KActive || resFps.startsWith('4K')
-                ? 'bg-gradient-to-r from-amber-500/25 via-pink-500/25 to-cyan-500/25 border-amber-400/70 text-amber-300'
+              isHighFpsActive
+                ? 'bg-gradient-to-r from-emerald-500/25 via-cyan-500/25 to-pink-500/25 border-emerald-400/70 text-emerald-300'
                 : 'bg-neutral-900/90 border-cyan-500/50 text-cyan-300'
             }`}
           >
-            {is4KActive || resFps.startsWith('4K') ? '4K UHD' : '1080p FHD'}
+            {resFps === '720p/60FPS' ? '720p · 60FPS' : '1080p · 60FPS'}
           </span>
 
           <button
             type="button"
             onClick={handleCycleResFps}
             className="px-3 py-1.5 rounded-full bg-neutral-900/90 hover:bg-neutral-800 border border-pink-500/50 text-white text-[11px] font-black flex items-center gap-1.5 shadow-lg shadow-pink-500/15 active:scale-95 transition-transform"
-            title="Tap to cycle target resolution & FPS (4K Ultra HD / 1080p Full HD)"
+            title="Tap to toggle 1080p/60FPS and 720p/60FPS low-latency stream"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="tracking-wide">{isSimulatedFeed ? resFps : streamInfoLabel}</span>
@@ -1269,23 +1340,47 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                 <button
                   type="button"
                   onClick={handleSaveToDeviceGallery}
-                  className={`py-2.5 px-3.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 border transition-all active:scale-98 cursor-pointer shrink-0 ${
+                  className={`py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 border transition-all active:scale-98 cursor-pointer shrink-0 ${
                     isSavedToGallery
                       ? 'bg-emerald-600/25 border-emerald-400 text-emerald-300'
                       : 'bg-neutral-900 hover:bg-neutral-800 border-cyan-500/50 text-cyan-300 shadow-lg shadow-cyan-500/15'
                   }`}
+                  title="Save to Mobile Gallery / Download"
                 >
                   {isSavedToGallery ? (
                     <>
                       <Check className="w-4 h-4 text-emerald-400" />
-                      <span>Saved to Gallery</span>
+                      <span>Saved</span>
                     </>
                   ) : (
                     <>
                       <Download className="w-4 h-4 text-cyan-400" />
-                      <span>Save to Gallery / Download</span>
+                      <span>Save</span>
                     </>
                   )}
+                </button>
+
+                {/* Send Live Snap (24h Live Stories OR Direct DM to Friend) */}
+                <button
+                  type="button"
+                  disabled={isSendingSnap || isPublishing}
+                  onClick={() => {
+                    if (initialSnapRecipient) {
+                      void handleDirectSendToFriend(initialSnapRecipient).then(() => {
+                        onClose();
+                      });
+                    } else {
+                      setIsSnapSendSheetOpen(true);
+                    }
+                  }}
+                  className="py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:brightness-105 disabled:opacity-60 text-black font-black text-xs flex items-center justify-center gap-1.5 shadow-xl shadow-amber-500/30 active:scale-98 transition-all cursor-pointer shrink-0"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>
+                    {initialSnapRecipient
+                      ? `Send Snap to @${initialSnapRecipient.username}`
+                      : 'Send Live Snap'}
+                  </span>
                 </button>
 
                 {/* Publish to Global / Feed */}
@@ -1300,6 +1395,151 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Snapchat-Style Send Live Snap Delivery Sheet */}
+            {isSnapSendSheetOpen && (
+              <div
+                className="absolute inset-0 z-40 bg-black/90 flex items-end sm:items-center justify-center p-3 animate-in fade-in duration-150"
+                onClick={() => setIsSnapSendSheetOpen(false)}
+              >
+                <div
+                  className="w-full max-w-md bg-neutral-950 border border-neutral-800 rounded-3xl p-4 space-y-3.5 shadow-2xl max-h-[82vh] flex flex-col"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between pb-2 border-b border-neutral-800">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-amber-400 text-black flex items-center justify-center">
+                        <Send className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-white">Send Live Snap</h3>
+                        <p className="text-[10px] text-neutral-400">
+                          Post to 24-Hour Live Stories or Direct Send to Friends
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsSnapSendSheetOpen(false)}
+                      className="p-1.5 text-neutral-400 hover:text-white rounded-full hover:bg-neutral-800 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Option A: Post to 24-Hour Live Stories Bar */}
+                  <button
+                    type="button"
+                    disabled={isSendingSnap}
+                    onClick={handlePostToLiveStories}
+                    className="w-full p-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-pink-600/20 to-fuchsia-600/20 hover:from-amber-500/30 hover:to-fuchsia-600/30 border border-pink-500/45 flex items-center justify-between gap-3 text-left transition-all active:scale-98 cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-400 via-pink-500 to-fuchsia-600 text-white flex items-center justify-center shadow-md">
+                        <Clock className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-white">
+                          Post to 24-Hour Live Stories
+                        </p>
+                        <p className="text-[10px] text-neutral-300">
+                          Appears with a glowing ring at top of Home feed for 24h
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-amber-400 text-black text-[10px] font-black shrink-0">
+                      {isSendingSnap ? 'Posting...' : 'Add Story'}
+                    </span>
+                  </button>
+
+                  {/* Option B: Direct Send to Any Friend / User */}
+                  <div className="flex-1 min-h-0 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] font-black uppercase tracking-wider text-neutral-400">
+                        Direct Send to Friend
+                      </p>
+                      <span className="text-[10px] text-cyan-400 font-semibold">
+                        {filteredDirectRecipients.length} available
+                      </span>
+                    </div>
+
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={snapFriendSearch}
+                        onChange={(e) => setSnapFriendSearch(e.target.value)}
+                        placeholder="Search user or @username..."
+                        className="w-full bg-neutral-900 text-xs text-white placeholder-neutral-500 pl-8.5 pr-3 py-2 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500"
+                      />
+                    </div>
+
+                    <div className="flex-1 max-h-56 overflow-y-auto no-scrollbar divide-y divide-neutral-900 rounded-2xl border border-neutral-800/80 bg-neutral-900/40">
+                      {filteredDirectRecipients.length === 0 ? (
+                        <p className="p-4 text-center text-xs text-neutral-500">
+                          No friends found matching your search.
+                        </p>
+                      ) : (
+                        filteredDirectRecipients.map((friend) => {
+                          const alreadySent = sentRecipientIds.includes(friend.username);
+                          return (
+                            <div
+                              key={friend.username}
+                              className="px-3 py-2 flex items-center justify-between gap-2.5"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <img
+                                  src={optimizeThumbnailUrl(friend.avatar, 'grid')}
+                                  alt={friend.name}
+                                  className="w-9 h-9 rounded-full object-cover border border-pink-500/40 shrink-0"
+                                  referrerPolicy="no-referrer"
+                                />
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1">
+                                    <p className="text-xs font-bold text-white truncate">
+                                      {friend.name}
+                                    </p>
+                                    {friend.isVerified && (
+                                      <CheckCircle2 className="w-3 h-3 text-sky-400 shrink-0" />
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-cyan-400 truncate">
+                                    @{friend.username}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                disabled={isSendingSnap || alreadySent}
+                                onClick={() => handleDirectSendToFriend(friend)}
+                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black flex items-center gap-1 shrink-0 cursor-pointer transition-all ${
+                                  alreadySent
+                                    ? 'bg-emerald-500/20 border border-emerald-400/60 text-emerald-300'
+                                    : 'bg-gradient-to-r from-pink-600 to-amber-500 hover:brightness-110 text-white'
+                                }`}
+                              >
+                                {alreadySent ? (
+                                  <>
+                                    <Check className="w-3 h-3" />
+                                    <span>Sent</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Send className="w-3 h-3" />
+                                    <span>Send</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           /* ACTIVE SNAPCHAT-STYLE 60FPS HARDWARE-ACCELERATED VIEWFINDER (Double-tap to flip camera) */
@@ -1316,7 +1556,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             className="relative w-full h-full sm:max-w-md sm:max-h-[760px] rounded-none sm:rounded-3xl overflow-hidden bg-black border-0 sm:border sm:border-neutral-800 shadow-2xl flex flex-col justify-between"
           >
             {!isSimulatedFeed ? (
-              <div className="relative w-full h-full overflow-hidden bg-black">
+              <div className="relative w-full h-full overflow-hidden bg-black [transform:translateZ(0)] [will-change:transform]">
                 <video
                   ref={videoPreviewRef}
                   autoPlay
@@ -1325,8 +1565,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   onLoadedData={() => setIsCameraReady(true)}
                   style={{
                     filter: activeCanvasFallbackFilter,
-                    transform: `translate3d(0, 0, 0) scale(${zoomLevel}) scaleX(${facingMode === 'user' ? -1 : 1})`,
-                    willChange: 'transform, filter',
+                    transform: `translateZ(0) scale(${zoomLevel}) scaleX(${facingMode === 'user' ? -1 : 1})`,
+                    willChange: 'transform',
+                    backfaceVisibility: 'hidden',
                   }}
                   className="w-full h-full object-cover"
                 />
@@ -1334,27 +1575,21 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   <div className="absolute inset-0 flex items-center justify-center bg-black/75 pointer-events-none">
                     <div className="px-4 py-2 rounded-full bg-neutral-900/90 border border-pink-500/40 text-xs font-bold text-neutral-200 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
-                      <span>Starting 60fps HD camera...</span>
+                      <span>Starting 60fps low-latency camera...</span>
                     </div>
                   </div>
                 )}
-                {selectedFilterId === 'warm_glow' && (
-                  <div className="absolute inset-0 pointer-events-none bg-radial from-amber-300/15 via-transparent to-orange-500/15 mix-blend-screen" />
+                {selectedFilterId === 'golden_glow' && (
+                  <div className="absolute inset-0 pointer-events-none bg-amber-400/10 mix-blend-screen" />
                 )}
-                {selectedFilterId === 'cool_breeze' && (
-                  <div className="absolute inset-0 pointer-events-none bg-linear-to-br from-sky-400/15 to-indigo-500/15 mix-blend-screen" />
-                )}
-                {selectedFilterId === 'vintage_retro' && (
-                  <div className="absolute inset-0 pointer-events-none bg-radial from-amber-200/10 via-transparent to-black/45" />
-                )}
-                {selectedFilterId === 'noir_bw' && (
-                  <div className="absolute inset-0 pointer-events-none bg-radial from-white/5 via-transparent to-black/50" />
-                )}
-                {selectedFilterId === 'cyberpunk_neon' && (
-                  <div className="absolute inset-0 pointer-events-none bg-linear-to-br from-pink-500/20 via-purple-500/10 to-cyan-400/20 mix-blend-screen" />
+                {selectedFilterId === 'cinema_pro' && (
+                  <div className="absolute inset-0 pointer-events-none bg-sky-500/8 mix-blend-screen" />
                 )}
                 {selectedFilterId === 'soft_beauty' && (
-                  <div className="absolute inset-0 pointer-events-none bg-radial from-pink-200/15 via-transparent to-pink-400/10 mix-blend-screen" />
+                  <div className="absolute inset-0 pointer-events-none bg-pink-300/10 mix-blend-screen" />
+                )}
+                {selectedFilterId === 'dark_moody' && (
+                  <div className="absolute inset-0 pointer-events-none bg-slate-950/20" />
                 )}
               </div>
             ) : (

@@ -1,98 +1,226 @@
 import React, { useState } from 'react';
-import { Download, Smartphone, Share, PlusSquare, X } from 'lucide-react';
+import {
+  Download,
+  Smartphone,
+  Share,
+  PlusSquare,
+  X,
+  MoreVertical,
+  Sparkles,
+} from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface PWAInstallButtonProps {
-  variant?: 'topbar' | 'sidebar';
+  variant?: 'topbar' | 'sidebar' | 'menu' | 'banner' | 'mobile-header';
   onShowToast?: (msg: string) => void;
 }
+
+const BANNER_DISMISSED_KEY = 'jatt_pwa_banner_dismissed_v1';
 
 export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
   variant = 'topbar',
   onShowToast,
 }) => {
-  const { isInstallable, isInstalled, promptInstall } = usePWAInstall();
-  const [showIosGuide, setShowIosGuide] = useState(false);
+  const { isInstalled, isIos, hasNativePrompt, promptInstall } = usePWAInstall();
+  const [guideMode, setGuideMode] = useState<'ios' | 'chrome' | null>(null);
+  const [isBannerDismissed, setIsBannerDismissed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(BANNER_DISMISSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
 
-  if (isInstalled || !isInstallable) {
+  // Automatically suppress install UI when running as an installed standalone PWA
+  if (isInstalled) {
     return null;
+  }
+
+  // Show the floating banner automatically when native Chrome prompt is ready OR on mobile, unless dismissed
+  if (variant === 'banner') {
+    if (isBannerDismissed) return null;
+    const isLikelyMobile =
+      typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (!hasNativePrompt && !isLikelyMobile && !isIos) {
+      return null;
+    }
   }
 
   const handleClick = async () => {
     const result = await promptInstall();
     if (result === 'accepted') {
-      onShowToast?.('Jatt VibeReels installed for offline access!');
+      onShowToast?.('Jatt VibeReels installed to your home screen!');
     } else if (result === 'ios') {
-      setShowIosGuide(true);
+      setGuideMode('ios');
+    } else if (result === 'manual') {
+      setGuideMode('chrome');
+    }
+  };
+
+  const handleDismissBanner = () => {
+    setIsBannerDismissed(true);
+    try {
+      sessionStorage.setItem(BANNER_DISMISSED_KEY, '1');
+    } catch {
+      // ignore storage errors
     }
   };
 
   return (
     <>
-      {variant === 'sidebar' ? (
+      {variant === 'banner' ? (
+        <div className="fixed bottom-16 lg:bottom-5 left-3 right-3 sm:left-auto sm:right-5 sm:w-88 z-45 pointer-events-auto animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div className="rounded-2xl bg-neutral-950/95 border border-pink-500/45 shadow-2xl shadow-pink-600/20 p-3 flex items-center justify-between gap-2.5 backdrop-blur-md">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <img
+                src="/pwa-192x192.png"
+                alt="Jatt VibeReels"
+                className="w-10 h-10 rounded-xl border border-pink-500/40 shrink-0"
+              />
+              <div className="min-w-0">
+                <p className="text-xs font-black text-white flex items-center gap-1 truncate">
+                  <span>Install Jatt VibeReels</span>
+                  <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
+                </p>
+                <p className="text-[10px] text-neutral-300 truncate">
+                  One-tap home screen app &amp; offline mode
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleClick}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 hover:brightness-110 text-white text-[11px] font-black flex items-center gap-1 shadow-md cursor-pointer active:scale-95"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Install App</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDismissBanner}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 cursor-pointer"
+                aria-label="Dismiss install banner"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : variant === 'sidebar' ? (
         <button
           type="button"
           onClick={handleClick}
           className="w-full py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-emerald-600/20 to-cyan-600/20 hover:from-emerald-600/30 hover:to-cyan-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-black flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer"
-          title="Install Jatt VibeReels app for offline playback"
+          title="Install Jatt VibeReels app to home screen"
         >
           <Smartphone className="w-4 h-4 text-emerald-400" />
-          <span>Install Offline App</span>
+          <span>Install App</span>
+        </button>
+      ) : variant === 'menu' ? (
+        <button
+          type="button"
+          onClick={handleClick}
+          className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500/20 via-cyan-500/15 to-pink-500/20 hover:from-emerald-500/30 hover:to-pink-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-black flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer"
+        >
+          <Download className="w-4 h-4 text-emerald-400" />
+          <span>Install Jatt VibeReels App</span>
+        </button>
+      ) : variant === 'mobile-header' ? (
+        <button
+          type="button"
+          onClick={handleClick}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/45 text-emerald-300 text-[10px] font-black shrink-0 active:scale-95 cursor-pointer"
+          title="Install App to Home Screen"
+          aria-label="Install App"
+        >
+          <Download className="w-3 h-3 text-emerald-400" />
+          <span>Install</span>
         </button>
       ) : (
         <button
           type="button"
           onClick={handleClick}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition-all active:scale-95 cursor-pointer"
-          title="Install Jatt VibeReels App (Offline Ready)"
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl border text-xs font-bold transition-all active:scale-95 cursor-pointer ${
+            hasNativePrompt
+              ? 'bg-gradient-to-r from-emerald-500/25 to-cyan-500/25 hover:from-emerald-500/35 hover:to-cyan-500/35 border-emerald-400/60 text-emerald-200 shadow-sm shadow-emerald-500/20'
+              : 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300'
+          }`}
+          title="Install Jatt VibeReels App to Home Screen"
         >
           <Download className="w-3.5 h-3.5 text-emerald-400" />
           <span className="hidden md:inline">Install App</span>
         </button>
       )}
 
-      {showIosGuide && (
+      {guideMode && (
         <div
           className="fixed inset-0 z-60 bg-black/85 flex items-center justify-center p-4 animate-in fade-in duration-150"
-          onClick={() => setShowIosGuide(false)}
+          onClick={() => setGuideMode(null)}
         >
           <div
             className="w-full max-w-sm bg-neutral-950 border border-neutral-800 rounded-3xl p-5 shadow-2xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Smartphone className="w-5 h-5 text-emerald-400" />
-                <h3 className="text-sm font-black text-white">Install Jatt VibeReels</h3>
+              <div className="flex items-center gap-2.5">
+                <img
+                  src="/pwa-192x192.png"
+                  alt="Jatt VibeReels"
+                  className="w-8 h-8 rounded-lg border border-pink-500/40"
+                />
+                <div>
+                  <h3 className="text-sm font-black text-white">Install Jatt VibeReels</h3>
+                  <p className="text-[10px] text-neutral-400">
+                    {guideMode === 'ios' ? 'iPhone & iPad Safari' : 'Chrome / Android / Desktop'}
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => setShowIosGuide(false)}
-                className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800"
+                onClick={() => setGuideMode(null)}
+                className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-neutral-300 leading-relaxed">
-              Install this app on your iPhone or iPad to open the UI, Pro Camera, and saved reels/naats without internet:
-            </p>
-            <ol className="space-y-2.5 text-xs text-neutral-200">
-              <li className="flex items-center gap-2.5 bg-neutral-900 p-2.5 rounded-xl border border-neutral-800">
-                <Share className="w-4 h-4 text-cyan-400 shrink-0" />
-                <span>
-                  1. Tap the <strong>Share</strong> icon in Safari toolbar
-                </span>
-              </li>
-              <li className="flex items-center gap-2.5 bg-neutral-900 p-2.5 rounded-xl border border-neutral-800">
-                <PlusSquare className="w-4 h-4 text-pink-400 shrink-0" />
-                <span>
-                  2. Select <strong>Add to Home Screen</strong>
-                </span>
-              </li>
-            </ol>
+
+            {guideMode === 'ios' ? (
+              <ol className="space-y-2.5 text-xs text-neutral-200">
+                <li className="flex items-center gap-2.5 bg-neutral-900 p-2.5 rounded-xl border border-neutral-800">
+                  <Share className="w-4 h-4 text-cyan-400 shrink-0" />
+                  <span>
+                    1. Tap the <strong>Share</strong> icon in Safari toolbar
+                  </span>
+                </li>
+                <li className="flex items-center gap-2.5 bg-neutral-900 p-2.5 rounded-xl border border-neutral-800">
+                  <PlusSquare className="w-4 h-4 text-pink-400 shrink-0" />
+                  <span>
+                    2. Scroll down and tap <strong>Add to Home Screen</strong>
+                  </span>
+                </li>
+              </ol>
+            ) : (
+              <ol className="space-y-2.5 text-xs text-neutral-200">
+                <li className="flex items-center gap-2.5 bg-neutral-900 p-2.5 rounded-xl border border-neutral-800">
+                  <MoreVertical className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>
+                    1. Open the browser menu (<strong>⋮</strong>) or install icon in the address bar
+                  </span>
+                </li>
+                <li className="flex items-center gap-2.5 bg-neutral-900 p-2.5 rounded-xl border border-neutral-800">
+                  <Smartphone className="w-4 h-4 text-pink-400 shrink-0" />
+                  <span>
+                    2. Tap <strong>Install App</strong> or <strong>Add to Home screen</strong>
+                  </span>
+                </li>
+              </ol>
+            )}
+
             <button
               type="button"
-              onClick={() => setShowIosGuide(false)}
+              onClick={() => setGuideMode(null)}
               className="w-full py-2.5 rounded-xl bg-gradient-to-r from-pink-600 to-cyan-600 text-white text-xs font-black cursor-pointer"
             >
               Got it

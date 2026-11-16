@@ -20,6 +20,7 @@ import {
   Play,
   Pause,
   Image as ImageIcon,
+  Send,
 } from 'lucide-react';
 import { UserAccount, VideoPost, CreatorProfileData, AudioTrackOption } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
@@ -52,6 +53,8 @@ interface TopBarProps {
   onOpenCreatorSearch?: () => void;
   onOpenActivity?: () => void;
   unreadActivityCount?: number;
+  onOpenDirectSnaps?: () => void;
+  unreadDirectSnapsCount?: number;
   onLogout: () => void;
   currentTab?: string;
 }
@@ -74,6 +77,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenCreatorSearch,
   onOpenActivity,
   unreadActivityCount = 0,
+  onOpenDirectSnaps,
+  unreadDirectSnapsCount = 0,
   onLogout,
   currentTab,
 }) => {
@@ -476,6 +481,24 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span className="sm:hidden">Upload</span>
         </button>
 
+        {/* Direct Chat / Live Snaps Inbox Button */}
+        {onOpenDirectSnaps && (
+          <button
+            type="button"
+            onClick={onOpenDirectSnaps}
+            className="relative p-2 rounded-xl border bg-neutral-900 hover:bg-neutral-800 border-amber-500/40 text-amber-300 hover:text-amber-200 transition-all active:scale-95 shadow-sm cursor-pointer"
+            title="Direct Chat & Live Snaps Inbox"
+            aria-label="Direct Chat & Live Snaps"
+          >
+            <Send className="w-4 h-4" />
+            {unreadDirectSnapsCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-amber-400 text-black text-[9px] font-black flex items-center justify-center">
+                {unreadDirectSnapsCount > 9 ? '9+' : unreadDirectSnapsCount}
+              </span>
+            )}
+          </button>
+        )}
+
         {/* Notifications / Creator Activity Button */}
         {onOpenActivity && (
           <button
@@ -615,6 +638,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
                 {/* Menu Actions */}
                 <div className="pt-1 flex flex-col gap-1.5">
+                  <PWAInstallButton variant="menu" />
                   {onOpenProfile && (
                     <button
                       type="button"

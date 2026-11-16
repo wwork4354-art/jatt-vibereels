@@ -5,6 +5,9 @@ import {
   Sparkles,
   Music,
   Compass,
+  Camera,
+  Upload,
+  Film,
 } from 'lucide-react';
 import { INITIAL_VIDEOS } from './data/mockVideos';
 import {
@@ -13,20 +16,48 @@ import {
   getStoredCurrentUser,
   saveStoredCurrentUser,
 } from './data/mockUsers';
-import { VideoPost, FeedTab, UserAccount, UserRole, UserStatus, CreatorProfileData, ActivityEvent, CommentItem } from './types';
+import {
+  VideoPost,
+  FeedTab,
+  UserAccount,
+  UserRole,
+  UserStatus,
+  CreatorProfileData,
+  ActivityEvent,
+  CommentItem,
+  LiveStoryItem,
+  DirectSnapMessage,
+  DirectSnapRecipient,
+} from './types';
 import { VideoCard } from './components/VideoCard';
+import { LiveStoriesBar } from './components/LiveStoriesBar';
 import { SidebarDesktop } from './components/SidebarDesktop';
 import { MobileNavigation } from './components/MobileNavigation';
 import { TopBar } from './components/TopBar';
 import { OfflineBanner } from './components/OfflineBanner';
+import { PWAInstallButton } from './components/PWAInstallButton';
 import { soundEngine } from './utils/soundEngine';
 import { compressImageFile } from './utils/imageOptimize';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import {
+  isStoryActive,
+  getStoredLiveStories,
+  fetchActiveLiveStories,
+  markLiveStoryViewed,
+  deleteLiveStoryById,
+  getStoredDirectSnaps,
+  fetchDirectSnaps,
+  sendDirectSnap,
+  markDirectSnapViewed,
+  fetchDirectSendRecipients,
+  subscribeToLiveSnapsRealtime,
+} from './lib/liveSnapService';
 import {
   getAllOfflineSavedPosts,
   hydratePostWithOfflineRecord,
   savePostForOffline,
 } from './lib/offlineMediaStore';
+import { loadPlaybackState, savePlaybackState } from './lib/playbackPersistence';
 
 // Lazy-load offscreen tabs and modals so initial page load is fast
 const CommentsDrawer = lazy(() =>
@@ -70,6 +101,9 @@ const CreatorDirectoryModal = lazy(() =>
 );
 const PublicCreatorProfileView = lazy(() =>
   import('./components/PublicCreatorProfileView').then((m) => ({ default: m.PublicCreatorProfileView }))
+);
+const DirectSnapsModal = lazy(() =>
+  import('./components/DirectSnapsModal').then((m) => ({ default: m.DirectSnapsModal }))
 );
 
 const LazyTabFallback = () => (
@@ -180,7 +214,10 @@ const getInitialCreatorProfile = (user: UserAccount | null): CreatorProfileData 
           username: parsed.username,
           bio: parsed.bio || '',
           avatar: parsed.avatar || 'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
-          baseFollowers: typeof parsed.baseFollowers === 'number' ? parsed.baseFollowers : 12400,
+          baseFollowers:
+            typeof parsed.baseFollowers === 'number' && parsed.baseFollowers !== 12400
+              ? parsed.baseFollowers
+              : 0,
         };
       }
     }
@@ -194,7 +231,7 @@ const getInitialCreatorProfile = (user: UserAccount | null): CreatorProfileData 
     username: user?.username || 'jatt_official',
     bio: user?.bio || 'Creating neon vibes & Punjabi reels on Jatt VibeReels.',
     avatar: user?.avatar || 'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
-    baseFollowers: 12400,
+    baseFollowers: 0,
   };
 };
 
@@ -268,6 +305,42 @@ function hydrateVideosFromStorage(
   });
 }
 
+function filterFeedVideos(
+  list: VideoPost[],
+  tab: FeedTab,
+  selectedTag: string | null
+): VideoPost[] {
+  if (
+    tab === 'live' ||
+    tab === 'downloads' ||
+    tab === 'profile' ||
+    tab === 'activity' ||
+    tab === 'channel'
+  ) {
+    return [];
+  }
+  const filtered = list.filter((v) => {
+    if (selectedTag) {
+      return v.hashtags.includes(selectedTag);
+    }
+    if (tab === 'saved') {
+      return v.isSaved;
+    }
+    if (tab === 'following') {
+      return v.creator.isFollowing;
+    }
+    return true;
+  });
+
+  if (tab === 'trending') {
+    return [...filtered].sort(
+      (a, b) =>
+        b.stats.views + b.stats.likes * 3 - (a.stats.views + a.stats.likes * 3)
+    );
+  }
+  return filtered;
+}
+
 export default function App() {
   const [users, setUsers] = useState<UserAccount[]>(getStoredUsers);
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(getStoredCurrentUser);
@@ -288,9 +361,34 @@ export default function App() {
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>(getStoredActivityEvents);
   const [lastReadActivityAt, setLastReadActivityAt] = useState<string>(getActivityLastReadAt);
 
-  const [currentTab, setCurrentTab] = useState<FeedTab>('foryou');
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [savedInitialPlayback] = useState(() => loadPlaybackState());
+  const [currentTab, setCurrentTab] = useState<FeedTab>(() => {
+    if (!savedInitialPlayback) return 'foryou';
+    if (savedInitialPlayback.activeTab === 'channel' && !savedInitialPlayback.selectedChannelUsername) {
+      return 'foryou';
+    }
+    return savedInitialPlayback.activeTab;
+  });
+  const [selectedTag, setSelectedTag] = useState<string | null>(
+    () => savedInitialPlayback?.selectedTag ?? null
+  );
+  const [selectedChannelUsername, setSelectedChannelUsername] = useState<string | null>(
+    () => savedInitialPlayback?.selectedChannelUsername ?? null
+  );
+  const [activeIndex, setActiveIndex] = useState<number>(() => {
+    if (!savedInitialPlayback?.videoId) return 0;
+    const restoredTab: FeedTab =
+      savedInitialPlayback.activeTab === 'channel' && !savedInitialPlayback.selectedChannelUsername
+        ? 'foryou'
+        : savedInitialPlayback.activeTab;
+    const filtered = filterFeedVideos(
+      videos,
+      restoredTab,
+      savedInitialPlayback.selectedTag ?? null
+    );
+    const matchedIndex = filtered.findIndex((v) => v.id === savedInitialPlayback.videoId);
+    return matchedIndex >= 0 ? matchedIndex : 0;
+  });
   const [isMuted, setIsMuted] = useState(true);
 
   // Modals state
@@ -305,19 +403,45 @@ export default function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isCreatorSearchOpen, setIsCreatorSearchOpen] = useState(false);
-  const [selectedChannelUsername, setSelectedChannelUsername] = useState<string | null>(null);
+  const [liveStories, setLiveStories] = useState<LiveStoryItem[]>(getStoredLiveStories);
+  const [directSnaps, setDirectSnaps] = useState<DirectSnapMessage[]>(getStoredDirectSnaps);
+  const [directRecipients, setDirectRecipients] = useState<DirectSnapRecipient[]>([]);
+  const [isDirectSnapsOpen, setIsDirectSnapsOpen] = useState(false);
+  const [isStoriesBarOpen, setIsStoriesBarOpen] = useState(false);
+  const [storiesDragOffsetPx, setStoriesDragOffsetPx] = useState<number | null>(null);
+  const [snapReplyTarget, setSnapReplyTarget] = useState<DirectSnapRecipient | null>(null);
   const [profileInitialSubTab, setProfileInitialSubTab] = useState<
     'videos' | 'saved' | 'liked' | 'activity' | undefined
   >(undefined);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const isOnline = useOnlineStatus();
 
-
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const lastFeedScrollTopRef = useRef<number>(0);
+  const storiesSwipeRef = useRef<{
+    active: boolean;
+    startY: number;
+    startX: number;
+    fromTopZone: boolean;
+    atFeedTop: boolean;
+    wasOpen: boolean;
+    engaged: boolean;
+    lastDeltaY: number;
+  } | null>(null);
   const videosRef = useRef<VideoPost[]>(videos);
+  const expectedVideoIdRef = useRef<string>(savedInitialPlayback?.videoId || '');
+  const needsScrollSyncRef = useRef<boolean>(activeIndex > 0);
   useEffect(() => {
     videosRef.current = videos;
   }, [videos]);
+
+  useEffect(() => {
+    if (currentTab !== 'foryou' && currentTab !== 'following') {
+      setIsStoriesBarOpen(false);
+      setStoriesDragOffsetPx(null);
+    }
+  }, [currentTab]);
 
   // Sync users to localStorage
   const updateUsers = useCallback((newUsers: UserAccount[]) => {
@@ -445,6 +569,7 @@ export default function App() {
       void import('./components/ProCameraModal');
       void import('./components/CreatorDirectoryModal');
       void import('./components/PublicCreatorProfileView');
+      void import('./components/DirectSnapsModal');
     };
     const idleWin = window as Window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
@@ -574,6 +699,52 @@ export default function App() {
     };
   }, [creatorProfile.id, creatorProfile.username, isOnline]);
 
+  // Load & sync 24-hour Live Stories + Direct Snaps + Direct Send friend recipients
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSnapsAndStories = async () => {
+      const [stories, snaps, recipients] = await Promise.all([
+        fetchActiveLiveStories(),
+        fetchDirectSnaps(),
+        fetchDirectSendRecipients(videosRef.current, creatorProfile, users),
+      ]);
+      if (cancelled) return;
+      setLiveStories(stories);
+      setDirectSnaps(snaps);
+      setDirectRecipients(recipients);
+    };
+
+    void loadSnapsAndStories();
+
+    const unsubscribeRealtime = subscribeToLiveSnapsRealtime({
+      onNewStory: (story) => {
+        setLiveStories((prev) => [story, ...prev.filter((s) => s.id !== story.id)]);
+      },
+      onNewDirectSnap: (snap) => {
+        setDirectSnaps((prev) => [snap, ...prev.filter((m) => m.id !== snap.id)]);
+        const ownClean = normalizeCreatorUsername(creatorProfile.username);
+        if (
+          snap.recipientId === creatorProfile.id ||
+          (ownClean && normalizeCreatorUsername(snap.recipientUsername) === ownClean)
+        ) {
+          showToast(`New Live Snap from @${snap.senderUsername}!`);
+        }
+      },
+    });
+
+    const expiryPruner = window.setInterval(() => {
+      const now = Date.now();
+      setLiveStories((prev) => prev.filter((s) => isStoryActive(s, now)));
+    }, 60_000);
+
+    return () => {
+      cancelled = true;
+      unsubscribeRealtime();
+      window.clearInterval(expiryPruner);
+    };
+  }, [creatorProfile, users, showToast]);
+
   // Update creator profile and persist to localStorage + Supabase
   const handleUpdateCreatorProfile = useCallback(
     (updated: CreatorProfileData) => {
@@ -669,32 +840,46 @@ export default function App() {
   );
 
   // Filter videos based on current tab and selected tag (memoized for 60fps scroll & instant tab switching)
-  const displayedVideos = useMemo(() => {
-    if (
-      currentTab === 'live' ||
-      currentTab === 'downloads' ||
-      currentTab === 'profile' ||
-      currentTab === 'activity' ||
-      currentTab === 'channel'
-    ) {
-      return [];
+  const displayedVideos = useMemo(
+    () => filterFeedVideos(videos, currentTab, selectedTag),
+    [videos, currentTab, selectedTag]
+  );
+
+  // Keep currently watched video aligned if cloud/offline hydration prepends new posts
+  useEffect(() => {
+    if (displayedVideos.length === 0) return;
+
+    if (!expectedVideoIdRef.current) {
+      expectedVideoIdRef.current =
+        displayedVideos[activeIndex]?.id || displayedVideos[0]?.id || '';
+      return;
     }
-    return videos.filter((v) => {
-      if (selectedTag) {
-        return v.hashtags.includes(selectedTag);
-      }
-      if (currentTab === 'saved') {
-        return v.isSaved;
-      }
-      if (currentTab === 'following') {
-        return v.creator.isFollowing;
-      }
-      if (currentTab === 'trending') {
-        return v.stats.likes > 100000;
-      }
-      return true; // 'foryou'
-    });
-  }, [videos, currentTab, selectedTag]);
+
+    const currentAtIdx = displayedVideos[activeIndex];
+    if (currentAtIdx?.id === expectedVideoIdRef.current) {
+      return;
+    }
+
+    const targetIdx = displayedVideos.findIndex((v) => v.id === expectedVideoIdRef.current);
+    if (targetIdx >= 0) {
+      needsScrollSyncRef.current = true;
+      setActiveIndex(targetIdx);
+    } else {
+      expectedVideoIdRef.current =
+        displayedVideos[activeIndex]?.id || displayedVideos[0]?.id || '';
+    }
+  }, [displayedVideos, activeIndex]);
+
+  // Snap scroll position cleanly to restored video index on mount or return to feed
+  useEffect(() => {
+    if (!needsScrollSyncRef.current) return;
+    const el = containerRef.current;
+    if (!el || el.clientHeight <= 0 || displayedVideos.length === 0) return;
+
+    needsScrollSyncRef.current = false;
+    const safeIdx = Math.max(0, Math.min(displayedVideos.length - 1, activeIndex));
+    el.scrollTop = safeIdx * el.clientHeight;
+  }, [activeIndex, displayedVideos.length, currentTab]);
 
   // Switch dynamically to TikTok Live Stream view
   const handleOpenLive = useCallback(() => {
@@ -710,12 +895,12 @@ export default function App() {
     showToast('Opened All-in-One Download Hub');
   }, [showToast]);
 
-
   // Scroll to specific index
   const scrollToIndex = useCallback(
     (index: number) => {
       if (!containerRef.current) return;
       const targetIndex = Math.max(0, Math.min(displayedVideos.length - 1, index));
+      expectedVideoIdRef.current = displayedVideos[targetIndex]?.id || '';
       const targetY = targetIndex * containerRef.current.clientHeight;
       containerRef.current.scrollTo({
         top: targetY,
@@ -723,19 +908,114 @@ export default function App() {
       });
       setActiveIndex(targetIndex);
     },
-    [displayedVideos.length]
+    [displayedVideos]
   );
 
-  // Track active index on scroll
+  // Track active index on scroll & auto-hide Live Stories bar when scrolling down
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
     const { scrollTop, clientHeight } = containerRef.current;
     if (clientHeight === 0) return;
+
+    if (scrollTop > lastFeedScrollTopRef.current + 6) {
+      setIsStoriesBarOpen((prev) => (prev ? false : prev));
+    }
+    lastFeedScrollTopRef.current = scrollTop;
+
     const newIndex = Math.round(scrollTop / clientHeight);
     if (newIndex !== activeIndex && newIndex >= 0 && newIndex < displayedVideos.length) {
+      expectedVideoIdRef.current = displayedVideos[newIndex]?.id || '';
       setActiveIndex(newIndex);
     }
-  }, [activeIndex, displayedVideos.length]);
+  }, [activeIndex, displayedVideos]);
+
+  // Smooth touch + desktop mouse/wheel swipe gestures for collapsible Live Stories Bar
+  const beginStoriesSwipe = useCallback(
+    (clientY: number, clientX: number) => {
+      if (currentTab !== 'foryou' && currentTab !== 'following') return;
+      const stageRect = stageRef.current?.getBoundingClientRect();
+      const fromTopZone = stageRect ? clientY - stageRect.top <= 145 : false;
+      const atFeedTop = (containerRef.current?.scrollTop || 0) <= 6;
+      if (!isStoriesBarOpen && !fromTopZone && !atFeedTop) return;
+
+      storiesSwipeRef.current = {
+        active: true,
+        startY: clientY,
+        startX: clientX,
+        fromTopZone,
+        atFeedTop,
+        wasOpen: isStoriesBarOpen,
+        engaged: false,
+        lastDeltaY: 0,
+      };
+    },
+    [currentTab, isStoriesBarOpen]
+  );
+
+  const moveStoriesSwipe = useCallback((clientY: number, clientX: number) => {
+    const swipe = storiesSwipeRef.current;
+    if (!swipe || !swipe.active) return;
+
+    const dy = clientY - swipe.startY;
+    const dx = clientX - swipe.startX;
+    if (!swipe.engaged && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
+      storiesSwipeRef.current = null;
+      setStoriesDragOffsetPx(null);
+      return;
+    }
+
+    if (!swipe.wasOpen) {
+      // Swipe DOWN from top area (or from top of feed) to pull Live Stories bar down
+      if (dy > 10 && (swipe.fromTopZone || swipe.atFeedTop)) {
+        swipe.engaged = true;
+        const clamped = Math.min(112, dy);
+        swipe.lastDeltaY = clamped;
+        setStoriesDragOffsetPx(clamped);
+      }
+    } else {
+      // Swipe UP while Live Stories bar is open to slide it back up & hide
+      if (dy < -10) {
+        swipe.engaged = true;
+        const clamped = Math.max(-112, dy);
+        swipe.lastDeltaY = clamped;
+        setStoriesDragOffsetPx(clamped);
+      }
+    }
+  }, []);
+
+  const endStoriesSwipe = useCallback(() => {
+    const swipe = storiesSwipeRef.current;
+    if (!swipe) return;
+    storiesSwipeRef.current = null;
+    setStoriesDragOffsetPx(null);
+
+    if (!swipe.engaged) return;
+
+    if (!swipe.wasOpen) {
+      if (swipe.lastDeltaY >= 34) {
+        setIsStoriesBarOpen(true);
+      }
+    } else if (swipe.lastDeltaY <= -26) {
+      setIsStoriesBarOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onWinMouseMove = (e: MouseEvent) => {
+      if (!storiesSwipeRef.current?.active) return;
+      moveStoriesSwipe(e.clientY, e.clientX);
+    };
+    const onWinMouseUp = () => {
+      if (!storiesSwipeRef.current?.active) return;
+      endStoriesSwipe();
+    };
+    window.addEventListener('mousemove', onWinMouseMove);
+    window.addEventListener('mouseup', onWinMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onWinMouseMove);
+      window.removeEventListener('mouseup', onWinMouseUp);
+    };
+  }, [moveStoriesSwipe, endStoriesSwipe]);
 
   // Helper to get active actor info for activity logging & comments
   const getActiveActor = useCallback(
@@ -934,10 +1214,10 @@ export default function App() {
     setCurrentTab('profile');
   }, []);
 
-  // Track real-time views when watched
+  // Track real-time views (+1 only when genuinely watched >= 3 seconds)
   const handleViewTracked = useCallback(
     (id: string) => {
-      const targetVideo = videos.find((v) => v.id === id);
+      const targetVideo = videosRef.current.find((v) => v.id === id);
       if (!targetVideo) return;
       const nextViews = (targetVideo.stats.views || 0) + 1;
 
@@ -961,7 +1241,7 @@ export default function App() {
         targetVideo.isSupabasePost
       );
     },
-    [videos]
+    []
   );
 
   // Track real-time downloads + log creator activity
@@ -1090,6 +1370,7 @@ export default function App() {
   }, [handleMarkActivityRead]);
   const handleBackToFeed = useCallback(() => {
     setSelectedTag(null);
+    needsScrollSyncRef.current = true;
     setCurrentTab('foryou');
   }, []);
 
@@ -1177,6 +1458,7 @@ export default function App() {
 
   // Upload new post success
   const handleUploadSuccess = (newPost: VideoPost) => {
+    expectedVideoIdRef.current = newPost.id;
     setVideos((prev) => [newPost, ...prev.filter((v) => v.id !== newPost.id)]);
     setSelectedTag(null);
     setCurrentTab('foryou');
@@ -1309,6 +1591,7 @@ export default function App() {
 
         saveLocalPostRecord(finalPost);
         // 1. Prepend this new post to the top of the main feed array (deduping realtime)
+        expectedVideoIdRef.current = finalPost.id;
         setVideos((prev) => [finalPost, ...prev.filter((v) => v.id !== finalPost.id)]);
 
         // 2. Switch to main vertical feed mode & reset tag filters
@@ -1410,7 +1693,75 @@ export default function App() {
     const cutoff = new Date(lastReadActivityAt).getTime();
     return activityEvents.filter((ev) => new Date(ev.createdAt).getTime() > cutoff).length;
   }, [activityEvents, lastReadActivityAt]);
+
+  const unreadDirectSnapsCount = useMemo(() => {
+    const ownClean = normalizeCreatorUsername(creatorProfile.username);
+    return directSnaps.filter((snap) => {
+      if (snap.isViewed) return false;
+      const recipClean = normalizeCreatorUsername(snap.recipientUsername);
+      const isAddressedToMe =
+        snap.recipientId === creatorProfile.id ||
+        (Boolean(ownClean) && recipClean === ownClean);
+      return isAddressedToMe;
+    }).length;
+  }, [directSnaps, creatorProfile.id, creatorProfile.username]);
+
   const currentActiveVideo = displayedVideos[activeIndex];
+
+  // Continuously save active tab, filters, channel & current video ID in localStorage + sessionStorage
+  const latestNavSnapshotRef = useRef({
+    currentTab,
+    selectedTag,
+    selectedChannelUsername,
+    activeVideoId: currentActiveVideo?.id || expectedVideoIdRef.current || '',
+  });
+
+  useEffect(() => {
+    const resolvedVideoId =
+      currentActiveVideo?.id ||
+      expectedVideoIdRef.current ||
+      latestNavSnapshotRef.current.activeVideoId ||
+      '';
+    latestNavSnapshotRef.current = {
+      currentTab,
+      selectedTag,
+      selectedChannelUsername,
+      activeVideoId: resolvedVideoId,
+    };
+    savePlaybackState({
+      activeTab: currentTab,
+      selectedTag,
+      selectedChannelUsername,
+      ...(resolvedVideoId ? { videoId: resolvedVideoId } : {}),
+    });
+  }, [currentTab, selectedTag, selectedChannelUsername, currentActiveVideo?.id]);
+
+  useEffect(() => {
+    const persistSnapshot = () => {
+      const snap = latestNavSnapshotRef.current;
+      savePlaybackState({
+        activeTab: snap.currentTab,
+        selectedTag: snap.selectedTag,
+        selectedChannelUsername: snap.selectedChannelUsername,
+        ...(snap.activeVideoId ? { videoId: snap.activeVideoId } : {}),
+      });
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        persistSnapshot();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pagehide', persistSnapshot);
+    window.addEventListener('beforeunload', persistSnapshot);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pagehide', persistSnapshot);
+      window.removeEventListener('beforeunload', persistSnapshot);
+    };
+  }, []);
 
   // Real-time total likes & following count for Creator Profile (memoized)
   const { totalProfileLikes, followingCount } = useMemo(() => {
@@ -1444,6 +1795,8 @@ export default function App() {
   // Play video from Creator Profile grid in full-screen vertical feed
   const handlePlayVideoFromProfile = useCallback(
     (videoId: string) => {
+      expectedVideoIdRef.current = videoId;
+      needsScrollSyncRef.current = true;
       const targetIdx = videos.findIndex((v) => v.id === videoId);
       setSelectedTag(null);
       setCurrentTab('foryou');
@@ -1481,12 +1834,17 @@ export default function App() {
         onOpenCreatorSearch={handleOpenCreatorSearch}
         onOpenActivity={handleOpenActivityTab}
         unreadActivityCount={unreadActivityCount}
+        onOpenDirectSnaps={() => setIsDirectSnapsOpen(true)}
+        unreadDirectSnapsCount={unreadDirectSnapsCount}
         onLogout={handleLogout}
         currentTab={currentTab}
       />
 
       {/* Offline Mode Connectivity Banner */}
       <OfflineBanner onOpenSavedOffline={handleOpenSavedDownloadsOffline} />
+
+      {/* Floating PWA Install App Banner (auto-hides when installed) */}
+      <PWAInstallButton variant="banner" onShowToast={showToast} />
 
       {/* Toast Notification */}
       {toastMessage && (
@@ -1502,6 +1860,7 @@ export default function App() {
         <SidebarDesktop
           currentTab={currentTab}
           onSelectTab={(tab) => {
+            expectedVideoIdRef.current = '';
             setSelectedTag(null);
             if (tab === 'profile') setProfileInitialSubTab('videos');
             setCurrentTab(tab);
@@ -1522,11 +1881,12 @@ export default function App() {
         />
 
         {/* Main Snap Scrolling Stage OR TikTok Live Stream View OR Download Hub */}
-        <main className="flex-1 h-full flex items-center justify-center relative overflow-hidden">
+        <main className="flex-1 h-full flex flex-col items-center justify-center relative overflow-hidden">
           {/* Mobile Navigation Controls */}
           <MobileNavigation
             currentTab={currentTab}
             onSelectTab={(tab) => {
+              expectedVideoIdRef.current = '';
               setSelectedTag(null);
               setCurrentTab(tab);
               setActiveIndex(0);
@@ -1546,6 +1906,8 @@ export default function App() {
             onQuickVideoUpload={handleQuickGalleryUpload}
             savedCount={savedCount}
             unreadActivityCount={unreadActivityCount}
+            onOpenDirectSnaps={() => setIsDirectSnapsOpen(true)}
+            unreadDirectSnapsCount={unreadDirectSnapsCount}
             currentUser={currentUser}
             creatorAvatar={creatorProfile.avatar}
             onOpenLogin={handleOpenAuthLogin}
@@ -1561,6 +1923,7 @@ export default function App() {
               <LiveStreamMainView
                 currentUser={currentUser}
                 onSelectTab={(tab) => {
+                  expectedVideoIdRef.current = '';
                   setSelectedTag(null);
                   setCurrentTab(tab);
                   setActiveIndex(0);
@@ -1643,7 +2006,7 @@ export default function App() {
             <>
               {/* Filter bar pill if tag is selected */}
               {selectedTag && (
-                <div className="absolute top-16 sm:top-4 left-1/2 -translate-x-1/2 z-40 bg-neutral-900/95 px-3.5 py-1.5 rounded-full border border-pink-500/50 flex items-center gap-2 text-xs shadow-lg [transform:translateZ(0)]">
+                <div className="absolute top-12 sm:top-11 left-1/2 -translate-x-1/2 z-40 bg-neutral-900/95 px-3.5 py-1.5 rounded-full border border-pink-500/50 flex items-center gap-2 text-xs shadow-lg [transform:translateZ(0)]">
 
                   <span className="text-pink-400 font-bold">#{selectedTag}</span>
                   <button
@@ -1656,33 +2019,146 @@ export default function App() {
                 </div>
               )}
 
-              {/* Center Snap Reel Stage (adapts cleanly to 9:16 vertical reels and 16:9 widescreen videos) */}
-              <div className="relative w-full h-full max-w-5xl mx-auto bg-black flex flex-col justify-center [transform:translateZ(0)]">
+              {/* Center Snap Reel Stage with collapsible swipeable 24-Hour Live Stories overlay */}
+              <div
+                ref={stageRef}
+                onTouchStart={(e) => {
+                  if (e.touches.length === 1) {
+                    beginStoriesSwipe(e.touches[0].clientY, e.touches[0].clientX);
+                  }
+                }}
+                onTouchMove={(e) => {
+                  if (e.touches.length === 1) {
+                    moveStoriesSwipe(e.touches[0].clientY, e.touches[0].clientX);
+                  }
+                }}
+                onTouchEnd={() => endStoriesSwipe()}
+                onTouchCancel={() => endStoriesSwipe()}
+                onMouseDown={(e) => {
+                  if (e.button !== 0 || (e.target as HTMLElement).closest('button, a, input')) return;
+                  beginStoriesSwipe(e.clientY, e.clientX);
+                }}
+                onWheel={(e) => {
+                  if (currentTab !== 'foryou' && currentTab !== 'following') return;
+                  if (isStoriesBarOpen && e.deltaY > 18) {
+                    setIsStoriesBarOpen(false);
+                  } else if (
+                    !isStoriesBarOpen &&
+                    e.deltaY < -35 &&
+                    (containerRef.current?.scrollTop || 0) <= 6
+                  ) {
+                    setIsStoriesBarOpen(true);
+                  }
+                }}
+                className="relative w-full flex-1 min-h-0 max-w-5xl mx-auto bg-black flex flex-col overflow-hidden [transform:translateZ(0)]"
+              >
+                {(currentTab === 'foryou' || currentTab === 'following') && (
+                  <LiveStoriesBar
+                    stories={liveStories}
+                    currentUserId={currentUser?.id || creatorProfile.id}
+                    currentUsername={currentUser?.username || creatorProfile.username}
+                    currentAvatar={currentUser?.avatar || creatorProfile.avatar}
+                    isExpanded={isStoriesBarOpen}
+                    onExpandedChange={setIsStoriesBarOpen}
+                    externalDragOffsetPx={storiesDragOffsetPx}
+                    onAddStory={() => {
+                      setSnapReplyTarget(null);
+                      setIsProCameraOpen(true);
+                    }}
+                    onStoryViewed={(storyId) => {
+                      const viewerId = currentUser?.id || creatorProfile.id;
+                      setLiveStories((prev) =>
+                        prev.map((s) =>
+                          s.id === storyId
+                            ? {
+                                ...s,
+                                viewedByIds: Array.from(
+                                  new Set([...(s.viewedByIds || []), viewerId])
+                                ),
+                              }
+                            : s
+                        )
+                      );
+                      void markLiveStoryViewed(storyId, viewerId);
+                    }}
+                    onDeleteStory={(storyId) => {
+                      setLiveStories((prev) => prev.filter((s) => s.id !== storyId));
+                      void deleteLiveStoryById(storyId);
+                      showToast('Live Story deleted');
+                    }}
+                    onReplyWithSnap={(recipient) => {
+                      setSnapReplyTarget(recipient);
+                      setIsProCameraOpen(true);
+                    }}
+                    onOpenDirectSnaps={() => setIsDirectSnapsOpen(true)}
+                    unreadDirectSnapsCount={unreadDirectSnapsCount}
+                  />
+                )}
+
                 {displayedVideos.length === 0 ? (
-                  <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center">
-                    <Compass className="w-12 h-12 text-neutral-600 mb-3" />
-                    <h3 className="text-base font-bold text-white">No reels here yet</h3>
-                    <p className="text-xs text-neutral-400 mt-1 max-w-xs">
+                  <div className="flex-1 min-h-0 w-full flex flex-col items-center justify-center p-6 text-center">
+                    <Compass className="w-12 h-12 text-pink-500/80 mb-3" />
+                    <h3 className="text-base font-black text-white">
                       {currentTab === 'saved'
-                        ? 'Tap the bookmark icon on any reel to save it for later.'
-                        : 'Follow more creators to see their latest vertical reels here.'}
+                        ? 'No saved reels yet'
+                        : currentTab === 'following'
+                        ? 'No followed creators yet'
+                        : 'No reels posted yet — be the first!'}
+                    </h3>
+                    <p className="text-xs text-neutral-400 mt-1.5 max-w-sm">
+                      {currentTab === 'saved'
+                        ? 'Tap the bookmark icon on any reel to save it for offline playback.'
+                        : currentTab === 'following'
+                        ? 'Follow creators to see their latest vertical reels here.'
+                        : 'Shoot a 4K/60fps reel in Pro Camera, upload from your phone gallery, or post a Live Story Snap.'}
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedTag(null);
-                        setCurrentTab('foryou');
-                      }}
-                      className="mt-4 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-xl transition-colors"
-                    >
-                      Explore For You Feed
-                    </button>
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSnapReplyTarget(null);
+                          setIsProCameraOpen(true);
+                        }}
+                        className="px-4 py-2.5 bg-gradient-to-r from-pink-600 to-amber-500 hover:brightness-110 text-white text-xs font-black rounded-xl flex items-center gap-1.5 shadow-lg shadow-pink-600/25 cursor-pointer"
+                      >
+                        <Camera className="w-4 h-4" />
+                        <span>Open Pro Camera</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenUpload}
+                        className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Upload className="w-4 h-4 text-cyan-400" />
+                        <span>Upload Video / Photo</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenDownloads}
+                        className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 border border-cyan-500/40 text-cyan-300 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Film className="w-4 h-4" />
+                        <span>Movie Box</span>
+                      </button>
+                      {currentTab !== 'foryou' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTag(null);
+                            setCurrentTab('foryou');
+                          }}
+                          className="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                        >
+                          Back to For You
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div
                     ref={containerRef}
                     onScroll={handleScroll}
-                    className="h-full w-full snap-container overflow-y-scroll overflow-x-hidden no-scrollbar [transform:translateZ(0)] [will-change:scroll-position]"
+                    className="flex-1 min-h-0 w-full snap-container overflow-y-scroll overflow-x-hidden overscroll-y-contain no-scrollbar [transform:translateZ(0)] [will-change:scroll-position]"
                   >
                     {displayedVideos.map((video, idx) => (
                       <VideoCard
@@ -1856,10 +2332,29 @@ export default function App() {
         <Suspense fallback={<LazyTabFallback />}>
           <ProCameraModal
             isOpen={isProCameraOpen}
-            onClose={() => setIsProCameraOpen(false)}
+            onClose={() => {
+              setIsProCameraOpen(false);
+              setSnapReplyTarget(null);
+            }}
             currentUser={currentUser}
             creatorProfile={creatorProfile}
+            directRecipients={directRecipients}
+            initialSnapRecipient={snapReplyTarget}
+            onPostLiveStory={(createdStory) => {
+              setLiveStories((prev) => [
+                createdStory,
+                ...prev.filter((s) => s.id !== createdStory.id),
+              ]);
+              setCurrentTab('foryou');
+            }}
+            onDirectSnapSent={(sentSnap) => {
+              setDirectSnaps((prev) => [
+                sentSnap,
+                ...prev.filter((m) => m.id !== sentSnap.id),
+              ]);
+            }}
             onRecordSuccess={(newPost) => {
+              expectedVideoIdRef.current = newPost.id;
               setVideos((prev) => [newPost, ...prev.filter((v) => v.id !== newPost.id)]);
               setSelectedTag(null);
               setCurrentTab('foryou');
@@ -1867,6 +2362,49 @@ export default function App() {
               setTimeout(() => scrollToIndex(0), 60);
             }}
             onSwitchToUploadFile={() => setIsUploadOpen(true)}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
+
+      {isDirectSnapsOpen && (
+        <Suspense fallback={null}>
+          <DirectSnapsModal
+            isOpen={isDirectSnapsOpen}
+            onClose={() => setIsDirectSnapsOpen(false)}
+            currentUserId={currentUser?.id || creatorProfile.id}
+            currentUsername={currentUser?.username || creatorProfile.username}
+            currentName={currentUser?.name || creatorProfile.name}
+            currentAvatar={currentUser?.avatar || creatorProfile.avatar}
+            snaps={directSnaps}
+            recipients={directRecipients}
+            onMarkSnapViewed={(snapId) => {
+              setDirectSnaps((prev) =>
+                prev.map((m) => (m.id === snapId ? { ...m, isViewed: true } : m))
+              );
+              void markDirectSnapViewed(snapId);
+            }}
+            onReplyWithCamera={(recipient) => {
+              setIsDirectSnapsOpen(false);
+              setSnapReplyTarget(recipient);
+              setIsProCameraOpen(true);
+            }}
+            onSendTextMessage={async (recipient, text) => {
+              const sent = await sendDirectSnap({
+                sender: {
+                  id: currentUser?.id || creatorProfile.id,
+                  name: currentUser?.name || creatorProfile.name,
+                  username: currentUser?.username || creatorProfile.username,
+                  avatar: currentUser?.avatar || creatorProfile.avatar,
+                },
+                recipient,
+                mediaBlob: null,
+                fallbackMediaUrl: '',
+                mediaType: 'video',
+                textMessage: text,
+              });
+              setDirectSnaps((prev) => [sent, ...prev.filter((m) => m.id !== sent.id)]);
+            }}
             onShowToast={showToast}
           />
         </Suspense>

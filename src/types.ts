@@ -193,3 +193,48 @@ export interface TrendingAudio {
   duration: string;
   trackType: SoundTrackType;
 }
+
+export interface LiveStoryItem {
+  id: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  mediaUrl: string;
+  mediaType: 'video' | 'image';
+  caption?: string;
+  filterName?: string;
+  createdAt: string;
+  expiresAt: string;
+  viewedByIds: string[];
+  isSupabaseBacked?: boolean;
+}
+
+export interface DirectSnapMessage {
+  id: string;
+  senderId: string;
+  senderUsername: string;
+  senderName: string;
+  senderAvatar: string;
+  recipientId: string;
+  recipientUsername: string;
+  recipientName: string;
+  recipientAvatar: string;
+  mediaUrl: string;
+  mediaType: 'video' | 'image';
+  caption?: string;
+  filterName?: string;
+  textMessage?: string;
+  createdAt: string;
+  isViewed: boolean;
+  isSupabaseBacked?: boolean;
+}
+
+export interface DirectSnapRecipient {
+  id: string;
+  name: string;
+  username: string;
+  avatar: string;
+  isVerified?: boolean;
+}
+

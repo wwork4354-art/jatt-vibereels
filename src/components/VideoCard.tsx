@@ -17,12 +17,19 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
+  RectangleHorizontal,
+  Smartphone,
 } from 'lucide-react';
 import { VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
 import { ProceduralCanvas } from './ProceduralCanvas';
 import { formatRelativeTime } from '../lib/supabaseService';
 import { savePostForOffline } from '../lib/offlineMediaStore';
+import {
+  getSavedVideoTimestamp,
+  savePlaybackState,
+  saveVideoTimestamp,
+} from '../lib/playbackPersistence';
 
 interface VideoCardProps {
   video: VideoPost;
@@ -77,14 +84,16 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const bgAudioRef = useRef<HTMLAudioElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const widescreenContainerRef = useRef<HTMLDivElement | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
+  const [isWidescreenMode, setIsWidescreenMode] = useState(false);
   const [isFillScreen, setIsFillScreen] = useState(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [currentTime, setCurrentTime] = useState(() => getSavedVideoTimestamp(video.id));
   const [duration, setDuration] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [floatingHearts, setFloatingHearts] = useState<FloatingHeart[]>([]);
@@ -101,13 +110,21 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
 
   const lastTapRef = useRef<number>(0);
   const viewRecordedForActiveRef = useRef<boolean>(false);
+  const lastSavedStampRef = useRef<number>(0);
+  const pendingResumeTimeRef = useRef<number>(getSavedVideoTimestamp(video.id));
+  const wasPlayingBeforeHideRef = useRef<boolean>(true);
+  const didEnterFullscreenForWidescreenRef = useRef<boolean>(false);
 
   useEffect(() => {
     setIsLandscape(false);
+    setIsWidescreenMode(false);
     setVideoError(false);
+    const savedTime = getSavedVideoTimestamp(video.id);
+    pendingResumeTimeRef.current = savedTime;
+    setCurrentTime(savedTime);
   }, [video.id]);
 
-  // Increment real-time post view count once the reel has been actively watched for 1.2s
+  // Increment real-time post view count (+1) ONLY after 3 full seconds of genuine active watch time
   useEffect(() => {
     if (!isActive) {
       viewRecordedForActiveRef.current = false;
@@ -115,15 +132,32 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     }
     if (viewRecordedForActiveRef.current) return;
 
-    const timer = window.setTimeout(() => {
-      if (!viewRecordedForActiveRef.current) {
-        viewRecordedForActiveRef.current = true;
-        onViewTracked?.(video.id);
-      }
-    }, 1200);
+    let watchedMs = 0;
+    let lastTickMs = Date.now();
 
-    return () => window.clearTimeout(timer);
-  }, [isActive, video.id, onViewTracked]);
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      const delta = Math.min(500, Math.max(0, now - lastTickMs));
+      lastTickMs = now;
+
+      const tabVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+      const actuallyPlaying =
+        video.mediaType === 'image'
+          ? isPlaying
+          : isPlaying && Boolean(videoRef.current && !videoRef.current.paused && !videoRef.current.ended);
+
+      if (tabVisible && actuallyPlaying) {
+        watchedMs += delta;
+        if (watchedMs >= 3000 && !viewRecordedForActiveRef.current) {
+          viewRecordedForActiveRef.current = true;
+          onViewTracked?.(video.id);
+          window.clearInterval(interval);
+        }
+      }
+    }, 250);
+
+    return () => window.clearInterval(interval);
+  }, [isActive, isPlaying, video.id, video.mediaType, onViewTracked]);
 
   const originalVol =
     typeof video.sound.originalVolume === 'number' ? video.sound.originalVolume : 1;
@@ -162,8 +196,38 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     }
   };
 
+  // Apply saved playback timestamp cleanly without resetting video to 0:00
+  const applySavedTimestampIfNeeded = (el: HTMLVideoElement) => {
+    const targetSec =
+      pendingResumeTimeRef.current > 0.25
+        ? pendingResumeTimeRef.current
+        : getSavedVideoTimestamp(video.id);
+    if (
+      targetSec > 0.25 &&
+      Number.isFinite(el.duration) &&
+      el.duration > 0.5 &&
+      targetSec < el.duration - 0.3 &&
+      Math.abs(el.currentTime - targetSec) > 0.8
+    ) {
+      try {
+        el.currentTime = targetSec;
+        setCurrentTime(targetSec);
+      } catch {
+        // ignore seek errors before buffered
+      }
+      pendingResumeTimeRef.current = 0;
+    } else if (targetSec > 0.25 && (!Number.isFinite(el.duration) || el.duration === 0) && el.currentTime < 0.25) {
+      try {
+        el.currentTime = targetSec;
+        setCurrentTime(targetSec);
+      } catch {
+        // will retry in onLoadedMetadata / onCanPlay
+      }
+    }
+  };
+
   // Strict Lazy-Loading & Virtualization:
-  // 1) Active reel: plays immediately at 60fps
+  // 1) Active reel: plays immediately at 60fps & restores exact saved second
   // 2) Very next reel (isNext): strictly preload="metadata" to save RAM & bandwidth
   // 3) All off-screen reels: pause & unload src/decoder immediately
   useEffect(() => {
@@ -174,6 +238,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         prefetch.src = video.videoUrl;
       }
       if (isActive) {
+        savePlaybackState({ videoId: video.id, isPlaying: true });
         setIsPlaying(true);
         syncBackgroundAudio(true);
       } else {
@@ -189,14 +254,19 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     if (isActive) {
       if (el.getAttribute('src') !== video.videoUrl) {
         el.setAttribute('src', video.videoUrl);
+        pendingResumeTimeRef.current = getSavedVideoTimestamp(video.id);
       }
       el.preload = 'auto';
       el.volume = Math.max(0, Math.min(1, originalVol));
       el.muted = isMuted || originalVol <= 0.01;
+      applySavedTimestampIfNeeded(el);
+      savePlaybackState({ videoId: video.id });
+
       const playPromise = el.play();
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
+            applySavedTimestampIfNeeded(el);
             setIsPlaying(true);
             setVideoError(false);
             syncBackgroundAudio(true);
@@ -234,6 +304,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     isActive,
     isNext,
     isMuted,
+    video.id,
     video.videoUrl,
     video.mediaType,
     video.sound.trackType,
@@ -242,10 +313,167 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     bgVol,
   ]);
 
-  // Clean up decoder & audio on unmount
+  // Preserve exact timestamp & resume automatically when app is minimized/backgrounded & reopened
+  useEffect(() => {
+    if (!isActive || video.mediaType === 'image') return;
+
+    const persistNow = () => {
+      const el = videoRef.current;
+      if (!el) return;
+      const nowSec = el.currentTime || 0;
+      wasPlayingBeforeHideRef.current = !el.paused;
+      if (nowSec > 0) {
+        pendingResumeTimeRef.current = nowSec;
+        saveVideoTimestamp(video.id, nowSec, !el.paused);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      const el = videoRef.current;
+      if (!el) return;
+
+      if (document.visibilityState === 'hidden') {
+        persistNow();
+      } else if (document.visibilityState === 'visible') {
+        const savedSec =
+          pendingResumeTimeRef.current > 0.2
+            ? pendingResumeTimeRef.current
+            : getSavedVideoTimestamp(video.id);
+
+        if (el.getAttribute('src') !== video.videoUrl) {
+          el.setAttribute('src', video.videoUrl);
+        }
+        if (savedSec > 0.25 && Math.abs(el.currentTime - savedSec) > 0.8) {
+          try {
+            el.currentTime = savedSec;
+            setCurrentTime(savedSec);
+          } catch {
+            pendingResumeTimeRef.current = savedSec;
+          }
+        }
+        if (wasPlayingBeforeHideRef.current || isPlaying) {
+          el.muted = isMuted || originalVol <= 0.01;
+          el.play()
+            .then(() => {
+              setIsPlaying(true);
+              syncBackgroundAudio(true);
+            })
+            .catch(() => {});
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', persistNow);
+    window.addEventListener('beforeunload', persistNow);
+
+    return () => {
+      persistNow();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', persistNow);
+      window.removeEventListener('beforeunload', persistNow);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, video.id, video.videoUrl, video.mediaType, isMuted, originalVol]);
+
+  // Helper to toggle 16:9 Widescreen Landscape Cinema Mode + mobile screen.orientation lock
+  const exitWidescreenMode = async () => {
+    setIsWidescreenMode(false);
+    try {
+      const orient = window.screen?.orientation as
+        | (ScreenOrientation & { unlock?: () => void })
+        | undefined;
+      if (orient && typeof orient.unlock === 'function') {
+        orient.unlock();
+      }
+    } catch {
+      // ignore on unsupported browsers
+    }
+    try {
+      if (document.fullscreenElement && didEnterFullscreenForWidescreenRef.current) {
+        didEnterFullscreenForWidescreenRef.current = false;
+        await document.exitFullscreen();
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const enterWidescreenMode = async () => {
+    setIsWidescreenMode(true);
+    try {
+      const targetEl = widescreenContainerRef.current || document.documentElement;
+      if (targetEl && typeof targetEl.requestFullscreen === 'function' && !document.fullscreenElement) {
+        await targetEl.requestFullscreen();
+        didEnterFullscreenForWidescreenRef.current = true;
+      }
+    } catch {
+      // ignore if fullscreen request blocked; CSS cinema viewport still engages
+    }
+    try {
+      const orient = window.screen?.orientation as
+        | (ScreenOrientation & { lock?: (orientation: 'landscape' | 'portrait') => Promise<void> })
+        | undefined;
+      if (orient && typeof orient.lock === 'function') {
+        await orient.lock('landscape');
+      }
+    } catch {
+      // ignore if desktop or iOS Safari doesn't allow orientation.lock
+    }
+  };
+
+  const handleToggleWidescreen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isWidescreenMode) {
+      void exitWidescreenMode();
+      onShowToast('Switched to 9:16 Vertical Reels');
+    } else {
+      void enterWidescreenMode();
+      onShowToast('16:9 Widescreen Cinema Mode');
+    }
+  };
+
+  // Sync if user exits fullscreen manually via system back button / Esc
+  useEffect(() => {
+    if (!isWidescreenMode) return;
+    const handleFsChange = () => {
+      if (!document.fullscreenElement && didEnterFullscreenForWidescreenRef.current) {
+        didEnterFullscreenForWidescreenRef.current = false;
+        setIsWidescreenMode(false);
+        try {
+          const orient = window.screen?.orientation as
+            | (ScreenOrientation & { unlock?: () => void })
+            | undefined;
+          orient?.unlock?.();
+        } catch {
+          // ignore
+        }
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, [isWidescreenMode]);
+
+  // Clean up decoder, fullscreen orientation lock & audio on unmount
   useEffect(() => {
     return () => {
+      if (didEnterFullscreenForWidescreenRef.current) {
+        try {
+          const orient = window.screen?.orientation as
+            | (ScreenOrientation & { unlock?: () => void })
+            | undefined;
+          orient?.unlock?.();
+          if (document.fullscreenElement) {
+            void document.exitFullscreen().catch(() => {});
+          }
+        } catch {
+          // ignore
+        }
+      }
       if (videoRef.current) {
+        if (isActive && videoRef.current.currentTime > 0.2) {
+          saveVideoTimestamp(video.id, videoRef.current.currentTime, !videoRef.current.paused);
+        }
         videoRef.current.pause();
         videoRef.current.removeAttribute('src');
         try {
@@ -258,6 +486,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         bgAudioRef.current.pause();
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Sync mute state
@@ -349,11 +578,19 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     setTimeout(() => setShowPlayIcon(false), 700);
   };
 
-  // Video time update
+  // Video time update + continuous persistence (throttled ~400ms)
   const handleTimeUpdate = () => {
     if (videoRef.current && !isScrubbing) {
-      setCurrentTime(videoRef.current.currentTime);
+      const sec = videoRef.current.currentTime;
+      setCurrentTime(sec);
       setDuration(videoRef.current.duration || 0);
+      if (isActive && sec > 0) {
+        const now = Date.now();
+        if (now - lastSavedStampRef.current >= 400) {
+          lastSavedStampRef.current = now;
+          saveVideoTimestamp(video.id, sec, !videoRef.current.paused);
+        }
+      }
     }
   };
 
@@ -366,6 +603,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     const targetTime = percentage * (videoRef.current.duration || 1);
     videoRef.current.currentTime = targetTime;
     setCurrentTime(targetTime);
+    if (isActive) {
+      saveVideoTimestamp(video.id, targetTime, !videoRef.current.paused);
+    }
   };
 
   // Format large numbers (e.g. 142800 -> 142.8K)
@@ -456,7 +696,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   if (!isNearViewport && !isActive && !isNext) {
     return (
       <div
-        className="relative w-full h-[100dvh] snap-item bg-neutral-950 flex items-center justify-center overflow-hidden"
+        className="relative w-full h-full snap-item bg-neutral-950 flex items-center justify-center overflow-hidden"
         style={{ contain: 'strict' }}
       >
         {video.posterUrl && (
@@ -473,7 +713,14 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   }
 
   return (
-    <div className="relative w-full h-[100dvh] snap-item flex items-center justify-center bg-black select-none overflow-hidden">
+    <div
+      ref={widescreenContainerRef}
+      className={
+        isWidescreenMode
+          ? 'fixed inset-0 z-55 bg-black flex flex-col items-center justify-center select-none overflow-hidden'
+          : 'relative w-full h-full snap-item flex items-center justify-center bg-black select-none overflow-hidden'
+      }
+    >
       {/* Attached Custom Song / Naat Audio Player (when audioUrl exists) */}
       {hasExternalAudio && (
         <audio
@@ -492,11 +739,13 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         className="relative w-full h-full flex items-center justify-center cursor-pointer"
         onClick={handleVideoAreaClick}
       >
-        {/* Image Post OR HTML5 Video element (Playit-style Fill Screen or crisp 16:9 / 9:16 fit) */}
+        {/* Image Post OR HTML5 Video element (9:16 Vertical Reels default, or 16:9 Widescreen Cinema Mode, or Fill Screen) */}
         {video.mediaType === 'image' ? (
           <div
             className={
-              isFillScreen
+              isWidescreenMode
+                ? 'relative w-full max-w-[min(100vw,calc(100dvh*16/9))] aspect-video mx-auto overflow-hidden bg-black flex items-center justify-center'
+                : isFillScreen
                 ? 'relative w-full h-full flex items-center justify-center overflow-hidden bg-black'
                 : isLandscape
                 ? 'relative w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
@@ -532,7 +781,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             {!videoError && (
               <div
                 className={
-                  isFillScreen
+                  isWidescreenMode
+                    ? 'w-full max-w-[min(100vw,calc(100dvh*16/9))] aspect-video mx-auto overflow-hidden bg-black flex items-center justify-center shadow-2xl'
+                    : isFillScreen
                     ? 'w-full h-full flex items-center justify-center overflow-hidden bg-black'
                     : isLandscape
                     ? 'w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
@@ -549,9 +800,17 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   preload={isActive ? 'auto' : isNext ? 'metadata' : 'none'}
                   crossOrigin="anonymous"
                   onTimeUpdate={handleTimeUpdate}
+                  onCanPlay={() => {
+                    if (isActive && videoRef.current) {
+                      applySavedTimestampIfNeeded(videoRef.current);
+                    }
+                  }}
                   onLoadedMetadata={() => {
                     if (videoRef.current) {
                       setDuration(videoRef.current.duration);
+                      if (isActive) {
+                        applySavedTimestampIfNeeded(videoRef.current);
+                      }
                       const { videoWidth, videoHeight } = videoRef.current;
                       if (videoWidth > 0 && videoHeight > 0) {
                         setIsLandscape(videoWidth > videoHeight * 1.12);
@@ -564,7 +823,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   className={
                     isFillScreen
                       ? 'w-full h-full object-cover [transform:translate3d(0,0,0)] will-change-transform'
-                      : isLandscape
+                      : isWidescreenMode || isLandscape
                       ? 'w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform'
                       : 'w-full h-full object-cover sm:object-contain [transform:translate3d(0,0,0)] will-change-transform'
                   }
@@ -615,11 +874,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       {/* Top Scrim Bar for Controls */}
       <div
         className={`absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:mx-auto [transform:translateZ(0)] ${
-          isFillScreen ? 'max-w-none' : isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
+          isWidescreenMode || isFillScreen ? 'max-w-none' : isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
         }`}
       >
-        {/* Audio Mute / Unmute + Playit Fill Screen Button */}
-        <div className="flex items-center gap-2 pointer-events-auto">
+        {/* Audio Mute / Unmute + 16:9 Widescreen Toggle + Playit Fill Screen Button */}
+        <div className="flex items-center gap-1.5 sm:gap-2 pointer-events-auto flex-wrap">
           <button
             type="button"
             onClick={(e) => {
@@ -627,20 +886,42 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               onToggleMute();
               soundEngine.setMuted(!isMuted);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white hover:bg-neutral-800 active:scale-95 transition-all text-xs font-semibold [transform:translateZ(0)]"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white hover:bg-neutral-800 active:scale-95 transition-all text-xs font-semibold [transform:translateZ(0)]"
             aria-label={isMuted ? 'Unmute video' : 'Mute video'}
           >
             {isMuted ? (
               <>
                 <VolumeX className="w-4 h-4 text-neutral-300" />
-                <span className="text-[11px] text-neutral-300">Tap to unmute</span>
+                <span className="text-[11px] text-neutral-300 hidden xs:inline">Tap to unmute</span>
               </>
             ) : (
               <>
                 <Volume2 className="w-4 h-4 text-pink-400 animate-pulse" />
-                <span className="text-[11px] text-pink-400">Audio on</span>
+                <span className="text-[11px] text-pink-400 hidden xs:inline">Audio on</span>
               </>
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleToggleWidescreen}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-[10px] font-black tracking-wide transition-all cursor-pointer [transform:translateZ(0)] ${
+              isWidescreenMode
+                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-300 text-white shadow-md shadow-cyan-500/30'
+                : 'bg-neutral-900/90 hover:bg-neutral-800 border-white/15 text-amber-300'
+            }`}
+            title={
+              isWidescreenMode
+                ? 'Return to 9:16 Vertical Reels Mode'
+                : 'Switch to 16:9 Widescreen Landscape Cinema Mode'
+            }
+          >
+            {isWidescreenMode ? (
+              <Smartphone className="w-3 h-3" />
+            ) : (
+              <RectangleHorizontal className="w-3.5 h-3.5" />
+            )}
+            <span>{isWidescreenMode ? '9:16 Vertical' : '16:9 Widescreen'}</span>
           </button>
 
           <button
@@ -738,7 +1019,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       )}
 
       {/* Right Side Overlay Action Buttons */}
-      <div className="absolute right-3 bottom-18 sm:bottom-20 z-30 flex flex-col items-center gap-4.5 sm:max-w-md pointer-events-auto [transform:translateZ(0)]">
+      <div
+        className={`absolute right-3 bottom-18 sm:bottom-20 z-30 flex flex-col items-center gap-4.5 sm:max-w-md pointer-events-auto [transform:translateZ(0)] ${
+          isWidescreenMode ? 'hidden sm:flex opacity-80 hover:opacity-100' : ''
+        }`}
+      >
         {/* Creator Avatar with Follow Button */}
         <div className="relative mb-1 flex flex-col items-center">
           <button
@@ -932,7 +1217,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       {/* Bottom Information & Caption Scrim */}
       <div
         className={`absolute bottom-0 left-0 right-0 z-20 pt-16 pb-6 px-4 bg-gradient-to-t from-black/95 via-black/50 to-transparent pointer-events-none flex flex-col justify-end sm:mx-auto ${
-          isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
+          isWidescreenMode ? 'max-w-4xl' : isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
         }`}
       >
         <div className="pointer-events-auto pr-14">

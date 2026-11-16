@@ -352,14 +352,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
 
             <div>
-              <label className="block text-xs font-bold text-neutral-300 mb-1">Full Name</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-neutral-300">Display Name</label>
+                <span className="text-[10px] text-neutral-400">Any name, spaces &amp; symbols allowed</span>
+              </div>
               <div className="relative">
                 <input
                   type="text"
                   required
                   value={regName}
                   onChange={(e) => setRegName(e.target.value)}
-                  placeholder="e.g. Jaspreet Singh"
+                  placeholder="e.g. Jatt ★ Official Vibes"
                   className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-9 pr-3.5 py-2 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-pink-500"
                 />
                 <User className="w-4 h-4 text-pink-400 absolute left-3 top-1/2 -translate-y-1/2" />

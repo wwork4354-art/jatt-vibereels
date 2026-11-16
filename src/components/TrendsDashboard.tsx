@@ -10,7 +10,6 @@ import {
   Eye,
   Heart,
   MessageCircle,
-  Share2,
   Sparkles,
   ArrowUpRight,
   Search,
@@ -45,9 +44,80 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
-  // Ranked videos sorted by likes/engagement (memoized before early return)
+  // Ranked videos sorted by real views + likes engagement (memoized before early return)
   const rankedVideos = useMemo(
-    () => [...videos].sort((a, b) => b.stats.likes - a.stats.likes),
+    () =>
+      [...videos].sort(
+        (a, b) =>
+          b.stats.views + b.stats.likes * 3 - (a.stats.views + a.stats.likes * 3)
+      ),
+    [videos]
+  );
+
+  // Dynamically compute real trending hashtags from uploaded/global posts
+  const realTrendingHashtags = useMemo<TrendingHashtag[]>(() => {
+    const tagMap = new Map<string, { views: number; reelsCount: number; likes: number }>();
+    for (const v of videos) {
+      for (const rawTag of v.hashtags || []) {
+        const clean = rawTag.replace(/^#+/, '').trim();
+        if (!clean) continue;
+        const prev = tagMap.get(clean) || { views: 0, reelsCount: 0, likes: 0 };
+        tagMap.set(clean, {
+          views: prev.views + (v.stats.views || 0),
+          reelsCount: prev.reelsCount + 1,
+          likes: prev.likes + (v.stats.likes || 0),
+        });
+      }
+    }
+    return Array.from(tagMap.entries())
+      .sort((a, b) => b[1].views + b[1].likes - (a[1].views + a[1].likes))
+      .map(([tag, info], idx) => ({
+        rank: idx + 1,
+        tag,
+        views: info.views.toLocaleString(),
+        reelsCount: info.reelsCount,
+        growth: `${info.likes.toLocaleString()} likes`,
+        isBreakout: idx === 0 && info.reelsCount > 0,
+      }));
+  }, [videos]);
+
+  // Dynamically compute real trending audio from uploaded/global posts
+  const realTrendingAudios = useMemo<TrendingAudio[]>(() => {
+    const soundMap = new Map<
+      string,
+      { title: string; artist: string; count: number; trackType: TrendingAudio['trackType'] }
+    >();
+    for (const v of videos) {
+      const title = v.sound?.title || 'Original Sound';
+      const artist = v.sound?.artist || v.creator.name;
+      const key = `${title}::${artist}`;
+      const prev = soundMap.get(key);
+      if (prev) {
+        prev.count += 1;
+      } else {
+        soundMap.set(key, {
+          title,
+          artist,
+          count: 1,
+          trackType: v.sound?.trackType || 'ambient_lofi',
+        });
+      }
+    }
+    return Array.from(soundMap.values())
+      .sort((a, b) => b.count - a.count)
+      .map((item, idx) => ({
+        id: `real-audio-${idx}-${item.title}`,
+        rank: idx + 1,
+        title: item.title,
+        artist: item.artist,
+        usesCount: `${item.count} ${item.count === 1 ? 'reel' : 'reels'}`,
+        duration: '0:30',
+        trackType: item.trackType,
+      }));
+  }, [videos]);
+
+  const totalRealPlatformViews = useMemo(
+    () => videos.reduce((sum, v) => sum + (v.stats.views || 0), 0),
     [videos]
   );
 
@@ -68,32 +138,24 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
 
   const filteredHashtags = useMemo(() => {
     const q = normalizedQuery.replace(/^#/, '');
-    return !q
-      ? TRENDING_HASHTAGS
-      : TRENDING_HASHTAGS.filter((h) => h.tag.toLowerCase().includes(q));
-  }, [normalizedQuery]);
+    const source = realTrendingHashtags.length > 0 ? realTrendingHashtags : TRENDING_HASHTAGS;
+    return !q ? source : source.filter((h) => h.tag.toLowerCase().includes(q));
+  }, [normalizedQuery, realTrendingHashtags]);
 
-  const filteredAudios = useMemo(
-    () =>
-      !normalizedQuery
-        ? TRENDING_AUDIOS
-        : TRENDING_AUDIOS.filter(
-            (a) =>
-              a.title.toLowerCase().includes(normalizedQuery) ||
-              a.artist.toLowerCase().includes(normalizedQuery)
-          ),
-    [normalizedQuery]
-  );
+  const filteredAudios = useMemo(() => {
+    const source = realTrendingAudios.length > 0 ? realTrendingAudios : TRENDING_AUDIOS;
+    return !normalizedQuery
+      ? source
+      : source.filter(
+          (a) =>
+            a.title.toLowerCase().includes(normalizedQuery) ||
+            a.artist.toLowerCase().includes(normalizedQuery)
+        );
+  }, [normalizedQuery, realTrendingAudios]);
 
   if (!isOpen) return null;
 
-  const formatViews = (likes: number) => {
-    const estimatedViews = likes * 4.2;
-    if (estimatedViews >= 1_000_000) {
-      return (estimatedViews / 1_000_000).toFixed(1) + 'M';
-    }
-    return (estimatedViews / 1_000).toFixed(0) + 'K';
-  };
+  const formatRealViews = (views: number) => views.toLocaleString();
 
   const handleToggleAudio = (audio: TrendingAudio) => {
     if (playingAudioId === audio.id) {
@@ -156,11 +218,11 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                 <h2 className="text-lg font-bold text-white tracking-tight">Trends Dashboard</h2>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-pink-400 bg-pink-500/10 px-2 py-0.5 rounded-full border border-pink-500/20 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse" />
-                  Live Radar
+                  Live Real Stats
                 </span>
               </div>
               <p className="text-xs text-neutral-400">
-                What&apos;s exploding on <span className="text-pink-400 font-semibold">Jatt VibeReels</span> right now
+                Real-time user views &amp; engagement across <span className="text-pink-400 font-semibold">Jatt VibeReels</span>
               </p>
             </div>
           </div>
@@ -215,7 +277,7 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
               }`}
             >
               <Hash className="w-3.5 h-3.5" />
-              <span>Viral Hashtags</span>
+              <span>Hashtags</span>
             </button>
             <button
               type="button"
@@ -227,7 +289,7 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
               }`}
             >
               <Music className="w-3.5 h-3.5" />
-              <span>Popular Sounds</span>
+              <span>Sounds</span>
             </button>
           </div>
 
@@ -272,26 +334,36 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
           {/* TAB: ALL (Overview Grid) */}
           {activeTab === 'all' && (
             <div className="space-y-6">
-              {/* Highlight Stats Strip */}
+              {/* Highlight Real Stats Strip */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3.5 bg-neutral-950/60 rounded-2xl border border-neutral-800">
                   <div className="flex items-center justify-between text-neutral-400 mb-1">
                     <span className="text-[11px] font-semibold">#1 Trending Reel</span>
                     <Flame className="w-4 h-4 text-amber-400" />
                   </div>
-                  <p className="text-sm font-bold text-white truncate">{rankedVideos[0]?.title}</p>
+                  <p className="text-sm font-bold text-white truncate">
+                    {rankedVideos[0]?.title || 'No reels uploaded yet'}
+                  </p>
                   <p className="text-[10px] text-pink-400 font-semibold mt-0.5">
-                    {rankedVideos[0]?.stats.likes.toLocaleString()} Likes · 99% Viral Score
+                    {rankedVideos[0]
+                      ? `${rankedVideos[0].stats.views.toLocaleString()} Views · ${rankedVideos[0].stats.likes.toLocaleString()} Likes`
+                      : '0 Views · 0 Likes'}
                   </p>
                 </div>
 
                 <div className="p-3.5 bg-neutral-950/60 rounded-2xl border border-neutral-800">
                   <div className="flex items-center justify-between text-neutral-400 mb-1">
-                    <span className="text-[11px] font-semibold">Breakout Hashtag</span>
+                    <span className="text-[11px] font-semibold">Top Hashtag</span>
                     <Hash className="w-4 h-4 text-pink-400" />
                   </div>
-                  <p className="text-sm font-bold text-white">#jattvibes</p>
-                  <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">+142% Velocity Today</p>
+                  <p className="text-sm font-bold text-white truncate">
+                    {realTrendingHashtags[0] ? `#${realTrendingHashtags[0].tag}` : 'None yet'}
+                  </p>
+                  <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">
+                    {realTrendingHashtags[0]
+                      ? `${realTrendingHashtags[0].reelsCount} reels · ${realTrendingHashtags[0].views} views`
+                      : 'Post a reel to trend'}
+                  </p>
                 </div>
 
                 <div className="p-3.5 bg-neutral-950/60 rounded-2xl border border-neutral-800">
@@ -299,17 +371,25 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                     <span className="text-[11px] font-semibold">Top Audio Track</span>
                     <Music className="w-4 h-4 text-cyan-400" />
                   </div>
-                  <p className="text-sm font-bold text-white truncate">{TRENDING_AUDIOS[0]?.title}</p>
-                  <p className="text-[10px] text-cyan-400 font-semibold mt-0.5">215.4K Reels Created</p>
+                  <p className="text-sm font-bold text-white truncate">
+                    {realTrendingAudios[0]?.title || 'No audio used yet'}
+                  </p>
+                  <p className="text-[10px] text-cyan-400 font-semibold mt-0.5">
+                    {realTrendingAudios[0] ? realTrendingAudios[0].usesCount : '0 reels created'}
+                  </p>
                 </div>
 
                 <div className="p-3.5 bg-neutral-950/60 rounded-2xl border border-neutral-800">
                   <div className="flex items-center justify-between text-neutral-400 mb-1">
-                    <span className="text-[11px] font-semibold">Platform Volume</span>
+                    <span className="text-[11px] font-semibold">Total Real Views</span>
                     <Sparkles className="w-4 h-4 text-purple-400" />
                   </div>
-                  <p className="text-sm font-bold text-white">24.8M Views</p>
-                  <p className="text-[10px] text-purple-400 font-semibold mt-0.5">+18% vs Yesterday</p>
+                  <p className="text-sm font-bold text-white">
+                    {totalRealPlatformViews.toLocaleString()} Views
+                  </p>
+                  <p className="text-[10px] text-purple-400 font-semibold mt-0.5">
+                    {videos.length} {videos.length === 1 ? 'reel' : 'reels'} active
+                  </p>
                 </div>
               </div>
 
@@ -332,62 +412,68 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                     </button>
                   </div>
 
-                  <div className="space-y-2">
-                    {rankedVideos.slice(0, 4).map((video, idx) => (
-                      <div
-                        key={video.id}
-                        className="p-3 bg-neutral-950/60 hover:bg-neutral-800/50 rounded-2xl border border-neutral-800/80 transition-all flex items-center justify-between gap-3 group"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          {getRankBadge(idx + 1)}
-                          <img
-                            src={optimizeThumbnailUrl(video.creator.avatar, 'grid')}
-                            alt={video.creator.name}
-                            loading="lazy"
-                            decoding="async"
-                            className="w-9 h-9 rounded-xl object-cover bg-neutral-800 shrink-0 border border-neutral-700/60"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-white truncate group-hover:text-pink-400 transition-colors">
-                              {video.title}
-                            </p>
-                            <div className="flex items-center gap-2 text-[11px] text-neutral-400 mt-0.5">
-                              <span>@{video.creator.username}</span>
-                              <span>·</span>
-                              <span className="text-neutral-300 font-semibold flex items-center gap-1">
-                                <Eye className="w-3 h-3 text-neutral-500" />
-                                {formatViews(video.stats.likes)}
-                              </span>
+                  {rankedVideos.length === 0 ? (
+                    <div className="p-6 rounded-2xl bg-neutral-950/60 border border-neutral-800 text-center text-xs text-neutral-400">
+                      No real reels uploaded yet. Post your first reel to see live stats here!
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {rankedVideos.slice(0, 4).map((video, idx) => (
+                        <div
+                          key={video.id}
+                          className="p-3 bg-neutral-950/60 hover:bg-neutral-800/50 rounded-2xl border border-neutral-800/80 transition-all flex items-center justify-between gap-3 group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            {getRankBadge(idx + 1)}
+                            <img
+                              src={optimizeThumbnailUrl(video.creator.avatar, 'grid')}
+                              alt={video.creator.name}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-9 h-9 rounded-xl object-cover bg-neutral-800 shrink-0 border border-neutral-700/60"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white truncate group-hover:text-pink-400 transition-colors">
+                                {video.title}
+                              </p>
+                              <div className="flex items-center gap-2 text-[11px] text-neutral-400 mt-0.5">
+                                <span>@{video.creator.username}</span>
+                                <span>·</span>
+                                <span className="text-neutral-300 font-semibold flex items-center gap-1">
+                                  <Eye className="w-3 h-3 text-neutral-500" />
+                                  {formatRealViews(video.stats.views)}
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const originalIdx = videos.findIndex((v) => v.id === video.id);
-                            onSelectReel(originalIdx >= 0 ? originalIdx : 0);
-                            onClose();
-                          }}
-                          className="px-3 py-1.5 bg-pink-600 hover:bg-pink-500 text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 shadow-sm active:scale-95 transition-all"
-                        >
-                          <Play className="w-3 h-3 fill-white" />
-                          <span>Watch</span>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const originalIdx = videos.findIndex((v) => v.id === video.id);
+                              onSelectReel(originalIdx >= 0 ? originalIdx : 0);
+                              onClose();
+                            }}
+                            className="px-3 py-1.5 bg-pink-600 hover:bg-pink-500 text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 shadow-sm active:scale-95 transition-all"
+                          >
+                            <Play className="w-3 h-3 fill-white" />
+                            <span>Watch</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Right: Viral Hashtags + Popular Sounds */}
                 <div className="space-y-6">
-                  {/* Viral Hashtags Mini */}
+                  {/* Hashtags Mini */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2">
                         <Hash className="w-4 h-4 text-pink-400" />
-                        <span>Viral Hashtags</span>
+                        <span>Active Hashtags</span>
                       </h3>
                       <button
                         type="button"
@@ -399,31 +485,37 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                       </button>
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
-                      {TRENDING_HASHTAGS.slice(0, 6).map((item) => (
-                        <button
-                          key={item.tag}
-                          type="button"
-                          onClick={() => {
-                            onSelectHashtag(item.tag);
-                            onClose();
-                          }}
-                          className="p-2.5 bg-neutral-950/60 hover:bg-neutral-800/80 rounded-xl border border-neutral-800 text-left transition-all hover:border-pink-500/50 flex items-center gap-2 group"
-                        >
-                          <div className="w-6 h-6 rounded-lg bg-pink-500/15 text-pink-400 flex items-center justify-center text-xs font-bold">
-                            #{item.rank}
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold text-white group-hover:text-pink-400 transition-colors">
-                              #{item.tag}
-                            </p>
-                            <p className="text-[10px] text-neutral-400 font-medium">
-                              {item.views} views · {item.growth}
-                            </p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+                    {realTrendingHashtags.length === 0 ? (
+                      <div className="p-4 rounded-2xl bg-neutral-950/60 border border-neutral-800 text-xs text-neutral-400">
+                        Hashtags from real uploaded reels will rank here automatically.
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {realTrendingHashtags.slice(0, 6).map((item) => (
+                          <button
+                            key={item.tag}
+                            type="button"
+                            onClick={() => {
+                              onSelectHashtag(item.tag);
+                              onClose();
+                            }}
+                            className="p-2.5 bg-neutral-950/60 hover:bg-neutral-800/80 rounded-xl border border-neutral-800 text-left transition-all hover:border-pink-500/50 flex items-center gap-2 group"
+                          >
+                            <div className="w-6 h-6 rounded-lg bg-pink-500/15 text-pink-400 flex items-center justify-center text-xs font-bold">
+                              #{item.rank}
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-white group-hover:text-pink-400 transition-colors">
+                                #{item.tag}
+                              </p>
+                              <p className="text-[10px] text-neutral-400 font-medium">
+                                {item.views} views · {item.reelsCount} reels
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Popular Audio Mini */}
@@ -431,7 +523,7 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2">
                         <Music className="w-4 h-4 text-cyan-400" />
-                        <span>Trending Sounds</span>
+                        <span>Active Sounds</span>
                       </h3>
                       <button
                         type="button"
@@ -443,42 +535,48 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                       </button>
                     </div>
 
-                    <div className="space-y-2">
-                      {TRENDING_AUDIOS.slice(0, 3).map((audio) => (
-                        <div
-                          key={audio.id}
-                          className="p-2.5 bg-neutral-950/60 rounded-xl border border-neutral-800 flex items-center justify-between gap-3"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleAudio(audio)}
-                              className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
-                                playingAudioId === audio.id
-                                  ? 'bg-cyan-500 text-black'
-                                  : 'bg-neutral-800 text-white hover:bg-neutral-700'
-                              }`}
-                            >
-                              {playingAudioId === audio.id ? (
-                                <Pause className="w-3.5 h-3.5 fill-current" />
-                              ) : (
-                                <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
-                              )}
-                            </button>
-                            <div className="min-w-0">
-                              <p className="text-xs font-bold text-white truncate">{audio.title}</p>
-                              <p className="text-[10px] text-neutral-400 truncate">
-                                {audio.artist} · {audio.usesCount}
-                              </p>
+                    {realTrendingAudios.length === 0 ? (
+                      <div className="p-4 rounded-2xl bg-neutral-950/60 border border-neutral-800 text-xs text-neutral-400">
+                        Sounds used in real user reels will appear here.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {realTrendingAudios.slice(0, 3).map((audio) => (
+                          <div
+                            key={audio.id}
+                            className="p-2.5 bg-neutral-950/60 rounded-xl border border-neutral-800 flex items-center justify-between gap-3"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleAudio(audio)}
+                                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                                  playingAudioId === audio.id
+                                    ? 'bg-cyan-500 text-black'
+                                    : 'bg-neutral-800 text-white hover:bg-neutral-700'
+                                }`}
+                              >
+                                {playingAudioId === audio.id ? (
+                                  <Pause className="w-3.5 h-3.5 fill-current" />
+                                ) : (
+                                  <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                                )}
+                              </button>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-white truncate">{audio.title}</p>
+                                <p className="text-[10px] text-neutral-400 truncate">
+                                  {audio.artist} · {audio.usesCount}
+                                </p>
+                              </div>
                             </div>
-                          </div>
 
-                          <span className="text-[10px] text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded-md font-semibold border border-cyan-500/20 shrink-0">
-                            {audio.duration}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                            <span className="text-[10px] text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded-md font-semibold border border-cyan-500/20 shrink-0">
+                              {audio.duration}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -488,65 +586,71 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
           {/* TAB: TRENDING REELS */}
           {activeTab === 'reels' && (
             <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {filteredVideos.map((video, idx) => (
-                  <div
-                    key={video.id}
-                    className="p-3.5 bg-neutral-950/60 hover:bg-neutral-800/40 rounded-2xl border border-neutral-800 flex items-center justify-between gap-3 transition-colors group cv-auto-card"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      {getRankBadge(idx + 1)}
-                      <img
-                        src={optimizeThumbnailUrl(video.creator.avatar, 'grid')}
-                        alt={video.creator.name}
-                        loading="lazy"
-                        decoding="async"
-                        className="w-11 h-11 rounded-xl object-cover bg-neutral-800 shrink-0 border border-neutral-700"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-white truncate group-hover:text-pink-400 transition-colors">
-                          {video.title}
-                        </p>
-                        <p className="text-[11px] text-neutral-400 truncate mt-0.5">
-                          @{video.creator.username} · {video.creator.name}
-                        </p>
-                        <div className="flex items-center gap-3 mt-1 text-[10px] text-neutral-400">
-                          <span className="flex items-center gap-1 text-pink-400 font-semibold">
-                            <Heart className="w-3 h-3 fill-pink-500/40" />
-                            {video.stats.likes.toLocaleString()}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <MessageCircle className="w-3 h-3" />
-                            {video.stats.comments.toLocaleString()}
-                          </span>
-                          <span className="flex items-center gap-1 text-emerald-400 font-semibold">
-                            <Eye className="w-3 h-3" />
-                            {formatViews(video.stats.likes)} views
-                          </span>
+              {filteredVideos.length === 0 ? (
+                <div className="p-8 rounded-2xl bg-neutral-950/60 border border-neutral-800 text-center text-xs text-neutral-400">
+                  No matching reels found.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {filteredVideos.map((video, idx) => (
+                    <div
+                      key={video.id}
+                      className="p-3.5 bg-neutral-950/60 hover:bg-neutral-800/40 rounded-2xl border border-neutral-800 flex items-center justify-between gap-3 transition-colors group cv-auto-card"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        {getRankBadge(idx + 1)}
+                        <img
+                          src={optimizeThumbnailUrl(video.creator.avatar, 'grid')}
+                          alt={video.creator.name}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-11 h-11 rounded-xl object-cover bg-neutral-800 shrink-0 border border-neutral-700"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white truncate group-hover:text-pink-400 transition-colors">
+                            {video.title}
+                          </p>
+                          <p className="text-[11px] text-neutral-400 truncate mt-0.5">
+                            @{video.creator.username} · {video.creator.name}
+                          </p>
+                          <div className="flex items-center gap-3 mt-1 text-[10px] text-neutral-400">
+                            <span className="flex items-center gap-1 text-pink-400 font-semibold">
+                              <Heart className="w-3 h-3 fill-pink-500/40" />
+                              {video.stats.likes.toLocaleString()}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <MessageCircle className="w-3 h-3" />
+                              {video.stats.comments.toLocaleString()}
+                            </span>
+                            <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                              <Eye className="w-3 h-3" />
+                              {formatRealViews(video.stats.views)} views
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const originalIdx = videos.findIndex((v) => v.id === video.id);
-                        onSelectReel(originalIdx >= 0 ? originalIdx : 0);
-                        onClose();
-                      }}
-                      className="px-3.5 py-2 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 shadow-md shadow-pink-600/20 active:scale-95 transition-all"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-white" />
-                      <span>Watch</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const originalIdx = videos.findIndex((v) => v.id === video.id);
+                          onSelectReel(originalIdx >= 0 ? originalIdx : 0);
+                          onClose();
+                        }}
+                        className="px-3.5 py-2 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 shadow-md shadow-pink-600/20 active:scale-95 transition-all"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-white" />
+                        <span>Watch</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
-          {/* TAB: VIRAL HASHTAGS */}
+          {/* TAB: HASHTAGS */}
           {activeTab === 'hashtags' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {filteredHashtags.map((h) => (
@@ -563,7 +667,7 @@ export const TrendsDashboard: React.FC<TrendsDashboardProps> = ({
                     {h.isBreakout && (
                       <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 flex items-center gap-1">
                         <Flame className="w-3 h-3" />
-                        Breakout
+                        Top Tag
                       </span>
                     )}
                   </div>

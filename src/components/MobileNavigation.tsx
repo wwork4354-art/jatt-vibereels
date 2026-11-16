@@ -19,6 +19,7 @@ import {
   Play,
   Pause,
   Image as ImageIcon,
+  Send,
 } from 'lucide-react';
 import {
   FeedTab,
@@ -32,6 +33,7 @@ import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 import { soundEngine } from '../utils/soundEngine';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface MobileNavigationProps {
   currentTab: FeedTab;
@@ -48,6 +50,8 @@ interface MobileNavigationProps {
   onQuickVideoUpload?: (file: File, source?: 'live' | 'gallery') => void;
   savedCount: number;
   unreadActivityCount?: number;
+  onOpenDirectSnaps?: () => void;
+  unreadDirectSnapsCount?: number;
   currentUser: UserAccount | null;
   creatorAvatar?: string;
   onOpenLogin: () => void;
@@ -71,6 +75,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onQuickVideoUpload,
   savedCount,
   unreadActivityCount = 0,
+  onOpenDirectSnaps,
+  unreadDirectSnapsCount = 0,
   currentUser,
   creatorAvatar,
   onOpenLogin,
@@ -204,8 +210,9 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           </button>
         </div>
 
-        {/* Right Creator Search, Activity Bell & Auth / Admin */}
+        {/* Right Creator Search, Install, Direct Snaps, Activity Bell & Auth / Admin */}
         <div className="flex items-center gap-1.5">
+          <PWAInstallButton variant="mobile-header" />
           <button
             type="button"
             onClick={() => setIsMobileSearchOpen((prev) => !prev)}
@@ -219,6 +226,22 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           >
             {isMobileSearchOpen ? <X className="w-4 h-4" /> : <Search className="w-4 h-4" />}
           </button>
+          {onOpenDirectSnaps && (
+            <button
+              type="button"
+              onClick={onOpenDirectSnaps}
+              className="relative p-1.5 rounded-lg border bg-neutral-900 border-amber-500/40 text-amber-300 cursor-pointer"
+              title="Direct Chat & Live Snaps Inbox"
+              aria-label="Direct Chat & Live Snaps"
+            >
+              <Send className="w-4 h-4" />
+              {unreadDirectSnapsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-amber-400 text-black text-[8px] font-black flex items-center justify-center">
+                  {unreadDirectSnapsCount > 9 ? '9+' : unreadDirectSnapsCount}
+                </span>
+              )}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onSelectTab('activity')}
@@ -622,6 +645,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 
             {/* Actions */}
             <div className="pt-1 flex flex-col gap-2">
+              <PWAInstallButton variant="menu" />
               <button
                 type="button"
                 onClick={() => {

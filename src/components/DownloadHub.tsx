@@ -405,9 +405,28 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
   const handleToggleFullscreenApi = () => {
     const el = cinemaViewportRef.current;
     if (!el) return;
+    const orient = window.screen?.orientation as
+      | (ScreenOrientation & {
+          lock?: (o: 'landscape' | 'portrait') => Promise<void>;
+          unlock?: () => void;
+        })
+      | undefined;
+
     if (!document.fullscreenElement) {
-      void el.requestFullscreen?.().catch(() => {});
+      void el
+        .requestFullscreen?.()
+        .then(() => {
+          if (orient && typeof orient.lock === 'function') {
+            void orient.lock('landscape').catch(() => {});
+          }
+        })
+        .catch(() => {});
     } else {
+      try {
+        orient?.unlock?.();
+      } catch {
+        // ignore
+      }
       void document.exitFullscreen?.().catch(() => {});
     }
   };

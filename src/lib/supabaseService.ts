@@ -90,11 +90,11 @@ export interface PostMetricsOverride {
 
 // Track optional schema capabilities detected dynamically from Supabase responses
 const schemaCapabilities = {
-  postsHasViews: false,
-  postsHasComments: false,
-  postsHasSaves: false,
-  postsHasDownloads: false,
-  postsHasShares: false,
+  postsHasViews: true,
+  postsHasComments: true,
+  postsHasSaves: true,
+  postsHasDownloads: true,
+  postsHasShares: true,
   postsHasAudioUrl: false,
   profilesTableAvailable: true,
   commentsTableAvailable: true,
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   display_name text NOT NULL,
   bio text DEFAULT '',
   avatar_url text DEFAULT '',
-  followers_count bigint DEFAULT 12400,
+  followers_count bigint DEFAULT 0,
   profile_views bigint DEFAULT 0,
   updated_at timestamptz DEFAULT now()
 );
@@ -178,13 +178,51 @@ CREATE TABLE IF NOT EXISTS public.post_interactions (
   created_at timestamptz DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.live_stories (
+  id text PRIMARY KEY,
+  user_id text NOT NULL,
+  username text NOT NULL,
+  display_name text NOT NULL,
+  avatar_url text DEFAULT '',
+  media_url text NOT NULL,
+  media_type text DEFAULT 'video',
+  caption text,
+  filter_name text,
+  viewed_by_ids jsonb DEFAULT '[]'::jsonb,
+  created_at timestamptz DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.direct_snaps (
+  id text PRIMARY KEY,
+  sender_id text NOT NULL,
+  sender_username text NOT NULL,
+  sender_name text NOT NULL,
+  sender_avatar text DEFAULT '',
+  recipient_id text NOT NULL,
+  recipient_username text NOT NULL,
+  recipient_name text NOT NULL,
+  recipient_avatar text DEFAULT '',
+  media_url text DEFAULT '',
+  media_type text DEFAULT 'video',
+  caption text,
+  filter_name text,
+  text_message text,
+  is_viewed boolean DEFAULT false,
+  created_at timestamptz DEFAULT now()
+);
+
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_interactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.live_stories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.direct_snaps ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY IF NOT EXISTS "Public profiles access" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY IF NOT EXISTS "Public comments access" ON public.post_comments FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Public interactions access" ON public.post_interactions FOR ALL USING (true) WITH CHECK (true);`;
+CREATE POLICY IF NOT EXISTS "Public interactions access" ON public.post_interactions FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY IF NOT EXISTS "Public stories access" ON public.live_stories FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY IF NOT EXISTS "Public direct snaps access" ON public.direct_snaps FOR ALL USING (true) WITH CHECK (true);`;
 
 // =========================================================================
 // Timestamp formatting helpers
@@ -741,11 +779,31 @@ export async function createGlobalPostInSupabase(params: {
       }
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('posts')
       .insert([basePayload])
       .select()
       .single();
+
+    if (error && (error.code === 'PGRST204' || error.code === '42703')) {
+      schemaCapabilities.postsHasViews = false;
+      schemaCapabilities.postsHasComments = false;
+      schemaCapabilities.postsHasSaves = false;
+      schemaCapabilities.postsHasDownloads = false;
+      const minimalPayload = {
+        user_id: params.userId,
+        username: params.username,
+        display_name: params.displayName,
+        avatar_url: params.avatarUrl,
+        media_url: params.mediaUrl,
+        media_type: params.mediaType,
+        caption: params.caption,
+        likes_count: 0,
+      };
+      const retry = await supabase.from('posts').insert([minimalPayload]).select().single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error || !data) {
       if (error) console.warn('Supabase insert post error:', error.message);
@@ -805,6 +863,40 @@ export async function updatePostMetricsInSupabase(
 ): Promise<void> {
   savePostMetricOverride(postId, patch);
 
+  // Keep cached local posts & global feed cache synchronized with latest view/like counts
+  for (const cacheKey of [LOCAL_USER_POSTS_KEY, GLOBAL_FEED_CACHE_KEY]) {
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          let touched = false;
+          const updated = parsed.map((p: VideoPost) => {
+            if (p?.id !== postId) return p;
+            touched = true;
+            return {
+              ...p,
+              stats: {
+                ...p.stats,
+                ...(typeof patch.views === 'number' ? { views: Math.max(0, patch.views) } : {}),
+                ...(typeof patch.likes === 'number' ? { likes: Math.max(0, patch.likes) } : {}),
+                ...(typeof patch.comments === 'number' ? { comments: Math.max(0, patch.comments) } : {}),
+                ...(typeof patch.saves === 'number' ? { saves: Math.max(0, patch.saves) } : {}),
+                ...(typeof patch.downloads === 'number' ? { downloads: Math.max(0, patch.downloads) } : {}),
+                ...(typeof patch.shares === 'number' ? { shares: Math.max(0, patch.shares) } : {}),
+              },
+            };
+          });
+          if (touched) {
+            localStorage.setItem(cacheKey, JSON.stringify(updated));
+          }
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+
   if (!supabase || !isSupabaseConfigured || !isSupabasePost) {
     return;
   }
@@ -832,7 +924,18 @@ export async function updatePostMetricsInSupabase(
   if (Object.keys(dbPatch).length === 0) return;
 
   try {
-    await supabase.from('posts').update(dbPatch).eq('id', postId);
+    const { error } = await supabase.from('posts').update(dbPatch).eq('id', postId);
+    if (error && (error.code === 'PGRST204' || error.code === '42703')) {
+      const msg = (error.message || '').toLowerCase();
+      if (msg.includes('views_count')) schemaCapabilities.postsHasViews = false;
+      if (msg.includes('comments_count')) schemaCapabilities.postsHasComments = false;
+      if (msg.includes('saves_count')) schemaCapabilities.postsHasSaves = false;
+      if (msg.includes('downloads_count')) schemaCapabilities.postsHasDownloads = false;
+      if (msg.includes('shares_count')) schemaCapabilities.postsHasShares = false;
+      if (typeof dbPatch.likes_count === 'number') {
+        await supabase.from('posts').update({ likes_count: dbPatch.likes_count }).eq('id', postId);
+      }
+    }
   } catch {
     // ignore optional column failure
   }
@@ -967,17 +1070,43 @@ export function saveLocalCreatorDirectoryEntry(profile: CreatorProfileData): voi
 export async function upsertUserProfileInSupabase(
   profile: CreatorProfileData
 ): Promise<boolean> {
-  saveLocalCreatorDirectoryEntry(profile);
+  const cleanUsername = normalizeCreatorUsername(profile.username) || profile.username;
+  saveLocalCreatorDirectoryEntry({ ...profile, username: cleanUsername });
+
+  // Also sync creator display_name / username / avatar in local user posts cache
+  try {
+    const localPosts = getStoredLocalPosts();
+    if (localPosts.length > 0) {
+      const updatedLocal = localPosts.map((p) =>
+        p.userId === profile.id || p.isUserUploaded
+          ? {
+              ...p,
+              creator: {
+                ...p.creator,
+                name: profile.name,
+                username: cleanUsername,
+                avatar: profile.avatar,
+                bio: profile.bio,
+              },
+            }
+          : p
+      );
+      localStorage.setItem(LOCAL_USER_POSTS_KEY, JSON.stringify(updatedLocal));
+    }
+  } catch {
+    // ignore storage errors
+  }
 
   if (!supabase || !isSupabaseConfigured) {
     return false;
   }
 
+  let didSync = false;
   try {
     if (schemaCapabilities.profilesTableAvailable) {
       const { error } = await supabase.from('profiles').upsert({
         id: profile.id,
-        username: normalizeCreatorUsername(profile.username) || profile.username,
+        username: cleanUsername,
         display_name: profile.name,
         bio: profile.bio,
         avatar_url: profile.avatar,
@@ -987,13 +1116,26 @@ export async function upsertUserProfileInSupabase(
       if (error && isMissingRelationError(error)) {
         schemaCapabilities.profilesTableAvailable = false;
       } else if (!error) {
-        return true;
+        didSync = true;
       }
+    }
+
+    // Keep author's custom display_name / username / avatar synced across all their uploaded posts
+    const { error: postsErr } = await supabase
+      .from('posts')
+      .update({
+        display_name: profile.name,
+        username: cleanUsername,
+        avatar_url: profile.avatar,
+      })
+      .eq('user_id', profile.id);
+    if (!postsErr) {
+      didSync = true;
     }
   } catch {
     // ignore
   }
-  return false;
+  return didSync;
 }
 
 export async function checkUsernameAvailability(
@@ -1113,7 +1255,7 @@ export async function fetchUserProfileFromSupabase(params: {
               data.avatar_url ||
               'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
             baseFollowers:
-              typeof data.followers_count === 'number' ? data.followers_count : 12400,
+              typeof data.followers_count === 'number' ? data.followers_count : 0,
             profileViews: getProfileViewsForUsername(
               uname,
               typeof data.profile_views === 'number' ? data.profile_views : 0
@@ -1147,7 +1289,7 @@ export async function fetchUserProfileFromSupabase(params: {
             avatar:
               postRow.avatar_url ||
               'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
-            baseFollowers: 12400,
+            baseFollowers: 0,
             profileViews: getProfileViewsForUsername(uname, 0),
           };
         }
@@ -1171,14 +1313,6 @@ export async function fetchUserProfileFromSupabase(params: {
   }
 
   return null;
-}
-
-function estimateBaseFollowersForCreator(username: string, totalLikes: number): number {
-  const clean = normalizeCreatorUsername(username);
-  // Deterministic realistic baseline from likes when explicit DB followers aren't present
-  const hashSeed = clean.split('').reduce((acc, ch) => acc + ch.charCodeAt(0) * 17, 0);
-  const base = Math.max(120, Math.round(totalLikes * 0.14) + (hashSeed % 950));
-  return base;
 }
 
 export function buildCreatorChannelSummary(
@@ -1206,7 +1340,6 @@ export function buildCreatorChannelSummary(
 
   const latestPost = creatorVideos[0];
   const totalLikes = creatorVideos.reduce((sum, v) => sum + (v.stats.likes || 0), 0);
-  const totalViews = creatorVideos.reduce((sum, v) => sum + (v.stats.views || 0), 0);
   const followedSet = getStoredFollowedUsernames();
 
   const resolvedName = isOwn
@@ -1226,7 +1359,7 @@ export function buildCreatorChannelSummary(
 
   const baseFollowers = isOwn
     ? ownProfile.baseFollowers
-    : remoteProfile?.baseFollowers || estimateBaseFollowersForCreator(clean, totalLikes);
+    : remoteProfile?.baseFollowers || 0;
   const followerDelta = getCreatorFollowerDelta(clean);
   const isFollowing =
     followedSet.has(resolvedUsername) ||
@@ -1234,8 +1367,8 @@ export function buildCreatorChannelSummary(
     Boolean(latestPost?.creator.isFollowing);
 
   const baseProfileViews = isOwn
-    ? ownProfile.profileViews ?? Math.max(creatorVideos.length * 48, Math.round(totalViews * 0.04))
-    : remoteProfile?.profileViews ?? Math.max(creatorVideos.length * 32, Math.round(totalViews * 0.05));
+    ? ownProfile.profileViews ?? 0
+    : remoteProfile?.profileViews ?? 0;
 
   return {
     id: isOwn ? ownProfile.id : remoteProfile?.id || latestPost?.userId || `channel-${clean}`,
@@ -1243,10 +1376,10 @@ export function buildCreatorChannelSummary(
     username: resolvedUsername,
     bio: resolvedBio,
     avatar: resolvedAvatar,
-    isVerified: isOwn ? true : Boolean(latestPost?.creator.isVerified ?? totalLikes >= 50000),
+    isVerified: isOwn ? true : Boolean(latestPost?.creator.isVerified),
     isFollowing,
     followersCount: Math.max(0, baseFollowers + followerDelta),
-    followingCount: isOwn ? followedSet.size : Math.max(14, (clean.length * 19) % 180),
+    followingCount: isOwn ? followedSet.size : 0,
     totalLikes,
     profileViews: getProfileViewsForUsername(clean, baseProfileViews),
     videosCount: creatorVideos.length,
@@ -1288,7 +1421,7 @@ export async function searchCreatorsDirectory(
             avatar:
               row.avatar_url ||
               `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(uname)}&backgroundColor=ec4899`,
-            baseFollowers: typeof row.followers_count === 'number' ? row.followers_count : 1200,
+            baseFollowers: typeof row.followers_count === 'number' ? row.followers_count : 0,
             profileViews: typeof row.profile_views === 'number' ? row.profile_views : undefined,
           });
         }

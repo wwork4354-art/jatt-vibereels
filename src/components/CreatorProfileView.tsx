@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { ActivityEvent, CreatorProfileData, VideoPost } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
+import { PWAInstallButton } from './PWAInstallButton';
 import {
   uploadMediaToReelsBucket,
   checkUsernameAvailability,
@@ -238,7 +239,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   const totalOwnViews = userVideos.reduce((sum, v) => sum + (v.stats.views || 0), 0);
   const profileViewsCount = getProfileViewsForUsername(
     profile.username,
-    profile.profileViews ?? Math.max(userVideos.length * 48, Math.round(totalOwnViews * 0.04))
+    profile.profileViews ?? 0
   );
 
   React.useEffect(() => {
@@ -485,7 +486,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-pink-600/20 hover:bg-pink-600/30 text-pink-300 border border-pink-500/40 text-xs font-bold transition-all active:scale-95 cursor-pointer"
           >
             <Edit3 className="w-3.5 h-3.5" />
-            <span>Edit</span>
+            <span>Edit Profile</span>
           </button>
         </div>
       </div>
@@ -569,7 +570,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               className="px-4 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-700 text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
             >
               <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Edit Channel</span>
+              <span>Edit Profile</span>
             </button>
             <button
               type="button"
@@ -601,6 +602,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <span>Cloud Sync</span>
               </button>
             )}
+            <PWAInstallButton variant="topbar" onShowToast={onShowToast} />
           </div>
         </div>
 
@@ -1176,7 +1178,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <div className="w-8 h-8 rounded-xl bg-pink-500/20 text-pink-400 flex items-center justify-center border border-pink-500/30">
                   <UserIcon className="w-4 h-4" />
                 </div>
-                <h3 className="text-base font-black text-white">Create / Edit Creator Channel</h3>
+                <h3 className="text-base font-black text-white">Edit Profile &amp; Channel</h3>
               </div>
               <button
                 type="button"
@@ -1252,15 +1254,20 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 />
               </div>
 
-              {/* Display Name */}
+              {/* Display Name (unrestricted custom characters, spaces & emojis) */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-neutral-300">Display Name</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-neutral-300">Display Name</label>
+                  <span className="text-[10px] text-neutral-400">
+                    Spaces, emojis &amp; any characters allowed
+                  </span>
+                </div>
                 <input
                   type="text"
                   required
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  placeholder="Your display name"
+                  placeholder="Enter any custom display name..."
                   className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-hidden focus:border-pink-500"
                 />
               </div>
@@ -1308,7 +1315,6 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <label className="text-xs font-bold text-neutral-300">Creator Bio</label>
                 <textarea
                   rows={3}
-                  maxLength={160}
                   value={editBio}
                   onChange={(e) => setEditBio(e.target.value)}
                   placeholder="Tell viewers about your reels..."
@@ -1331,7 +1337,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 hover:from-pink-500 hover:to-cyan-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  <span>{isSavingProfile ? 'Saving...' : 'Save Channel'}</span>
+                  <span>{isSavingProfile ? 'Saving...' : 'Save Profile'}</span>
                 </button>
               </div>
             </form>
