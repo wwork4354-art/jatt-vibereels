@@ -1,18 +1,22 @@
 import { supabase, REELS_MEDIA_BUCKET, isSupabaseConfigured } from './supabase';
 import {
   ActivityEvent,
+  AudioTrackOption,
   CommentItem,
   CreatorChannelSummary,
   CreatorProfileData,
   InteractionType,
   VideoPost,
 } from '../types';
+import { searchAudioLibrary } from '../data/audioLibrary';
+import { removeOfflineSavedPost } from './offlineMediaStore';
 
 export const USER_PROFILE_ID_KEY = 'jatt_user_profile_id';
 export const LIKED_POST_IDS_KEY = 'jatt_liked_post_ids';
 export const SAVED_POST_IDS_KEY = 'jatt_saved_post_ids';
 export const FOLLOWED_USERNAMES_KEY = 'jatt_followed_usernames';
 export const LOCAL_USER_POSTS_KEY = 'jatt_local_user_posts_v1';
+export const GLOBAL_FEED_CACHE_KEY = 'jatt_global_feed_cache_v1';
 export const POST_METRICS_OVERRIDES_KEY = 'jatt_post_metrics_v1';
 export const POST_COMMENTS_KEY = 'jatt_post_comments_v1';
 export const ACTIVITY_EVENTS_KEY = 'jatt_activity_events_v1';
@@ -1555,4 +1559,238 @@ export async function recordActivityEventInSupabase(
   }
 
   return newEvent;
+}
+
+// =========================================================================
+// Delete Post Permanently (Supabase DB + Storage + LocalStorage + IndexedDB)
+// =========================================================================
+function extractReelsBucketPath(mediaUrl?: string): string | null {
+  if (!mediaUrl || !mediaUrl.includes(REELS_MEDIA_BUCKET)) return null;
+  const marker = `/object/public/${REELS_MEDIA_BUCKET}/`;
+  const idx = mediaUrl.indexOf(marker);
+  if (idx === -1) return null;
+  const pathPart = mediaUrl.slice(idx + marker.length).split('?')[0];
+  return pathPart ? decodeURIComponent(pathPart) : null;
+}
+
+export async function deletePostEverywhere(params: {
+  postId: string;
+  mediaUrl?: string;
+  audioUrl?: string;
+  isSupabasePost?: boolean;
+}): Promise<void> {
+  const { postId, mediaUrl, audioUrl, isSupabasePost } = params;
+
+  // 1. Clean local user posts & global feed cache
+  try {
+    const localRaw = localStorage.getItem(LOCAL_USER_POSTS_KEY);
+    if (localRaw) {
+      const parsed = JSON.parse(localRaw);
+      if (Array.isArray(parsed)) {
+        const next = parsed.filter((p: VideoPost) => p?.id !== postId);
+        localStorage.setItem(LOCAL_USER_POSTS_KEY, JSON.stringify(next));
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const cacheRaw = localStorage.getItem(GLOBAL_FEED_CACHE_KEY);
+    if (cacheRaw) {
+      const parsed = JSON.parse(cacheRaw);
+      if (Array.isArray(parsed)) {
+        const next = parsed.filter((p: VideoPost) => p?.id !== postId);
+        localStorage.setItem(GLOBAL_FEED_CACHE_KEY, JSON.stringify(next));
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Clean liked/saved sets, metrics overrides, comments, audio metadata & activity logs
+  const liked = getStoredLikedPostIds();
+  if (liked.delete(postId)) saveStoredLikedPostIds(liked);
+
+  const saved = getStoredSavedPostIds();
+  if (saved.delete(postId)) saveStoredSavedPostIds(saved);
+
+  try {
+    const metrics = getStoredPostMetrics();
+    if (postId in metrics) {
+      delete metrics[postId];
+      localStorage.setItem(POST_METRICS_OVERRIDES_KEY, JSON.stringify(metrics));
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const comments = getStoredPostComments();
+    if (postId in comments) {
+      delete comments[postId];
+      localStorage.setItem(POST_COMMENTS_KEY, JSON.stringify(comments));
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const audioMap = getStoredPostAudioMetaMap();
+    let changed = false;
+    if (postId in audioMap) {
+      delete audioMap[postId];
+      changed = true;
+    }
+    if (mediaUrl && mediaUrl in audioMap) {
+      delete audioMap[mediaUrl];
+      changed = true;
+    }
+    if (changed) {
+      localStorage.setItem(POST_AUDIO_META_KEY, JSON.stringify(audioMap));
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const events = getStoredActivityEvents().filter((ev) => ev.postId !== postId);
+    saveStoredActivityEvents(events);
+  } catch {
+    // ignore
+  }
+
+  // 3. Remove any locally cached offline media from IndexedDB
+  await removeOfflineSavedPost(postId);
+
+  // 4. Delete from Supabase DB & Storage if applicable and online
+  const isDeviceOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
+  if (supabase && isSupabaseConfigured && isDeviceOnline) {
+    if (isSupabasePost) {
+      try {
+        await supabase.from('posts').delete().eq('id', postId);
+      } catch {
+        // ignore network/permission errors
+      }
+      if (schemaCapabilities.commentsTableAvailable) {
+        try {
+          await supabase.from('post_comments').delete().eq('post_id', postId);
+        } catch {
+          // ignore
+        }
+      }
+      if (schemaCapabilities.interactionsTableAvailable) {
+        try {
+          await supabase.from('post_interactions').delete().eq('post_id', postId);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    const storagePaths = [extractReelsBucketPath(mediaUrl), extractReelsBucketPath(audioUrl)].filter(
+      (p): p is string => Boolean(p)
+    );
+    if (storagePaths.length > 0) {
+      try {
+        await supabase.storage.from(REELS_MEDIA_BUCKET).remove(storagePaths);
+      } catch {
+        // ignore storage cleanup errors
+      }
+    }
+  }
+}
+
+// =========================================================================
+// Advanced Unified Search (Users, @IDs, Videos/Photos, Songs & Naats)
+// =========================================================================
+export interface AdvancedSearchResults {
+  creators: CreatorChannelSummary[];
+  posts: VideoPost[];
+  audioTracks: AudioTrackOption[];
+}
+
+export async function advancedSearchAll(
+  rawQuery: string,
+  allVideos: VideoPost[],
+  ownProfile: CreatorProfileData
+): Promise<AdvancedSearchResults> {
+  const q = rawQuery.trim().replace(/^@+/, '').toLowerCase();
+
+  // Search creators (also matching exact userId)
+  const allCreators = await searchCreatorsDirectory('', allVideos, ownProfile);
+  const creators = q
+    ? allCreators
+        .filter((c) => {
+          const matchUser = c.username.toLowerCase().includes(q);
+          const matchName = c.name.toLowerCase().includes(q);
+          const matchId = c.id.toLowerCase().includes(q);
+          const matchBio = c.bio.toLowerCase().includes(q);
+          return matchUser || matchName || matchId || matchBio;
+        })
+        .sort((a, b) => {
+          const aExact =
+            normalizeCreatorUsername(a.username) === q || a.id.toLowerCase() === q ? 1 : 0;
+          const bExact =
+            normalizeCreatorUsername(b.username) === q || b.id.toLowerCase() === q ? 1 : 0;
+          if (aExact !== bExact) return bExact - aExact;
+          return b.totalLikes - a.totalLikes;
+        })
+    : allCreators;
+
+  // Search videos & photo posts by title, description, hashtags, sound, or creator
+  const posts = q
+    ? allVideos.filter((v) => {
+        const matchTitle = v.title.toLowerCase().includes(q);
+        const matchDesc = v.description.toLowerCase().includes(q);
+        const matchTags = v.hashtags.some((t) => t.toLowerCase().includes(q));
+        const matchCreator =
+          v.creator.username.toLowerCase().includes(q) ||
+          v.creator.name.toLowerCase().includes(q);
+        const matchSound =
+          v.sound.title.toLowerCase().includes(q) ||
+          v.sound.artist.toLowerCase().includes(q);
+        const matchId = v.id.toLowerCase().includes(q) || (v.userId?.toLowerCase().includes(q) ?? false);
+        return matchTitle || matchDesc || matchTags || matchCreator || matchSound || matchId;
+      })
+    : allVideos.slice(0, 12);
+
+  // Search curated songs/naats/beats + unique custom post audio tracks
+  const curatedMatches = searchAudioLibrary(q, 'all');
+  const seenAudioTitles = new Set(curatedMatches.map((t) => t.title.toLowerCase()));
+  const customPostTracks: AudioTrackOption[] = [];
+
+  for (const v of allVideos) {
+    if (!v.sound?.title) continue;
+    const key = v.sound.title.toLowerCase();
+    if (seenAudioTitles.has(key)) continue;
+    const matchesQ =
+      !q ||
+      key.includes(q) ||
+      (v.sound.artist || '').toLowerCase().includes(q) ||
+      (v.sound.category || '').toLowerCase().includes(q);
+    if (matchesQ) {
+      seenAudioTitles.add(key);
+      customPostTracks.push({
+        id: `post-audio-${v.id}`,
+        title: v.sound.title,
+        artist: v.sound.artist || v.creator.name,
+        category:
+          v.sound.category === 'naat'
+            ? 'naat'
+            : v.sound.category === 'beat'
+            ? 'beat'
+            : 'song',
+        duration: '0:30',
+        mood: `From @${v.creator.username}`,
+        trackType: v.sound.trackType,
+      });
+    }
+  }
+
+  return {
+    creators,
+    posts,
+    audioTracks: [...curatedMatches, ...customPostTracks],
+  };
 }

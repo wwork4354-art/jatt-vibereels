@@ -14,6 +14,9 @@ import {
   CheckCircle2,
   Download,
   Eye,
+  Trash2,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
@@ -27,12 +30,15 @@ interface VideoCardProps {
   isNext?: boolean;
   isNearViewport?: boolean;
   isMuted: boolean;
+  currentUserId?: string;
+  currentUsername?: string;
   onToggleMute: () => void;
   onLikeToggle: (id: string) => void;
   onSaveToggle: (id: string) => void;
   onFollowToggle: (creatorUsername: string) => void;
   onOpenComments: (video: VideoPost) => void;
   onOpenShare: (video: VideoPost) => void;
+  onDeletePost?: (id: string) => void;
   onViewTracked?: (id: string) => void;
   onDownloadTracked?: (id: string) => void;
   onHashtagClick?: (tag: string) => void;
@@ -53,12 +59,15 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   isNext = false,
   isNearViewport = true,
   isMuted,
+  currentUserId,
+  currentUsername,
   onToggleMute,
   onLikeToggle,
   onSaveToggle,
   onFollowToggle,
   onOpenComments,
   onOpenShare,
+  onDeletePost,
   onViewTracked,
   onDownloadTracked,
   onHashtagClick,
@@ -73,12 +82,22 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
+  const [isFillScreen, setIsFillScreen] = useState(false);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [floatingHearts, setFloatingHearts] = useState<FloatingHeart[]>([]);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [isDownloadingReel, setIsDownloadingReel] = useState(false);
+
+  const isOwnPost = Boolean(
+    onDeletePost &&
+      (video.isUserUploaded ||
+        (currentUserId && video.userId === currentUserId) ||
+        (currentUsername &&
+          video.creator.username.toLowerCase() === currentUsername.toLowerCase()))
+  );
 
   const lastTapRef = useRef<number>(0);
   const viewRecordedForActiveRef = useRef<boolean>(false);
@@ -473,11 +492,13 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         className="relative w-full h-full flex items-center justify-center cursor-pointer"
         onClick={handleVideoAreaClick}
       >
-        {/* Image Post OR HTML5 Video element (16:9 centered for landscape, 9:16 crisp portrait for vertical reels) */}
+        {/* Image Post OR HTML5 Video element (Playit-style Fill Screen or crisp 16:9 / 9:16 fit) */}
         {video.mediaType === 'image' ? (
           <div
             className={
-              isLandscape
+              isFillScreen
+                ? 'relative w-full h-full flex items-center justify-center overflow-hidden bg-black'
+                : isLandscape
                 ? 'relative w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
                 : 'relative w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center'
             }
@@ -493,7 +514,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   setIsLandscape(true);
                 }
               }}
-              className="w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform"
+              className={`w-full h-full [transform:translate3d(0,0,0)] will-change-transform ${
+                isFillScreen ? 'object-cover' : 'object-contain'
+              }`}
             />
             {isPlaying && (
               <div className="absolute top-16 left-4 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none">
@@ -509,7 +532,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             {!videoError && (
               <div
                 className={
-                  isLandscape
+                  isFillScreen
+                    ? 'w-full h-full flex items-center justify-center overflow-hidden bg-black'
+                    : isLandscape
                     ? 'w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
                     : 'w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center'
                 }
@@ -537,7 +562,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                     if (isActive) setVideoError(true);
                   }}
                   className={
-                    isLandscape
+                    isFillScreen
+                      ? 'w-full h-full object-cover [transform:translate3d(0,0,0)] will-change-transform'
+                      : isLandscape
                       ? 'w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform'
                       : 'w-full h-full object-cover sm:object-contain [transform:translate3d(0,0,0)] will-change-transform'
                   }
@@ -588,10 +615,10 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       {/* Top Scrim Bar for Controls */}
       <div
         className={`absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:mx-auto [transform:translateZ(0)] ${
-          isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
+          isFillScreen ? 'max-w-none' : isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
         }`}
       >
-        {/* Audio Mute / Unmute Button */}
+        {/* Audio Mute / Unmute + Playit Fill Screen Button */}
         <div className="flex items-center gap-2 pointer-events-auto">
           <button
             type="button"
@@ -616,22 +643,99 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             )}
           </button>
 
-          {isLandscape && (
-            <span className="px-2 py-1 rounded-full bg-cyan-600/25 border border-cyan-400/40 text-cyan-300 text-[10px] font-black tracking-wide">
-              16:9 HD
-            </span>
-          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsFillScreen((prev) => !prev);
+            }}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-[10px] font-black tracking-wide transition-all cursor-pointer [transform:translateZ(0)] ${
+              isFillScreen
+                ? 'bg-pink-600/90 border-pink-400 text-white shadow-md shadow-pink-500/25'
+                : 'bg-neutral-900/90 hover:bg-neutral-800 border-white/15 text-cyan-300'
+            }`}
+            title={isFillScreen ? 'Switch to Original Aspect Ratio' : 'Stretch to Fill Screen (Playit Style)'}
+          >
+            {isFillScreen ? (
+              <Minimize2 className="w-3 h-3" />
+            ) : (
+              <Maximize2 className="w-3 h-3" />
+            )}
+            <span>{isFillScreen ? 'Fit' : 'Fill Screen'}</span>
+          </button>
         </div>
 
-        {/* Live View Counter Pill */}
-        <div
-          className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white text-[11px] font-bold tabular-nums [transform:translateZ(0)]"
-          title="Total Views"
-        >
-          <Eye className="w-3.5 h-3.5 text-cyan-400" />
-          <span>{formatCount(video.stats.views)}</span>
+        {/* Live View Counter + Delete Post Button (own posts) */}
+        <div className="pointer-events-auto flex items-center gap-1.5">
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white text-[11px] font-bold tabular-nums [transform:translateZ(0)]"
+            title="Total Views"
+          >
+            <Eye className="w-3.5 h-3.5 text-cyan-400" />
+            <span>{formatCount(video.stats.views)}</span>
+          </div>
+
+          {isOwnPost && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsConfirmingDelete(true);
+              }}
+              className="p-1.5 rounded-full bg-rose-600/85 hover:bg-rose-500 text-white border border-rose-300/40 shadow-md active:scale-95 transition-all cursor-pointer [transform:translateZ(0)]"
+              title="Delete this uploaded post"
+              aria-label="Delete post"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
+
+      {/* In-App Delete Post Confirmation Modal */}
+      {isConfirmingDelete && (
+        <div
+          className="absolute inset-0 z-50 bg-black/85 flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsConfirmingDelete(false);
+          }}
+        >
+          <div
+            className="w-full max-w-xs bg-neutral-950 border border-rose-500/45 rounded-2xl p-5 shadow-2xl space-y-4 text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-11 h-11 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center mx-auto">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-black text-white">Delete Uploaded Post?</h3>
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                This will permanently remove &ldquo;{video.title}&rdquo; from your feed and Profile.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsConfirmingDelete(false)}
+                className="flex-1 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs font-bold border border-neutral-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsConfirmingDelete(false);
+                  onDeletePost?.(video.id);
+                }}
+                className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Right Side Overlay Action Buttons */}
       <div className="absolute right-3 bottom-18 sm:bottom-20 z-30 flex flex-col items-center gap-4.5 sm:max-w-md pointer-events-auto [transform:translateZ(0)]">

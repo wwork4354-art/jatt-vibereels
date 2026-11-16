@@ -14,12 +14,14 @@ import {
   Flame,
   RotateCcw,
   Square,
-  Circle,
   Image as ImageIcon,
   Download,
   Check,
+  Music,
+  Play,
+  Pause,
 } from 'lucide-react';
-import { VideoPost, UserAccount, CreatorProfileData } from '../types';
+import { VideoPost, UserAccount, CreatorProfileData, AudioTrackOption } from '../types';
 import { soundEngine } from '../utils/soundEngine';
 import { isSupabaseConfigured } from '../lib/supabase';
 import {
@@ -27,8 +29,10 @@ import {
   createGlobalPostInSupabase,
   getOrCreateUserProfileId,
   saveLocalPostRecord,
+  savePostAudioMeta,
 } from '../lib/supabaseService';
 import { savePostForOffline } from '../lib/offlineMediaStore';
+import { CURATED_AUDIO_LIBRARY } from '../data/audioLibrary';
 
 interface ProCameraModalProps {
   isOpen: boolean;
@@ -224,9 +228,13 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const [isSavedToGallery, setIsSavedToGallery] = useState<boolean>(false);
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
 
-  // Post-recording caption form
+  // Post-recording caption & song form
   const [clipTitle, setClipTitle] = useState('');
-  const [clipHashtags, setClipHashtags] = useState('#JattVibe #HD60FPS #LiveFilter #Trending');
+  const [clipHashtags, setClipHashtags] = useState('#JattVibe #4K60FPS #LiveFilter #Trending');
+  const [selectedMusicTrack, setSelectedMusicTrack] = useState<AudioTrackOption | null>(null);
+  const [previewMusicId, setPreviewMusicId] = useState<string | null>(null);
+  const [showMusicPicker, setShowMusicPicker] = useState<boolean>(false);
+  const viewfinderTapRef = useRef<number>(0);
 
   // Refs for camera stream, canvas rendering, and MediaRecorder
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
@@ -353,18 +361,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               {
                 video: {
                   facingMode,
-                  width: { ideal: 3840, min: 2560 },
-                  height: { ideal: 2160, min: 1440 },
-                  frameRate: { ideal: 60 },
-                },
-                audio: audioHighQuality,
-              },
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 3840, min: 2560 },
-                  height: { ideal: 2160, min: 1440 },
-                  frameRate: { ideal: 30 },
+                  width: { ideal: 3840 },
+                  height: { ideal: 2160 },
+                  frameRate: { ideal: 60, min: 24 },
                 },
                 audio: audioHighQuality,
               },
@@ -374,15 +373,6 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   width: { ideal: 1920 },
                   height: { ideal: 1080 },
                   frameRate: { ideal: 60 },
-                },
-                audio: audioHighQuality,
-              },
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 1920 },
-                  height: { ideal: 1080 },
-                  frameRate: { ideal: 30 },
                 },
                 audio: audioHighQuality,
               },
@@ -394,8 +384,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               {
                 video: {
                   facingMode,
-                  width: { ideal: 3840, min: 2560 },
-                  height: { ideal: 2160, min: 1440 },
+                  width: { ideal: 3840 },
+                  height: { ideal: 2160 },
                   frameRate: { ideal: 30 },
                 },
                 audio: audioHighQuality,
@@ -419,15 +409,6 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   width: { ideal: 1920 },
                   height: { ideal: 1080 },
                   frameRate: { ideal: 60 },
-                },
-                audio: audioHighQuality,
-              },
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 1920 },
-                  height: { ideal: 1080 },
-                  frameRate: { ideal: 30 },
                 },
                 audio: audioHighQuality,
               },
@@ -582,7 +563,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
   }, []);
 
-  // Start on-demand recording-only canvas pump (zero overhead during normal camera preview)
+  // Start on-demand recording-only canvas pump (720p bake guarantees zero slow-motion lag on mobile GPUs)
   const startRecordingFramePump = useCallback(() => {
     stopRecordingFramePump();
     recordingCanvasActiveRef.current = true;
@@ -594,30 +575,37 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     if (video && typeof video.requestVideoFrameCallback === 'function') {
       const onVideoFrame = () => {
         if (!recordingCanvasActiveRef.current) return;
-        drawVideoFrameToCanvas(1080);
+        drawVideoFrameToCanvas(720);
         videoFrameCbRef.current = video.requestVideoFrameCallback!(onVideoFrame);
       };
-      drawVideoFrameToCanvas(1080);
+      drawVideoFrameToCanvas(720);
       videoFrameCbRef.current = video.requestVideoFrameCallback(onVideoFrame);
       return;
     }
 
     const onRaf = () => {
       if (!recordingCanvasActiveRef.current) return;
-      drawVideoFrameToCanvas(1080);
+      drawVideoFrameToCanvas(720);
       animFrameRef.current = requestAnimationFrame(onRaf);
     };
-    drawVideoFrameToCanvas(1080);
+    drawVideoFrameToCanvas(720);
     animFrameRef.current = requestAnimationFrame(onRaf);
   }, [drawVideoFrameToCanvas, stopRecordingFramePump]);
 
-  // Ensure frame pump cleans up on modal close
+  // Ensure frame pump & audio preview clean up on modal close
   useEffect(() => {
     if (!isOpen || recordedClipUrl) {
       stopRecordingFramePump();
     }
+    if (!isOpen) {
+      soundEngine.stopPreviewTrack();
+      setPreviewMusicId(null);
+      setSelectedMusicTrack(null);
+      setShowMusicPicker(false);
+    }
     return () => {
       stopRecordingFramePump();
+      soundEngine.stopPreviewTrack();
     };
   }, [isOpen, recordedClipUrl, stopRecordingFramePump]);
 
@@ -896,6 +884,26 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         finalMediaUrl = URL.createObjectURL(recordedBlobRef.current);
       }
 
+      const resolvedSound: VideoPost['sound'] = selectedMusicTrack
+        ? {
+            title: selectedMusicTrack.title,
+            artist: selectedMusicTrack.artist,
+            trackType: selectedMusicTrack.trackType,
+            category: selectedMusicTrack.category,
+            originalVolume: recordedMediaType === 'video' ? 0.55 : 0,
+            bgAudioVolume: 0.85,
+            hasAttachedAudio: true,
+          }
+        : {
+            title: recordedMediaType === 'image' ? 'Photo Studio Vibe' : 'Original HD Studio Audio',
+            artist: authorName,
+            trackType: 'future_bass',
+            category: recordedMediaType === 'image' ? 'beat' : 'original',
+            originalVolume: recordedMediaType === 'video' ? 1 : 0,
+            bgAudioVolume: 0,
+            hasAttachedAudio: false,
+          };
+
       const supabasePost = isDeviceOnline
         ? await createGlobalPostInSupabase({
             userId,
@@ -905,6 +913,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             mediaUrl: finalMediaUrl,
             mediaType: recordedMediaType,
             caption,
+            sound: resolvedSound,
           })
         : null;
 
@@ -914,45 +923,48 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         .filter(Boolean);
 
       const newPost: VideoPost =
-        supabasePost || {
-          id: `pro-reel-${Date.now()}`,
-          title: cleanTitle,
-          description: caption,
-          hashtags: tags.length ? tags : ['JattVibe', 'HD60FPS'],
-          videoUrl: finalMediaUrl,
-          posterUrl: recordedMediaType === 'image' ? finalMediaUrl : undefined,
-          fallbackGradient: 'from-pink-900 via-purple-900 to-black',
-          category: 'trending',
-          userId,
-          mediaType: recordedMediaType,
-          isUserUploaded: true,
-          createdAt: new Date().toISOString(),
-          creator: {
-            name: authorName,
-            username: authorUsername,
-            avatar: authorAvatar,
-            isVerified: true,
-            isFollowing: false,
-            bio: authorBio,
-          },
-          stats: {
-            views: 0,
-            likes: 0,
-            comments: 0,
-            shares: 0,
-            saves: 0,
-            downloads: 0,
-          },
-          isLiked: false,
-          isSaved: false,
-          sound: {
-            title: recordedMediaType === 'image' ? 'Photo Studio Vibe' : 'Original HD Studio Audio',
-            artist: authorName,
-            trackType: 'future_bass',
-          },
-          commentsList: [],
-        };
+        supabasePost
+          ? {
+              ...supabasePost,
+              sound: resolvedSound,
+            }
+          : {
+              id: `pro-reel-${Date.now()}`,
+              title: cleanTitle,
+              description: caption,
+              hashtags: tags.length ? tags : ['JattVibe', '4K60FPS'],
+              videoUrl: finalMediaUrl,
+              posterUrl: recordedMediaType === 'image' ? finalMediaUrl : undefined,
+              fallbackGradient: 'from-pink-900 via-purple-900 to-black',
+              category: 'trending',
+              userId,
+              mediaType: recordedMediaType,
+              isUserUploaded: true,
+              createdAt: new Date().toISOString(),
+              creator: {
+                name: authorName,
+                username: authorUsername,
+                avatar: authorAvatar,
+                isVerified: true,
+                isFollowing: false,
+                bio: authorBio,
+              },
+              stats: {
+                views: 0,
+                likes: 0,
+                comments: 0,
+                shares: 0,
+                saves: 0,
+                downloads: 0,
+              },
+              isLiked: false,
+              isSaved: false,
+              sound: resolvedSound,
+              commentsList: [],
+            };
 
+      soundEngine.stopPreviewTrack();
+      savePostAudioMeta([newPost.id, finalMediaUrl], resolvedSound);
       saveLocalPostRecord(newPost);
       await savePostForOffline(newPost, {
         mediaBlob: recordedBlobRef.current || undefined,
@@ -1093,16 +1105,16 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         </div>
       </div>
 
-      {/* MAIN VIEWFINDER / RECORDED PREVIEW */}
-      <div className="relative flex-1 w-full flex items-center justify-center overflow-hidden bg-neutral-950 px-2 sm:px-4">
+      {/* MAIN VIEWFINDER / RECORDED PREVIEW (Snapchat-Style Edge-to-Edge) */}
+      <div className="relative flex-1 w-full flex items-center justify-center overflow-hidden bg-black px-0 sm:px-4">
         {recordedClipUrl ? (
           /* PREVIEW OF RECORDED FILTERED VIDEO OR CAPTURED PHOTO */
-          <div className="relative w-full h-full max-w-md max-h-[760px] rounded-3xl overflow-hidden bg-black border border-pink-500/40 shadow-2xl flex flex-col justify-between">
+          <div className="relative w-full h-full sm:max-w-md sm:max-h-[760px] rounded-none sm:rounded-3xl overflow-hidden bg-black border-0 sm:border sm:border-pink-500/40 shadow-2xl flex flex-col justify-between">
             {recordedMediaType === 'image' ? (
               <img
                 src={recordedClipUrl}
                 alt="Captured Preview"
-                className="w-full h-full object-contain bg-black"
+                className="w-full h-full object-cover bg-black"
               />
             ) : (
               <video
@@ -1118,11 +1130,14 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
               <span className="px-3 py-1 rounded-full bg-pink-600/95 text-white text-[11px] font-black tracking-wider flex items-center gap-1.5 shadow-md">
                 <Film className="w-3.5 h-3.5" />
-                {recordedMediaType === 'image' ? 'FILTERED PHOTO' : `${selectedFilter.shortLabel.toUpperCase()} HD VIDEO`}
+                {recordedMediaType === 'image' ? 'SNAP PHOTO' : `${selectedFilter.shortLabel.toUpperCase()} 4K VIDEO`}
               </span>
               <button
                 type="button"
                 onClick={() => {
+                  soundEngine.stopPreviewTrack();
+                  setPreviewMusicId(null);
+                  setShowMusicPicker(false);
                   if (recordedClipUrl && recordedClipUrl.startsWith('blob:')) {
                     URL.revokeObjectURL(recordedClipUrl);
                   }
@@ -1137,6 +1152,101 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             </div>
 
             <div className="absolute bottom-3 left-3 right-3 z-20 bg-neutral-950/95 border border-neutral-800 rounded-2xl p-3.5 space-y-2.5">
+              {/* Quick Add Song / Music Trigger */}
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowMusicPicker((prev) => !prev)}
+                  className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold border flex items-center justify-between gap-2 cursor-pointer transition-all ${
+                    selectedMusicTrack
+                      ? 'bg-pink-600/20 border-pink-500/50 text-pink-200'
+                      : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-200'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5 truncate">
+                    <Music className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                    <span className="truncate">
+                      {selectedMusicTrack
+                        ? `Music: ${selectedMusicTrack.title}`
+                        : 'Add Song / Music / Naat'}
+                    </span>
+                  </span>
+                  <span className="text-[10px] text-cyan-300 font-black shrink-0">
+                    {showMusicPicker ? 'Hide' : selectedMusicTrack ? 'Change' : 'Pick'}
+                  </span>
+                </button>
+                {selectedMusicTrack && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundEngine.stopPreviewTrack();
+                      setPreviewMusicId(null);
+                      setSelectedMusicTrack(null);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-neutral-900 border border-neutral-700 text-rose-400 text-[11px] font-bold cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {showMusicPicker && (
+                <div className="max-h-36 overflow-y-auto no-scrollbar space-y-1 p-1.5 rounded-xl bg-neutral-900/90 border border-neutral-800">
+                  {CURATED_AUDIO_LIBRARY.map((track) => {
+                    const isPicked = selectedMusicTrack?.id === track.id;
+                    const isPlayingPreview = previewMusicId === track.id;
+                    return (
+                      <div
+                        key={track.id}
+                        className={`px-2 py-1.5 rounded-lg flex items-center justify-between gap-2 ${
+                          isPicked ? 'bg-pink-600/25 border border-pink-500/50' : 'hover:bg-neutral-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isPlayingPreview) {
+                                soundEngine.stopPreviewTrack();
+                                setPreviewMusicId(null);
+                              } else {
+                                soundEngine.playPreviewTrack(track.trackType, 0.8);
+                                setPreviewMusicId(track.id);
+                              }
+                            }}
+                            className="w-6 h-6 rounded-full bg-neutral-800 text-white flex items-center justify-center shrink-0 cursor-pointer"
+                          >
+                            {isPlayingPreview ? (
+                              <Pause className="w-3 h-3" />
+                            ) : (
+                              <Play className="w-3 h-3" />
+                            )}
+                          </button>
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-bold text-white truncate">{track.title}</p>
+                            <p className="text-[9px] text-neutral-400 truncate">{track.artist}</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedMusicTrack(isPicked ? null : track);
+                            setShowMusicPicker(false);
+                            soundEngine.stopPreviewTrack();
+                            setPreviewMusicId(null);
+                          }}
+                          className={`px-2 py-1 rounded-md text-[10px] font-black cursor-pointer shrink-0 ${
+                            isPicked ? 'bg-pink-600 text-white' : 'bg-neutral-800 text-cyan-300'
+                          }`}
+                        >
+                          {isPicked ? 'Using' : 'Use'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-2">
                 <input
                   type="text"
@@ -1192,8 +1302,19 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             </div>
           </div>
         ) : (
-          /* ACTIVE HARDWARE-ACCELERATED VIDEO CAMERA VIEWFINDER */
-          <div className="relative w-full h-full max-w-md max-h-[760px] rounded-2xl sm:rounded-3xl overflow-hidden bg-black border border-neutral-800 shadow-2xl flex flex-col justify-between">
+          /* ACTIVE SNAPCHAT-STYLE 60FPS HARDWARE-ACCELERATED VIEWFINDER (Double-tap to flip camera) */
+          <div
+            onClick={() => {
+              const now = Date.now();
+              if (now - viewfinderTapRef.current < 300) {
+                viewfinderTapRef.current = 0;
+                handleFlipCamera();
+              } else {
+                viewfinderTapRef.current = now;
+              }
+            }}
+            className="relative w-full h-full sm:max-w-md sm:max-h-[760px] rounded-none sm:rounded-3xl overflow-hidden bg-black border-0 sm:border sm:border-neutral-800 shadow-2xl flex flex-col justify-between"
+          >
             {!isSimulatedFeed ? (
               <div className="relative w-full h-full overflow-hidden bg-black">
                 <video
@@ -1379,61 +1500,88 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         )}
       </div>
 
-      {/* BOTTOM PRIMARY CAMERA CONTROLS: CAPTURE PHOTO | RECORD VIDEO / STOP | SWITCH CAMERA */}
+      {/* SNAPCHAT-STYLE BOTTOM CAMERA CONTROLS: PHOTO | CIRCULAR RECORD RING | FLIP CAMERA */}
       {!recordedClipUrl && (
-        <div className="relative z-30 px-4 py-3.5 bg-gradient-to-t from-black via-black/95 to-transparent shrink-0">
+        <div className="relative z-30 px-4 py-3 bg-gradient-to-t from-black via-black/95 to-transparent shrink-0">
           <div className="max-w-md mx-auto w-full flex items-center justify-around gap-3">
             {/* Capture Photo Button */}
             <button
               type="button"
               disabled={isRecording}
               onClick={handleCapturePhoto}
-              className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
+              className="flex flex-col items-center gap-1 px-3 py-1 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
               title="Capture Filtered Photo"
             >
-              <div className="w-11 h-11 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center shadow-md">
+              <div className="w-11 h-11 rounded-full bg-neutral-900/90 border border-white/20 flex items-center justify-center shadow-md">
                 <ImageIcon className="w-5 h-5 text-cyan-400" />
               </div>
-              <span className="text-[10px] font-bold">Capture Photo</span>
+              <span className="text-[10px] font-bold">Photo</span>
             </button>
 
-            {/* Primary Record Video / Stop Button */}
-            <button
-              type="button"
-              onClick={handleToggleRecord}
-              className={`flex items-center gap-2.5 px-5 py-3 rounded-full font-black text-xs border-2 transition-all active:scale-95 cursor-pointer shadow-xl ${
-                isRecording
-                  ? 'bg-red-600 hover:bg-red-500 border-red-300 text-white shadow-red-600/40'
-                  : 'bg-gradient-to-r from-pink-600 via-rose-600 to-amber-500 hover:from-pink-500 hover:to-amber-400 border-pink-300/60 text-white shadow-pink-600/35'
-              }`}
-              aria-label={isRecording ? 'Stop Recording' : 'Record Video'}
-            >
-              {isRecording ? (
-                <>
-                  <Square className="w-4 h-4 fill-white" />
-                  <span className="tabular-nums">Stop ({formattedTimer})</span>
-                </>
-              ) : (
-                <>
-                  <Circle className="w-4 h-4 fill-white text-white" />
-                  <Video className="w-4 h-4" />
-                  <span>Record Video</span>
-                </>
-              )}
-            </button>
+            {/* Snapchat-Style Circular Shutter Button with Live SVG Recording Ring */}
+            <div className="flex flex-col items-center gap-1">
+              <button
+                type="button"
+                onClick={handleToggleRecord}
+                className="relative w-20 h-20 rounded-full flex items-center justify-center transition-transform active:scale-92 cursor-pointer"
+                aria-label={isRecording ? 'Stop Recording' : 'Record Video'}
+                title={isRecording ? 'Tap to Stop' : 'Tap to Record 4K Video'}
+              >
+                <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 80 80">
+                  <circle
+                    cx="40"
+                    cy="40"
+                    r="36"
+                    fill="none"
+                    stroke="rgba(255,255,255,0.28)"
+                    strokeWidth="4.5"
+                  />
+                  {isRecording && (
+                    <circle
+                      cx="40"
+                      cy="40"
+                      r="36"
+                      fill="none"
+                      stroke="#ff2d55"
+                      strokeWidth="5"
+                      strokeLinecap="round"
+                      strokeDasharray={2 * Math.PI * 36}
+                      strokeDashoffset={2 * Math.PI * 36 * (1 - Math.min(1, recordingSeconds / 60))}
+                      className="transition-all duration-300"
+                    />
+                  )}
+                </svg>
+                <div
+                  className={`transition-all duration-150 flex items-center justify-center shadow-xl ${
+                    isRecording
+                      ? 'w-8 h-8 rounded-lg bg-red-600 shadow-red-600/50'
+                      : 'w-14 h-14 rounded-full bg-gradient-to-tr from-pink-600 via-rose-500 to-amber-400 border-2 border-white'
+                  }`}
+                >
+                  {isRecording ? (
+                    <Square className="w-3.5 h-3.5 fill-white text-white" />
+                  ) : (
+                    <Video className="w-5 h-5 text-white" />
+                  )}
+                </div>
+              </button>
+              <span className="text-[10px] font-black tracking-wide text-white tabular-nums">
+                {isRecording ? `Stop ${formattedTimer}` : 'Tap to Record'}
+              </span>
+            </div>
 
             {/* Switch Camera Button (Front / Back) */}
             <button
               type="button"
               disabled={isRecording}
               onClick={handleFlipCamera}
-              className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
-              title="Switch Front / Back Camera"
+              className="flex flex-col items-center gap-1 px-3 py-1 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
+              title="Switch Front / Back Camera (or Double-Tap screen)"
             >
-              <div className="w-11 h-11 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center shadow-md">
+              <div className="w-11 h-11 rounded-full bg-neutral-900/90 border border-white/20 flex items-center justify-center shadow-md">
                 <SwitchCamera className="w-5 h-5 text-pink-400" />
               </div>
-              <span className="text-[10px] font-bold">Switch Camera</span>
+              <span className="text-[10px] font-bold">Flip</span>
             </button>
           </div>
         </div>

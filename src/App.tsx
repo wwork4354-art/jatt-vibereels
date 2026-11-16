@@ -132,10 +132,11 @@ import {
   mapSupabaseInteractionRow,
   adjustCreatorFollowerDelta,
   normalizeCreatorUsername,
+  GLOBAL_FEED_CACHE_KEY,
+  deletePostEverywhere,
 } from './lib/supabaseService';
 
 const CREATOR_PROFILE_STORAGE_KEY = 'jatt_creator_profile';
-const GLOBAL_FEED_CACHE_KEY = 'jatt_global_feed_cache_v1';
 
 function getCachedGlobalFeedPosts(): VideoPost[] {
   try {
@@ -313,6 +314,10 @@ export default function App() {
 
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const videosRef = useRef<VideoPost[]>(videos);
+  useEffect(() => {
+    videosRef.current = videos;
+  }, [videos]);
 
   // Sync users to localStorage
   const updateUsers = useCallback((newUsers: UserAccount[]) => {
@@ -1036,6 +1041,58 @@ export default function App() {
   const handleOpenShare = useCallback((vid: VideoPost) => setShareVideo(vid), []);
   const handleHashtagClick = useCallback((tag: string) => setSelectedTag(tag), []);
 
+  // Permanently delete a user's uploaded post across UI state, local cache, IndexedDB & Supabase
+  const handleDeletePost = useCallback(
+    async (postId: string) => {
+      const target = videosRef.current.find((v) => v.id === postId);
+
+      setVideos((prev) => prev.filter((v) => v.id !== postId));
+      setActivityEvents((prev) => prev.filter((ev) => ev.postId !== postId));
+      setCommentsVideo((prev) => (prev?.id === postId ? null : prev));
+      setShareVideo((prev) => (prev?.id === postId ? null : prev));
+      setActiveIndex((prev) => Math.max(0, prev > 0 ? prev - 1 : 0));
+
+      await deletePostEverywhere({
+        postId,
+        mediaUrl: target?.videoUrl,
+        audioUrl: target?.sound?.audioUrl,
+        isSupabasePost: target?.isSupabasePost,
+      });
+
+      showToast('Post deleted permanently');
+    },
+    [showToast]
+  );
+
+  // Stable UI modal & navigation callbacks for speed / React.memo effectiveness
+  const handleOpenUpload = useCallback(() => setIsUploadOpen(true), []);
+  const handleOpenTrends = useCallback(() => setIsTrendsOpen(true), []);
+  const handleOpenProCamera = useCallback(() => setIsProCameraOpen(true), []);
+  const handleOpenAdminPanel = useCallback(() => setIsAdminPanelOpen(true), []);
+  const handleOpenCreatorSearch = useCallback(() => setIsCreatorSearchOpen(true), []);
+  const handleOpenAuthLogin = useCallback(() => {
+    setAuthMode('login');
+    setIsAuthOpen(true);
+  }, []);
+  const handleOpenAuthRegister = useCallback(() => {
+    setAuthMode('register');
+    setIsAuthOpen(true);
+  }, []);
+  const handleOpenProfileTab = useCallback(() => {
+    setSelectedTag(null);
+    setProfileInitialSubTab('videos');
+    setCurrentTab('profile');
+  }, []);
+  const handleOpenActivityTab = useCallback(() => {
+    setSelectedTag(null);
+    setCurrentTab('activity');
+    handleMarkActivityRead();
+  }, [handleMarkActivityRead]);
+  const handleBackToFeed = useCallback(() => {
+    setSelectedTag(null);
+    setCurrentTab('foryou');
+  }, []);
+
   // Add comment (real username + ISO timestamp + persistent DB/local sync + activity log)
   const handleAddComment = (text: string) => {
     if (!commentsVideo) return;
@@ -1410,32 +1467,19 @@ export default function App() {
         currentUser={currentUser}
         videos={videos}
         ownProfile={creatorProfile}
-        onSelectCreator={(uname) => handleOpenCreatorProfile(uname)}
-        onOpenLogin={() => {
-          setAuthMode('login');
-          setIsAuthOpen(true);
-        }}
-        onOpenRegister={() => {
-          setAuthMode('register');
-          setIsAuthOpen(true);
-        }}
-        onOpenUpload={() => setIsUploadOpen(true)}
-        onOpenTrends={() => setIsTrendsOpen(true)}
+        onSelectCreator={handleOpenCreatorProfile}
+        onPlayVideo={handlePlayVideoFromProfile}
+        onOpenLogin={handleOpenAuthLogin}
+        onOpenRegister={handleOpenAuthRegister}
+        onOpenUpload={handleOpenUpload}
+        onOpenTrends={handleOpenTrends}
         onOpenLive={handleOpenLive}
         onOpenDownloads={handleOpenDownloads}
-        onOpenProCamera={() => setIsProCameraOpen(true)}
-        onOpenAdmin={() => setIsAdminPanelOpen(true)}
-        onOpenProfile={() => {
-          setSelectedTag(null);
-          setProfileInitialSubTab('videos');
-          setCurrentTab('profile');
-        }}
-        onOpenCreatorSearch={() => setIsCreatorSearchOpen(true)}
-        onOpenActivity={() => {
-          setSelectedTag(null);
-          setCurrentTab('activity');
-          handleMarkActivityRead();
-        }}
+        onOpenProCamera={handleOpenProCamera}
+        onOpenAdmin={handleOpenAdminPanel}
+        onOpenProfile={handleOpenProfileTab}
+        onOpenCreatorSearch={handleOpenCreatorSearch}
+        onOpenActivity={handleOpenActivityTab}
         unreadActivityCount={unreadActivityCount}
         onLogout={handleLogout}
         currentTab={currentTab}
@@ -1463,27 +1507,18 @@ export default function App() {
             setCurrentTab(tab);
             setActiveIndex(0);
           }}
-          onOpenUpload={() => setIsUploadOpen(true)}
-          onOpenTrends={() => setIsTrendsOpen(true)}
-          onOpenCreatorSearch={() => setIsCreatorSearchOpen(true)}
+          onOpenUpload={handleOpenUpload}
+          onOpenTrends={handleOpenTrends}
+          onOpenCreatorSearch={handleOpenCreatorSearch}
           onOpenLive={handleOpenLive}
-          onOpenProCamera={() => setIsProCameraOpen(true)}
+          onOpenProCamera={handleOpenProCamera}
           isMuted={isMuted}
-          onToggleMute={() => {
-            setIsMuted((prev) => {
-              const next = !prev;
-              soundEngine.setMuted(next);
-              return next;
-            });
-          }}
+          onToggleMute={handleToggleMute}
           savedCount={savedCount}
           unreadActivityCount={unreadActivityCount}
           currentUser={currentUser}
-          onOpenAdmin={() => setIsAdminPanelOpen(true)}
-          onOpenLogin={() => {
-            setAuthMode('login');
-            setIsAuthOpen(true);
-          }}
+          onOpenAdmin={handleOpenAdminPanel}
+          onOpenLogin={handleOpenAuthLogin}
         />
 
         {/* Main Snap Scrolling Stage OR TikTok Live Stream View OR Download Hub */}
@@ -1499,28 +1534,23 @@ export default function App() {
                 handleMarkActivityRead();
               }
             }}
-            onOpenUpload={() => setIsUploadOpen(true)}
-            onOpenTrends={() => setIsTrendsOpen(true)}
-            onOpenCreatorSearch={() => setIsCreatorSearchOpen(true)}
+            onOpenUpload={handleOpenUpload}
+            onOpenTrends={handleOpenTrends}
+            onOpenCreatorSearch={handleOpenCreatorSearch}
             videos={videos}
             ownProfile={creatorProfile}
-            onSelectCreator={(uname) => handleOpenCreatorProfile(uname)}
+            onSelectCreator={handleOpenCreatorProfile}
+            onPlayVideo={handlePlayVideoFromProfile}
             onOpenLive={handleOpenLive}
-            onOpenProCamera={() => setIsProCameraOpen(true)}
+            onOpenProCamera={handleOpenProCamera}
             onQuickVideoUpload={handleQuickGalleryUpload}
             savedCount={savedCount}
             unreadActivityCount={unreadActivityCount}
             currentUser={currentUser}
             creatorAvatar={creatorProfile.avatar}
-            onOpenLogin={() => {
-              setAuthMode('login');
-              setIsAuthOpen(true);
-            }}
-            onOpenRegister={() => {
-              setAuthMode('register');
-              setIsAuthOpen(true);
-            }}
-            onOpenAdmin={() => setIsAdminPanelOpen(true)}
+            onOpenLogin={handleOpenAuthLogin}
+            onOpenRegister={handleOpenAuthRegister}
+            onOpenAdmin={handleOpenAdminPanel}
             onLogout={handleLogout}
           />
 
@@ -1544,11 +1574,7 @@ export default function App() {
             /* ALL-IN-ONE DOWNLOAD HUB (SONGS, APPS, DRAMAS, MOVIES, CARTOONS, QURAN) */
             <Suspense fallback={<LazyTabFallback />}>
               <DownloadHub
-                onBackToFeed={() => {
-                  setSelectedTag(null);
-                  setCurrentTab('foryou');
-                  setActiveIndex(0);
-                }}
+                onBackToFeed={handleBackToFeed}
                 onOpenSavedOffline={handleOpenSavedDownloadsOffline}
                 onShowToast={showToast}
                 isMuted={isMuted}
@@ -1570,12 +1596,10 @@ export default function App() {
                 followingCount={followingCount}
                 initialSubTab={profileInitialSubTab}
                 onPlayVideo={handlePlayVideoFromProfile}
-                onOpenUpload={() => setIsUploadOpen(true)}
+                onDeletePost={handleDeletePost}
+                onOpenUpload={handleOpenUpload}
                 onOpenPublicChannel={() => handleOpenCreatorProfile(creatorProfile.username)}
-                onBackToFeed={() => {
-                  setSelectedTag(null);
-                  setCurrentTab('foryou');
-                }}
+                onBackToFeed={handleBackToFeed}
                 onShowToast={showToast}
               />
             </Suspense>
@@ -1668,6 +1692,8 @@ export default function App() {
                         isNext={idx === activeIndex + 1}
                         isNearViewport={Math.abs(idx - activeIndex) <= 1}
                         isMuted={isMuted}
+                        currentUserId={creatorProfile.id}
+                        currentUsername={creatorProfile.username}
                         onToggleMute={handleToggleMute}
                         onLikeToggle={handleLikeToggle}
                         onSaveToggle={handleSaveToggle}
@@ -1676,8 +1702,9 @@ export default function App() {
                         onOpenShare={handleOpenShare}
                         onViewTracked={handleViewTracked}
                         onDownloadTracked={handleDownloadTracked}
+                        onDeletePost={handleDeletePost}
                         onHashtagClick={handleHashtagClick}
-                        onOpenCreatorProfile={(uname) => handleOpenCreatorProfile(uname)}
+                        onOpenCreatorProfile={handleOpenCreatorProfile}
                         onShowToast={showToast}
                       />
                     ))}
@@ -1890,7 +1917,11 @@ export default function App() {
             onClose={() => setIsCreatorSearchOpen(false)}
             videos={videos}
             ownProfile={creatorProfile}
-            onSelectCreator={(uname) => handleOpenCreatorProfile(uname)}
+            onSelectCreator={handleOpenCreatorProfile}
+            onPlayVideo={(vid) => {
+              setIsCreatorSearchOpen(false);
+              handlePlayVideoFromProfile(vid);
+            }}
             onFollowToggle={handleFollowToggle}
             onShowToast={showToast}
           />

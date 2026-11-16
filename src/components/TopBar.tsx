@@ -16,12 +16,17 @@ import {
   X,
   CheckCircle2,
   ArrowRight,
+  Music,
+  Play,
+  Pause,
+  Image as ImageIcon,
 } from 'lucide-react';
-import { UserAccount, VideoPost, CreatorProfileData, CreatorChannelSummary } from '../types';
+import { UserAccount, VideoPost, CreatorProfileData, AudioTrackOption } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
-import { searchCreatorsDirectory } from '../lib/supabaseService';
+import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 import { PWAInstallButton } from './PWAInstallButton';
+import { soundEngine } from '../utils/soundEngine';
 
 /**
  * PLACEHOLDER: Replace this URL or path with your custom logo image.
@@ -34,6 +39,7 @@ interface TopBarProps {
   videos?: VideoPost[];
   ownProfile?: CreatorProfileData;
   onSelectCreator?: (username: string) => void;
+  onPlayVideo?: (videoId: string) => void;
   onOpenLogin: () => void;
   onOpenRegister: () => void;
   onOpenUpload: () => void;
@@ -55,6 +61,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   videos = [],
   ownProfile,
   onSelectCreator,
+  onPlayVideo,
   onOpenLogin,
   onOpenRegister,
   onOpenUpload,
@@ -73,8 +80,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [searchResults, setSearchResults] = useState<CreatorChannelSummary[]>([]);
+  const [searchResults, setSearchResults] = useState<AdvancedSearchResults>({
+    creators: [],
+    posts: [],
+    audioTracks: [],
+  });
   const [isSearching, setIsSearching] = useState(false);
+  const [previewTrackId, setPreviewTrackId] = useState<string | null>(null);
 
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
@@ -93,16 +105,20 @@ export const TopBar: React.FC<TopBarProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Instant live creator search by @username or display name
+  // Instant live search across @IDs, creators, videos & songs
   useEffect(() => {
     if (!isSearchOpen || !ownProfile) return;
     let cancelled = false;
     setIsSearching(true);
     const timer = window.setTimeout(async () => {
       try {
-        const list = await searchCreatorsDirectory(searchQuery, videos, ownProfile);
+        const res = await advancedSearchAll(searchQuery, videos, ownProfile);
         if (!cancelled) {
-          setSearchResults(list.slice(0, 7));
+          setSearchResults({
+            creators: res.creators.slice(0, 4),
+            posts: res.posts.slice(0, 4),
+            audioTracks: res.audioTracks.slice(0, 3),
+          });
         }
       } finally {
         if (!cancelled) {
@@ -118,6 +134,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   }, [isSearchOpen, searchQuery, videos, ownProfile]);
 
   const handleOpenCreator = (username: string) => {
+    soundEngine.stopPreviewTrack();
+    setPreviewTrackId(null);
     setIsSearchOpen(false);
     setSearchQuery('');
     if (onSelectCreator) {
@@ -126,6 +144,29 @@ export const TopBar: React.FC<TopBarProps> = ({
       onOpenCreatorSearch?.();
     }
   };
+
+  const handleOpenPost = (videoId: string) => {
+    soundEngine.stopPreviewTrack();
+    setPreviewTrackId(null);
+    setIsSearchOpen(false);
+    setSearchQuery('');
+    onPlayVideo?.(videoId);
+  };
+
+  const handleToggleTrackPreview = (track: AudioTrackOption) => {
+    if (previewTrackId === track.id) {
+      soundEngine.stopPreviewTrack();
+      setPreviewTrackId(null);
+    } else {
+      soundEngine.playPreviewTrack(track.trackType, 0.85);
+      setPreviewTrackId(track.id);
+    }
+  };
+
+  const hasAnyResults =
+    searchResults.creators.length > 0 ||
+    searchResults.posts.length > 0 ||
+    searchResults.audioTracks.length > 0;
 
   return (
     <header className="fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 [transform:translateZ(0)]">
@@ -150,92 +191,192 @@ export const TopBar: React.FC<TopBarProps> = ({
               setSearchQuery(e.target.value);
               setIsSearchOpen(true);
             }}
-            placeholder="Search user ID (@username) or name..."
+            placeholder="Search @ID, user, video, or song..."
             className="w-full bg-neutral-900/95 hover:bg-neutral-900 text-xs text-white placeholder-neutral-400 pl-8.5 pr-8 py-2 rounded-xl border border-neutral-700/80 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/40 transition-all"
-            aria-label="Search creators by @username or display name"
+            aria-label="Search creators, videos, and songs"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery('')}
               className="absolute right-2.5 text-neutral-400 hover:text-white p-0.5"
-              aria-label="Clear creator search"
+              aria-label="Clear search"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
 
-        {/* Instant Matching Creators Dropdown */}
+        {/* Instant Advanced Search Dropdown */}
         {isSearchOpen && (
           <div className="absolute left-0 right-0 top-full mt-2 bg-neutral-950 border border-neutral-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
             <div className="px-3 py-2 border-b border-neutral-800/80 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-neutral-400">
-              <span>{searchQuery ? 'Matching Creators' : 'Suggested Channels'}</span>
+              <span>{searchQuery ? 'Instant Results' : 'Suggested Channels & Videos'}</span>
               {onOpenCreatorSearch && (
                 <button
                   type="button"
                   onClick={() => {
+                    soundEngine.stopPreviewTrack();
+                    setPreviewTrackId(null);
                     setIsSearchOpen(false);
                     onOpenCreatorSearch();
                   }}
                   className="text-cyan-400 hover:text-cyan-300 flex items-center gap-0.5 cursor-pointer"
                 >
-                  <span>Directory</span>
+                  <span>Search All</span>
                   <ArrowRight className="w-3 h-3" />
                 </button>
               )}
             </div>
 
-            <div className="max-h-80 overflow-y-auto no-scrollbar divide-y divide-neutral-900">
-              {isSearching && searchResults.length === 0 ? (
+            <div className="max-h-96 overflow-y-auto no-scrollbar divide-y divide-neutral-900">
+              {isSearching && !hasAnyResults ? (
                 <div className="p-4 text-center text-xs text-neutral-400">
-                  Searching creators...
+                  Searching users, videos &amp; songs...
                 </div>
-              ) : searchResults.length === 0 ? (
+              ) : !hasAnyResults ? (
                 <div className="p-4 text-center text-xs text-neutral-400">
-                  No user found for &ldquo;{searchQuery}&rdquo;
+                  No match found for &ldquo;{searchQuery}&rdquo;
                 </div>
               ) : (
-                searchResults.map((channel) => (
-                  <div
-                    key={channel.username}
-                    onClick={() => handleOpenCreator(channel.username)}
-                    className="px-3 py-2.5 hover:bg-neutral-900/90 flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <img
-                        src={optimizeThumbnailUrl(channel.avatar, 'grid')}
-                        alt={channel.name}
-                        className="w-9 h-9 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs font-bold text-white truncate">
-                            {channel.name}
-                          </span>
-                          {channel.isVerified && (
-                            <CheckCircle2 className="w-3 h-3 text-sky-400 shrink-0" />
-                          )}
-                        </div>
-                        <p className="text-[11px] font-semibold text-cyan-400 truncate">
-                          @{channel.username}
-                        </p>
+                <>
+                  {/* Accounts / User IDs */}
+                  {searchResults.creators.length > 0 && (
+                    <div>
+                      <div className="px-3 py-1 bg-neutral-900/60 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
+                        Users &amp; IDs
                       </div>
-                    </div>
+                      {searchResults.creators.map((channel) => (
+                        <div
+                          key={channel.username}
+                          onClick={() => handleOpenCreator(channel.username)}
+                          className="px-3 py-2 hover:bg-neutral-900/90 flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <img
+                              src={optimizeThumbnailUrl(channel.avatar, 'grid')}
+                              alt={channel.name}
+                              className="w-8 h-8 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs font-bold text-white truncate">
+                                  {channel.name}
+                                </span>
+                                {channel.isVerified && (
+                                  <CheckCircle2 className="w-3 h-3 text-sky-400 shrink-0" />
+                                )}
+                              </div>
+                              <p className="text-[11px] font-semibold text-cyan-400 truncate">
+                                @{channel.username}
+                              </p>
+                            </div>
+                          </div>
 
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenCreator(channel.username);
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white text-[10px] font-black shrink-0 shadow-xs cursor-pointer"
-                    >
-                      View Profile
-                    </button>
-                  </div>
-                ))
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenCreator(channel.username);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white text-[10px] font-black shrink-0 shadow-xs cursor-pointer"
+                          >
+                            View Profile
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Matching Videos & Photos */}
+                  {searchResults.posts.length > 0 && (
+                    <div>
+                      <div className="px-3 py-1 bg-neutral-900/60 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
+                        Videos &amp; Photos
+                      </div>
+                      {searchResults.posts.map((post) => (
+                        <div
+                          key={post.id}
+                          onClick={() => handleOpenPost(post.id)}
+                          className="px-3 py-2 hover:bg-neutral-900/90 flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div className="w-9 h-9 rounded-lg overflow-hidden bg-neutral-800 shrink-0 border border-neutral-700/80 relative flex items-center justify-center">
+                              {post.mediaType === 'image' ? (
+                                <img
+                                  src={optimizeThumbnailUrl(post.videoUrl, 'grid')}
+                                  alt={post.title}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <img
+                                  src={optimizeThumbnailUrl(post.posterUrl, 'grid')}
+                                  alt={post.title}
+                                  className="w-full h-full object-cover"
+                                />
+                              )}
+                              <span className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/70 text-white">
+                                {post.mediaType === 'image' ? (
+                                  <ImageIcon className="w-2.5 h-2.5" />
+                                ) : (
+                                  <Play className="w-2.5 h-2.5 fill-current" />
+                                )}
+                              </span>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-bold text-white truncate">{post.title}</p>
+                              <p className="text-[10px] text-neutral-400 truncate">
+                                @{post.creator.username} · {post.sound.title}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold shrink-0">
+                            Watch
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Songs & Naats */}
+                  {searchResults.audioTracks.length > 0 && (
+                    <div>
+                      <div className="px-3 py-1 bg-neutral-900/60 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
+                        Songs &amp; Naats
+                      </div>
+                      {searchResults.audioTracks.map((track) => {
+                        const isPlaying = previewTrackId === track.id;
+                        return (
+                          <div
+                            key={track.id}
+                            onClick={() => handleToggleTrackPreview(track)}
+                            className="px-3 py-2 hover:bg-neutral-900/90 flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-pink-600/30 to-purple-600/30 border border-pink-500/35 text-pink-300 flex items-center justify-center shrink-0">
+                                {isPlaying ? (
+                                  <Pause className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Music className="w-3.5 h-3.5" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-bold text-white truncate">{track.title}</p>
+                                <p className="text-[10px] text-neutral-400 truncate">
+                                  {track.artist} · {track.category}
+                                </p>
+                              </div>
+                            </div>
+                            <span className="px-2 py-0.5 rounded-md bg-pink-500/15 text-pink-300 border border-pink-500/30 text-[10px] font-bold shrink-0">
+                              {isPlaying ? 'Playing' : 'Play'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

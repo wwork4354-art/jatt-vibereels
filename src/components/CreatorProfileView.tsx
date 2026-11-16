@@ -26,6 +26,8 @@ import {
   WifiOff,
   CheckCircle,
   Download,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { ActivityEvent, CreatorProfileData, VideoPost } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
@@ -61,6 +63,7 @@ interface CreatorProfileViewProps {
   followingCount: number;
   initialSubTab?: 'videos' | 'saved' | 'liked' | 'activity';
   onPlayVideo: (videoId: string) => void;
+  onDeletePost?: (videoId: string) => void;
   onOpenUpload: () => void;
   onOpenPublicChannel?: () => void;
   onBackToFeed: () => void;
@@ -93,6 +96,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   followingCount,
   initialSubTab,
   onPlayVideo,
+  onDeletePost,
   onOpenUpload,
   onOpenPublicChannel,
   onBackToFeed,
@@ -105,6 +109,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   const [offlineRecords, setOfflineRecords] = useState<OfflineMediaRecord[]>([]);
   const [savedFilter, setSavedFilter] = useState<'all' | 'reels' | 'audio'>('all');
   const [offlinePlayerPost, setOfflinePlayerPost] = useState<VideoPost | null>(null);
+  const [offlinePlayerFill, setOfflinePlayerFill] = useState<boolean>(false);
+  const [postPendingDelete, setPostPendingDelete] = useState<VideoPost | null>(null);
   const [cachingPostId, setCachingPostId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSyncOpen, setIsSyncOpen] = useState(false);
@@ -843,7 +849,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                     </div>
                   </button>
 
-                  {/* Top-right Action Button: Cache/Delete offline in Saved tab OR Insights in Posts tab */}
+                  {/* Top-right Action Button: Cache/Delete offline in Saved tab OR Insights + Delete in Posts tab */}
                   {activeSubTab === 'saved' ? (
                     <div className="absolute top-1.5 right-1.5 flex items-center gap-1">
                       {!isOfflinePlayable && isOnline && (
@@ -869,17 +875,33 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                       )}
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setInsightsPost(vid);
-                      }}
-                      className="absolute top-1.5 right-1.5 p-1.5 rounded-lg bg-black/70 hover:bg-pink-600 text-white border border-white/15 transition-colors cursor-pointer"
-                      title="View Post Insights & Activity"
-                    >
-                      <TrendingUp className="w-3 h-3" />
-                    </button>
+                    <div className="absolute top-1.5 right-1.5 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setInsightsPost(vid);
+                        }}
+                        className="p-1.5 rounded-lg bg-black/70 hover:bg-pink-600 text-white border border-white/15 transition-colors cursor-pointer"
+                        title="View Post Insights & Activity"
+                      >
+                        <TrendingUp className="w-3 h-3" />
+                      </button>
+                      {activeSubTab === 'videos' && onDeletePost && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPostPendingDelete(vid);
+                          }}
+                          className="p-1.5 rounded-lg bg-rose-600/85 hover:bg-rose-500 text-white border border-rose-300/30 transition-colors cursor-pointer"
+                          title="Delete this uploaded post"
+                          aria-label="Delete uploaded post"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               );
@@ -893,17 +915,66 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
         </div>
       </div>
 
+      {/* In-App Delete Uploaded Post Confirmation Modal */}
+      {postPendingDelete && (
+        <div
+          className="fixed inset-0 z-55 bg-black/85 flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setPostPendingDelete(null)}
+        >
+          <div
+            className="w-full max-w-xs bg-neutral-950 border border-rose-500/45 rounded-3xl p-5 shadow-2xl space-y-4 text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center mx-auto">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-black text-white">Delete Uploaded Post?</h3>
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                This will permanently remove &ldquo;{postPendingDelete.title}&rdquo; from your Profile and global feed.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPostPendingDelete(null)}
+                className="flex-1 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs font-bold border border-neutral-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetId = postPendingDelete.id;
+                  setPostPendingDelete(null);
+                  onDeletePost?.(targetId);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Built-In Offline Media Player Modal (Videos, Photos, Songs & Naats) */}
       {offlinePlayerPost && (
         <div
-          className="fixed inset-0 z-55 bg-black/92 flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150"
+          className={`fixed inset-0 z-55 bg-black/95 flex items-center justify-center animate-in fade-in duration-150 ${
+            offlinePlayerFill ? 'p-0' : 'p-3 sm:p-5'
+          }`}
           onClick={() => setOfflinePlayerPost(null)}
         >
           <div
-            className="w-full max-w-md bg-neutral-950 border border-neutral-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+            className={`w-full bg-neutral-950 border border-neutral-800 overflow-hidden shadow-2xl flex flex-col ${
+              offlinePlayerFill
+                ? 'h-[100dvh] max-w-none rounded-none border-0'
+                : 'max-w-md rounded-3xl max-h-[90vh]'
+            }`}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-2">
+            <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-2 shrink-0">
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 text-[9px] font-black uppercase">
@@ -919,21 +990,47 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                   {offlinePlayerPost.title}
                 </h3>
               </div>
-              <button
-                type="button"
-                onClick={() => setOfflinePlayerPost(null)}
-                className="p-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setOfflinePlayerFill((prev) => !prev)}
+                  className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-1 cursor-pointer ${
+                    offlinePlayerFill
+                      ? 'bg-pink-600 text-white border-pink-400'
+                      : 'bg-neutral-900 text-cyan-300 border-neutral-700'
+                  }`}
+                  title="Toggle Playit-style Stretch Fill Screen"
+                >
+                  {offlinePlayerFill ? (
+                    <Minimize2 className="w-3.5 h-3.5" />
+                  ) : (
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  )}
+                  <span>{offlinePlayerFill ? 'Fit' : 'Fill Screen'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOfflinePlayerFill(false);
+                    setOfflinePlayerPost(null);
+                  }}
+                  className="p-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            <div className="relative bg-black flex items-center justify-center aspect-[9/14] max-h-[60vh]">
+            <div
+              className={`relative bg-black flex items-center justify-center overflow-hidden ${
+                offlinePlayerFill ? 'flex-1 w-full' : 'aspect-[9/14] max-h-[60vh]'
+              }`}
+            >
               {offlinePlayerPost.mediaType === 'image' ? (
                 <img
                   src={offlinePlayerPost.videoUrl}
                   alt={offlinePlayerPost.title}
-                  className="w-full h-full object-contain"
+                  className={`w-full h-full ${offlinePlayerFill ? 'object-cover' : 'object-contain'}`}
                 />
               ) : (
                 <video
@@ -943,13 +1040,13 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                   autoPlay
                   loop
                   playsInline
-                  className="w-full h-full object-contain"
+                  className={`w-full h-full ${offlinePlayerFill ? 'object-cover' : 'object-contain'}`}
                 />
               )}
             </div>
 
             {offlinePlayerPost.sound?.audioUrl && (
-              <div className="px-4 pt-3 bg-neutral-950">
+              <div className="px-4 pt-3 bg-neutral-950 shrink-0">
                 <audio
                   src={offlinePlayerPost.sound.audioUrl}
                   controls
@@ -960,7 +1057,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               </div>
             )}
 
-            <div className="p-4 flex items-center justify-between gap-2 bg-neutral-950 border-t border-neutral-800">
+            <div className="p-4 flex items-center justify-between gap-2 bg-neutral-950 border-t border-neutral-800 shrink-0">
               <div className="min-w-0 flex items-center gap-2">
                 <Music className="w-4 h-4 text-pink-400 shrink-0" />
                 <div className="min-w-0">
@@ -976,6 +1073,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 type="button"
                 onClick={() => {
                   const targetId = offlinePlayerPost.id;
+                  setOfflinePlayerFill(false);
                   setOfflinePlayerPost(null);
                   onPlayVideo(targetId);
                 }}

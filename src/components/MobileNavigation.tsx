@@ -15,18 +15,23 @@ import {
   Search,
   CheckCircle2,
   ArrowRight,
+  Music,
+  Play,
+  Pause,
+  Image as ImageIcon,
 } from 'lucide-react';
 import {
   FeedTab,
   UserAccount,
   VideoPost,
   CreatorProfileData,
-  CreatorChannelSummary,
+  AudioTrackOption,
 } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
-import { searchCreatorsDirectory } from '../lib/supabaseService';
+import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import { soundEngine } from '../utils/soundEngine';
 
 interface MobileNavigationProps {
   currentTab: FeedTab;
@@ -37,6 +42,7 @@ interface MobileNavigationProps {
   videos?: VideoPost[];
   ownProfile?: CreatorProfileData;
   onSelectCreator?: (username: string) => void;
+  onPlayVideo?: (videoId: string) => void;
   onOpenLive: () => void;
   onOpenProCamera: () => void;
   onQuickVideoUpload?: (file: File, source?: 'live' | 'gallery') => void;
@@ -59,6 +65,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   videos = [],
   ownProfile,
   onSelectCreator,
+  onPlayVideo,
   onOpenLive,
   onOpenProCamera,
   onQuickVideoUpload,
@@ -75,7 +82,12 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   const [isUploadSheetOpen, setIsUploadSheetOpen] = useState(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [mobileSearchQuery, setMobileSearchQuery] = useState('');
-  const [mobileSearchResults, setMobileSearchResults] = useState<CreatorChannelSummary[]>([]);
+  const [mobileSearchResults, setMobileSearchResults] = useState<AdvancedSearchResults>({
+    creators: [],
+    posts: [],
+    audioTracks: [],
+  });
+  const [previewTrackId, setPreviewTrackId] = useState<string | null>(null);
 
   // Dual upload inputs:
   // Option 1: Record live video right now using phone camera (capture="environment")
@@ -87,9 +99,13 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
     if (!isMobileSearchOpen || !ownProfile) return;
     let cancelled = false;
     const timer = window.setTimeout(async () => {
-      const list = await searchCreatorsDirectory(mobileSearchQuery, videos, ownProfile);
+      const res = await advancedSearchAll(mobileSearchQuery, videos, ownProfile);
       if (!cancelled) {
-        setMobileSearchResults(list.slice(0, 6));
+        setMobileSearchResults({
+          creators: res.creators.slice(0, 3),
+          posts: res.posts.slice(0, 3),
+          audioTracks: res.audioTracks.slice(0, 3),
+        });
       }
     }, mobileSearchQuery ? 120 : 0);
 
@@ -98,6 +114,16 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
       window.clearTimeout(timer);
     };
   }, [isMobileSearchOpen, mobileSearchQuery, videos, ownProfile]);
+
+  const handleToggleMobileTrack = (track: AudioTrackOption) => {
+    if (previewTrackId === track.id) {
+      soundEngine.stopPreviewTrack();
+      setPreviewTrackId(null);
+    } else {
+      soundEngine.playPreviewTrack(track.trackType, 0.85);
+      setPreviewTrackId(track.id);
+    }
+  };
 
   const handleVideoFileSelected = (e: React.ChangeEvent<HTMLInputElement>, source: 'live' | 'gallery') => {
     const file = e.target.files?.[0];
@@ -261,7 +287,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                 autoFocus
                 value={mobileSearchQuery}
                 onChange={(e) => setMobileSearchQuery(e.target.value)}
-                placeholder="Search user ID (@username) or name..."
+                placeholder="Search @ID, user, video, or song..."
                 className="w-full bg-neutral-900 text-xs text-white placeholder-neutral-400 pl-8.5 pr-8 py-2 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
               />
               {mobileSearchQuery && (
@@ -278,6 +304,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  soundEngine.stopPreviewTrack();
+                  setPreviewTrackId(null);
                   setIsMobileSearchOpen(false);
                   onOpenCreatorSearch();
                 }}
@@ -289,55 +317,157 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
             )}
           </div>
 
-          <div className="max-h-60 overflow-y-auto no-scrollbar divide-y divide-neutral-900 rounded-xl border border-neutral-800/80 bg-neutral-900/50">
-            {mobileSearchResults.length === 0 ? (
+          <div className="max-h-72 overflow-y-auto no-scrollbar divide-y divide-neutral-900 rounded-xl border border-neutral-800/80 bg-neutral-900/50">
+            {mobileSearchResults.creators.length === 0 &&
+            mobileSearchResults.posts.length === 0 &&
+            mobileSearchResults.audioTracks.length === 0 ? (
               <p className="py-3 text-center text-xs text-neutral-400">
-                No creators matched &ldquo;{mobileSearchQuery}&rdquo;
+                No users, videos, or songs matched &ldquo;{mobileSearchQuery}&rdquo;
               </p>
             ) : (
-              mobileSearchResults.map((channel) => (
-                <div
-                  key={channel.username}
-                  onClick={() => {
-                    setIsMobileSearchOpen(false);
-                    setMobileSearchQuery('');
-                    onSelectCreator?.(channel.username);
-                  }}
-                  className="px-3 py-2 flex items-center justify-between gap-2 active:bg-neutral-800"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <img
-                      src={optimizeThumbnailUrl(channel.avatar, 'grid')}
-                      alt={channel.name}
-                      className="w-9 h-9 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs font-bold text-white truncate">
-                          {channel.name}
-                        </span>
-                        {channel.isVerified && (
-                          <CheckCircle2 className="w-3 h-3 text-sky-400 shrink-0" />
-                        )}
-                      </div>
-                      <p className="text-[11px] text-cyan-400 truncate">@{channel.username}</p>
+              <>
+                {mobileSearchResults.creators.length > 0 && (
+                  <div>
+                    <div className="px-3 py-1 bg-neutral-950/70 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
+                      Users &amp; IDs
                     </div>
+                    {mobileSearchResults.creators.map((channel) => (
+                      <div
+                        key={channel.username}
+                        onClick={() => {
+                          soundEngine.stopPreviewTrack();
+                          setPreviewTrackId(null);
+                          setIsMobileSearchOpen(false);
+                          setMobileSearchQuery('');
+                          onSelectCreator?.(channel.username);
+                        }}
+                        className="px-3 py-2 flex items-center justify-between gap-2 active:bg-neutral-800"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <img
+                            src={optimizeThumbnailUrl(channel.avatar, 'grid')}
+                            alt={channel.name}
+                            className="w-8 h-8 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs font-bold text-white truncate">
+                                {channel.name}
+                              </span>
+                              {channel.isVerified && (
+                                <CheckCircle2 className="w-3 h-3 text-sky-400 shrink-0" />
+                              )}
+                            </div>
+                            <p className="text-[11px] text-cyan-400 truncate">@{channel.username}</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            soundEngine.stopPreviewTrack();
+                            setPreviewTrackId(null);
+                            setIsMobileSearchOpen(false);
+                            setMobileSearchQuery('');
+                            onSelectCreator?.(channel.username);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 text-white text-[10px] font-black shrink-0"
+                        >
+                          View Profile
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsMobileSearchOpen(false);
-                      setMobileSearchQuery('');
-                      onSelectCreator?.(channel.username);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 text-white text-[10px] font-black shrink-0"
-                  >
-                    View Profile
-                  </button>
-                </div>
-              ))
+                )}
+
+                {mobileSearchResults.posts.length > 0 && (
+                  <div>
+                    <div className="px-3 py-1 bg-neutral-950/70 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
+                      Videos &amp; Photos
+                    </div>
+                    {mobileSearchResults.posts.map((post) => (
+                      <div
+                        key={post.id}
+                        onClick={() => {
+                          soundEngine.stopPreviewTrack();
+                          setPreviewTrackId(null);
+                          setIsMobileSearchOpen(false);
+                          setMobileSearchQuery('');
+                          onPlayVideo?.(post.id);
+                        }}
+                        className="px-3 py-2 flex items-center justify-between gap-2 active:bg-neutral-800"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="w-9 h-9 rounded-lg overflow-hidden bg-neutral-800 border border-neutral-700/80 shrink-0 relative">
+                            <img
+                              src={optimizeThumbnailUrl(
+                                post.mediaType === 'image' ? post.videoUrl : post.posterUrl,
+                                'grid'
+                              )}
+                              alt={post.title}
+                              className="w-full h-full object-cover"
+                            />
+                            <span className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/70 text-white">
+                              {post.mediaType === 'image' ? (
+                                <ImageIcon className="w-2.5 h-2.5" />
+                              ) : (
+                                <Play className="w-2.5 h-2.5 fill-current" />
+                              )}
+                            </span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-white truncate">{post.title}</p>
+                            <p className="text-[10px] text-neutral-400 truncate">
+                              @{post.creator.username}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold shrink-0">
+                          Watch
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {mobileSearchResults.audioTracks.length > 0 && (
+                  <div>
+                    <div className="px-3 py-1 bg-neutral-950/70 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
+                      Songs &amp; Naats
+                    </div>
+                    {mobileSearchResults.audioTracks.map((track) => {
+                      const isPlaying = previewTrackId === track.id;
+                      return (
+                        <div
+                          key={track.id}
+                          onClick={() => handleToggleMobileTrack(track)}
+                          className="px-3 py-2 flex items-center justify-between gap-2 active:bg-neutral-800"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div className="w-8 h-8 rounded-lg bg-pink-500/20 border border-pink-500/35 text-pink-300 flex items-center justify-center shrink-0">
+                              {isPlaying ? (
+                                <Pause className="w-3.5 h-3.5" />
+                              ) : (
+                                <Music className="w-3.5 h-3.5" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white truncate">{track.title}</p>
+                              <p className="text-[10px] text-neutral-400 truncate">
+                                {track.artist}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-md bg-pink-500/15 text-pink-300 border border-pink-500/30 text-[10px] font-bold shrink-0">
+                            {isPlaying ? 'Playing' : 'Play'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

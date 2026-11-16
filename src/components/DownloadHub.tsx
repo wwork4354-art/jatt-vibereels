@@ -375,9 +375,42 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     return {};
   });
 
-  // Track active video player item & optional expanded 16:9 cinema mode
+  // Track active video player item, 16:9 cinema mode & Playit-style stretch/fill mode
   const [previewItem, setPreviewItem] = useState<DownloadItem | null>(null);
   const [isCinemaMode, setIsCinemaMode] = useState<boolean>(false);
+  const [playerScaleMode, setPlayerScaleMode] = useState<'fill' | 'fit'>('fill');
+  const cinemaViewportRef = React.useRef<HTMLDivElement | null>(null);
+  const inlineIframeRef = React.useRef<HTMLIFrameElement | null>(null);
+  const cinemaIframeRef = React.useRef<HTMLIFrameElement | null>(null);
+
+  const buildYouTube1080Url = (youtubeId: string) =>
+    `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&rel=0&playsinline=1&vq=hd1080&hd=1&modestbranding=1&iv_load_policy=3&enablejsapi=1`;
+
+  const enforceYouTube1080p = (iframe: HTMLIFrameElement | null) => {
+    if (!iframe?.contentWindow) return;
+    try {
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: 'command', func: 'setPlaybackQuality', args: ['hd1080'] }),
+        '*'
+      );
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: 'command', func: 'setPlaybackQualityRange', args: ['hd1080', 'hd1080'] }),
+        '*'
+      );
+    } catch {
+      // ignore cross-origin postMessage restrictions
+    }
+  };
+
+  const handleToggleFullscreenApi = () => {
+    const el = cinemaViewportRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      void el.requestFullscreen?.().catch(() => {});
+    } else {
+      void document.exitFullscreen?.().catch(() => {});
+    }
+  };
 
   // YouTube Search States
   const [isSearchingYouTube, setIsSearchingYouTube] = useState<boolean>(false);
@@ -1135,12 +1168,33 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => setIsCinemaMode((prev) => !prev)}
-                      className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-cyan-500/35 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      title="Expand 16:9 Widescreen Theater"
+                      onClick={() =>
+                        setPlayerScaleMode((prev) => (prev === 'fill' ? 'fit' : 'fill'))
+                      }
+                      className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        playerScaleMode === 'fill'
+                          ? 'bg-pink-600/25 border-pink-400 text-pink-200'
+                          : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-300'
+                      }`}
+                      title="Toggle Playit-style Stretch Fill vs 16:9 Fit"
                     >
                       <Maximize2 className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">16:9 Theater</span>
+                      <span className="hidden sm:inline">
+                        {playerScaleMode === 'fill' ? 'Stretch Fill' : 'Fit 16:9'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlayerScaleMode('fill');
+                        setIsCinemaMode(true);
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600/30 to-pink-600/30 hover:from-cyan-600/45 hover:to-pink-600/45 text-white border border-cyan-400/50 text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                      title="Open Full-Screen Stretched Player (Playit Style)"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5 text-cyan-300" />
+                      <span className="hidden sm:inline">Full Screen</span>
                     </button>
 
                     <button
@@ -1157,9 +1211,19 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   </div>
                 </div>
 
-                {/* Pure 16:9 Widescreen Player Container (no conflicting max-h cropping) */}
+                {/* Responsive Player Container (16:9 Fit or Playit-style Stretch Fill) */}
                 {!isCinemaMode && (
-                  <div className="relative w-[min(100%,calc(38vh*16/9))] sm:w-[min(100%,calc(44vh*16/9))] max-w-4xl aspect-video mx-auto rounded-xl sm:rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl">
+                  <div
+                    className={`relative mx-auto overflow-hidden bg-black border border-neutral-800 shadow-2xl transition-all ${
+                      playerScaleMode === 'fill'
+                        ? 'w-full h-[38vh] sm:h-[44vh] rounded-xl sm:rounded-2xl'
+                        : 'w-[min(100%,calc(38vh*16/9))] sm:w-[min(100%,calc(44vh*16/9))] max-w-4xl aspect-video rounded-xl sm:rounded-2xl'
+                    }`}
+                  >
+                    <span className="absolute top-2.5 left-2.5 z-20 px-2 py-0.5 rounded-full bg-black/80 border border-cyan-400/50 text-cyan-300 text-[10px] font-black tracking-wide pointer-events-none">
+                      1080p FHD · {playerScaleMode === 'fill' ? 'STRETCH FILL' : '16:9 FIT'}
+                    </span>
+
                     {!isOnline && previewItem.youtubeId ? (
                       <div className="w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950/95 space-y-3">
                         <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center">
@@ -1187,10 +1251,16 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                       </div>
                     ) : previewItem.youtubeId ? (
                       <iframe
+                        ref={inlineIframeRef}
                         key={previewItem.youtubeId}
-                        src={`https://www.youtube-nocookie.com/embed/${previewItem.youtubeId}?autoplay=1&rel=0&playsinline=1`}
+                        src={buildYouTube1080Url(previewItem.youtubeId)}
                         title={previewItem.title}
-                        className="w-full h-full border-0"
+                        onLoad={() => enforceYouTube1080p(inlineIframeRef.current)}
+                        className={
+                          playerScaleMode === 'fill'
+                            ? 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100%,calc(44vh*16/9))] h-[max(100%,calc(100vw*9/16))] border-0'
+                            : 'w-full h-full border-0'
+                        }
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                         allowFullScreen
                       />
@@ -1199,7 +1269,9 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                         <img
                           src={previewItem.thumbnailUrl}
                           alt={previewItem.title}
-                          className="absolute inset-0 w-full h-full object-cover opacity-40"
+                          className={`absolute inset-0 w-full h-full opacity-55 ${
+                            playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
+                          }`}
                         />
                         <div className="relative z-10 flex flex-col items-center gap-2">
                           <Film className="w-10 h-10 text-cyan-400" />
@@ -1213,89 +1285,142 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
             </div>
           )}
 
-          {/* Optional Fullscreen Centered 16:9 Widescreen Cinema Lightbox */}
+          {/* Full-Screen Playit-Style Stretched / 16:9 Cinema Lightbox */}
           {previewItem && isCinemaMode && (
             <div
-              className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150"
+              ref={cinemaViewportRef}
+              className={`fixed inset-0 z-50 bg-black flex flex-col items-center justify-center animate-in fade-in duration-150 overflow-hidden ${
+                playerScaleMode === 'fill' ? 'p-0' : 'p-3 sm:p-6'
+              }`}
               onClick={() => setIsCinemaMode(false)}
             >
+              {/* Floating Controls Header */}
               <div
-                className="w-[min(95vw,calc(80vh*16/9))] max-w-6xl space-y-3"
+                className={`z-30 flex items-center justify-between gap-2 transition-all ${
+                  playerScaleMode === 'fill'
+                    ? 'absolute top-3 left-3 right-3 px-3 py-2 rounded-2xl bg-black/65 backdrop-blur-md border border-white/15'
+                    : 'w-[min(95vw,calc(80vh*16/9))] max-w-6xl mb-3 px-1'
+                }`}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between gap-3 px-1">
+                <div className="min-w-0 flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 text-[10px] font-black shrink-0">
+                    1080p FHD
+                  </span>
                   <div className="min-w-0">
-                    <h2 className="text-sm sm:text-base font-black text-white truncate">
+                    <h2 className="text-xs sm:text-sm font-black text-white truncate">
                       {previewItem.title}
                     </h2>
-                    <p className="text-xs text-neutral-400 truncate">{previewItem.subtitle}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setIsCinemaMode(false)}
-                      className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-neutral-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Minimize2 className="w-3.5 h-3.5" />
-                      <span>Minimize</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCinemaMode(false);
-                        setPreviewItem(null);
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
-                    >
-                      <X className="w-4 h-4" />
-                      <span>Close</span>
-                    </button>
+                    <p className="text-[11px] text-neutral-400 truncate hidden sm:block">
+                      {previewItem.subtitle}
+                    </p>
                   </div>
                 </div>
-                <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl">
-                  {!isOnline && previewItem.youtubeId ? (
-                    <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-neutral-950 space-y-3">
-                      <WifiOff className="w-10 h-10 text-amber-400" />
-                      <h3 className="text-base font-black text-white">Online YouTube Streaming Unavailable Offline</h3>
-                      <p className="text-xs text-neutral-400 max-w-md">
-                        Connect to Wi-Fi or mobile data to watch YouTube streams, or play your downloaded reels, songs &amp; naats in Profile &rarr; Saved / Downloads.
-                      </p>
-                      {onOpenSavedOffline && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsCinemaMode(false);
-                            onOpenSavedOffline();
-                          }}
-                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 text-white text-xs font-black cursor-pointer"
-                        >
-                          Go to Saved / Downloads
-                        </button>
-                      )}
-                    </div>
-                  ) : previewItem.youtubeId ? (
-                    <iframe
-                      key={`cinema-${previewItem.youtubeId}`}
-                      src={`https://www.youtube-nocookie.com/embed/${previewItem.youtubeId}?autoplay=1&rel=0&playsinline=1`}
-                      title={previewItem.title}
-                      className="w-full h-full border-0"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPlayerScaleMode((prev) => (prev === 'fill' ? 'fit' : 'fill'))
+                    }
+                    className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
+                      playerScaleMode === 'fill'
+                        ? 'bg-pink-600 text-white border-pink-400'
+                        : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-neutral-700'
+                    }`}
+                    title="Switch between Playit Stretch Fill and 16:9 Fit"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>{playerScaleMode === 'fill' ? 'Fill Screen' : 'Fit 16:9'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleFullscreenApi}
+                    className="hidden sm:flex px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border border-neutral-700 text-xs font-bold items-center gap-1 cursor-pointer"
+                    title="Browser True Fullscreen"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Device FS</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCinemaMode(false)}
+                    className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Minimize2 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Minimize</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCinemaMode(false);
+                      setPreviewItem(null);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                    <span className="hidden sm:inline">Close</span>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className={
+                  playerScaleMode === 'fill'
+                    ? 'relative w-screen h-[100dvh] overflow-hidden bg-black'
+                    : 'relative w-[min(95vw,calc(80vh*16/9))] max-w-6xl aspect-video rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl'
+                }
+              >
+                {!isOnline && previewItem.youtubeId ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-neutral-950 space-y-3">
+                    <WifiOff className="w-10 h-10 text-amber-400" />
+                    <h3 className="text-base font-black text-white">Online YouTube Streaming Unavailable Offline</h3>
+                    <p className="text-xs text-neutral-400 max-w-md">
+                      Connect to Wi-Fi or mobile data to watch YouTube streams, or play your downloaded reels, songs &amp; naats in Profile &rarr; Saved / Downloads.
+                    </p>
+                    {onOpenSavedOffline && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCinemaMode(false);
+                          onOpenSavedOffline();
+                        }}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 text-white text-xs font-black cursor-pointer"
+                      >
+                        Go to Saved / Downloads
+                      </button>
+                    )}
+                  </div>
+                ) : previewItem.youtubeId ? (
+                  <iframe
+                    ref={cinemaIframeRef}
+                    key={`cinema-${previewItem.youtubeId}`}
+                    src={buildYouTube1080Url(previewItem.youtubeId)}
+                    title={previewItem.title}
+                    onLoad={() => enforceYouTube1080p(cinemaIframeRef.current)}
+                    className={
+                      playerScaleMode === 'fill'
+                        ? 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100vw,calc(100dvh*16/9))] h-[max(100dvh,calc(100vw*9/16))] border-0'
+                        : 'w-full h-full border-0'
+                    }
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                ) : (
+                  <div className="w-full h-full relative flex flex-col items-center justify-center p-6 text-center">
+                    <img
+                      src={previewItem.thumbnailUrl}
+                      alt={previewItem.title}
+                      className={`absolute inset-0 w-full h-full opacity-55 ${
+                        playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
+                      }`}
                     />
-                  ) : (
-                    <div className="w-full h-full relative flex flex-col items-center justify-center p-6 text-center">
-                      <img
-                        src={previewItem.thumbnailUrl}
-                        alt={previewItem.title}
-                        className="absolute inset-0 w-full h-full object-cover opacity-40"
-                      />
-                      <div className="relative z-10 flex flex-col items-center gap-2">
-                        <Film className="w-12 h-12 text-cyan-400" />
-                        <p className="text-base text-white font-bold">{previewItem.title}</p>
-                      </div>
+                    <div className="relative z-10 flex flex-col items-center gap-2">
+                      <Film className="w-12 h-12 text-cyan-400" />
+                      <p className="text-base text-white font-bold">{previewItem.title}</p>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

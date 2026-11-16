@@ -671,6 +671,42 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </div>
             )}
 
+            {/* Quick One-Tap Trending Music & Naats Chips */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              <span className="text-[10px] font-black uppercase text-pink-400 shrink-0">
+                Quick Add:
+              </span>
+              {filteredAudioTracks.slice(0, 5).map((chipTrack) => {
+                const isSelected = selectedLibraryTrack?.id === chipTrack.id;
+                return (
+                  <button
+                    key={`chip-${chipTrack.id}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedAudioFile(null);
+                      setSelectedAudioPreviewUrl(null);
+                      setSelectedLibraryTrack(isSelected ? null : chipTrack);
+                      if (!isSelected) {
+                        soundEngine.playPreviewTrack(chipTrack.trackType, bgAudioVolume / 100);
+                        setPreviewingId(chipTrack.id);
+                      } else {
+                        soundEngine.stopPreviewTrack();
+                        setPreviewingId(null);
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap border transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                      isSelected
+                        ? 'bg-pink-600 border-pink-400 text-white shadow-sm'
+                        : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-300'
+                    }`}
+                  >
+                    <Music className="w-2.5 h-2.5 text-pink-300" />
+                    <span>{chipTrack.title.split('(')[0].trim()}</span>
+                  </button>
+                );
+              })}
+            </div>
+
             {/* Search & Curated Songs / Naats List */}
             {isAudioPanelOpen && (
               <div className="space-y-2.5">
