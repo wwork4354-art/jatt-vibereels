@@ -13,6 +13,8 @@ import {
   Sparkles,
   Flame,
   Clock,
+  Users,
+  UserMinus,
 } from 'lucide-react';
 import { CreatorProfileData, VideoPost } from '../types';
 import {
@@ -22,14 +24,23 @@ import {
   incrementProfileViewsForUsername,
   normalizeCreatorUsername,
 } from '../lib/supabaseService';
+import {
+  SocialEdgesMap,
+  buildMergedSocialEdges,
+  getFollowRelationship,
+  getFollowersList,
+  getFollowingList,
+} from '../lib/socialGraph';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 
 interface PublicCreatorProfileViewProps {
   username: string;
   videos: VideoPost[];
   ownProfile: CreatorProfileData;
+  socialEdges?: SocialEdgesMap;
   onBack: () => void;
   onFollowToggle: (username: string) => void;
+  onRemoveFriend?: (username: string) => void;
   onPlayVideo: (videoId: string) => void;
   onEditOwnProfile: () => void;
   onShowToast: (msg: string) => void;
@@ -45,8 +56,10 @@ export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> =
   username,
   videos,
   ownProfile,
+  socialEdges,
   onBack,
   onFollowToggle,
+  onRemoveFriend,
   onPlayVideo,
   onEditOwnProfile,
   onShowToast,
@@ -110,6 +123,23 @@ export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> =
   const summary = useMemo(
     () => buildCreatorChannelSummary(cleanTarget, combinedVideos, ownProfile, remoteProfile),
     [cleanTarget, combinedVideos, ownProfile, remoteProfile]
+  );
+
+  const activeEdges = useMemo(
+    () => socialEdges || buildMergedSocialEdges(ownProfile.username),
+    [socialEdges, ownProfile.username]
+  );
+  const relationship = useMemo(
+    () => getFollowRelationship(ownProfile.username, cleanTarget, activeEdges),
+    [ownProfile.username, cleanTarget, activeEdges]
+  );
+  const targetFollowingCount = useMemo(
+    () => Math.max(summary.followingCount, getFollowingList(cleanTarget, activeEdges).length),
+    [summary.followingCount, cleanTarget, activeEdges]
+  );
+  const targetFollowersCount = useMemo(
+    () => Math.max(summary.followersCount, getFollowersList(cleanTarget, activeEdges).length),
+    [summary.followersCount, cleanTarget, activeEdges]
   );
 
   // Increment real-time Profile Views counter once per channel visit
@@ -215,22 +245,31 @@ export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> =
             />
           </div>
 
-          {/* Display Name & @username */}
+          {/* Display Name & @username + Mutual Friends Badge */}
           <div className="space-y-1">
-            <h1 className="text-lg sm:text-xl font-black text-white tracking-tight flex items-center justify-center gap-1.5">
+            <h1 className="text-lg sm:text-xl font-black text-white tracking-tight flex items-center justify-center gap-1.5 flex-wrap">
               <span>{summary.name}</span>
               {summary.isVerified && (
                 <Sparkles className="w-4 h-4 text-pink-400" />
               )}
+              {!isOwnChannel && relationship.isMutualFriend && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 text-[10px] font-black uppercase tracking-wider">
+                  <Users className="w-3 h-3" />
+                  <span>Friends</span>
+                </span>
+              )}
             </h1>
             <p className="text-xs font-bold text-cyan-400">@{summary.username}</p>
+            {!isOwnChannel && relationship.isFollower && !relationship.isMutualFriend && (
+              <p className="text-[11px] font-bold text-pink-300">Follows you</p>
+            )}
           </div>
 
           {/* TikTok-Style 4-Stat Bar: Following | Followers | Total Likes | Profile Views */}
           <div className="grid grid-cols-4 gap-2 sm:gap-6 py-3 px-4 sm:px-6 rounded-2xl bg-neutral-900/85 border border-neutral-800/90 w-full max-w-lg">
             <div className="flex flex-col items-center">
               <span className="text-sm sm:text-lg font-black text-white tabular-nums">
-                {formatCompactCount(summary.followingCount)}
+                {formatCompactCount(targetFollowingCount)}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">
                 Following
@@ -239,7 +278,7 @@ export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> =
 
             <div className="flex flex-col items-center border-l border-neutral-800 pl-2 sm:pl-4">
               <span className="text-sm sm:text-lg font-black text-white tabular-nums">
-                {formatCompactCount(summary.followersCount)}
+                {formatCompactCount(targetFollowersCount)}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">
                 Followers
@@ -271,8 +310,8 @@ export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> =
             {summary.bio || 'Sharing reels and music vibes on Jatt VibeReels.'}
           </p>
 
-          {/* Follow CTA OR Edit Own Channel */}
-          <div className="flex items-center justify-center gap-2.5 pt-1">
+          {/* Follow / Friends CTA OR Edit Own Channel */}
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
             {isOwnChannel ? (
               <button
                 type="button"
@@ -283,34 +322,53 @@ export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> =
                 <span>Edit My Channel</span>
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  onFollowToggle(summary.username);
-                  onShowToast(
-                    summary.isFollowing
-                      ? `Unfollowed @${summary.username}`
-                      : `Following @${summary.username}!`
-                  );
-                }}
-                className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 border transition-all active:scale-95 cursor-pointer ${
-                  summary.isFollowing
-                    ? 'bg-neutral-900 hover:bg-neutral-800 text-emerald-300 border-emerald-500/45'
-                    : 'bg-gradient-to-r from-pink-600 via-rose-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white border-pink-400/40 shadow-lg shadow-pink-600/30'
-                }`}
-              >
-                {summary.isFollowing ? (
-                  <>
-                    <Check className="w-4 h-4" />
-                    <span>Following</span>
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="w-4 h-4" />
-                    <span>Follow Channel</span>
-                  </>
+              <>
+                <button
+                  type="button"
+                  onClick={() => onFollowToggle(summary.username)}
+                  className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 border transition-all active:scale-95 cursor-pointer ${
+                    relationship.isMutualFriend
+                      ? 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border-cyan-400/60'
+                      : relationship.isFollowing || summary.isFollowing
+                      ? 'bg-neutral-900 hover:bg-neutral-800 text-emerald-300 border-emerald-500/45'
+                      : 'bg-gradient-to-r from-pink-600 via-rose-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white border-pink-400/40 shadow-lg shadow-pink-600/30'
+                  }`}
+                >
+                  {relationship.isMutualFriend ? (
+                    <>
+                      <Users className="w-4 h-4 text-cyan-300" />
+                      <span>Friends · Unfollow</span>
+                    </>
+                  ) : relationship.isFollowing || summary.isFollowing ? (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Following</span>
+                    </>
+                  ) : relationship.isFollower ? (
+                    <>
+                      <UserPlus className="w-4 h-4" />
+                      <span>Follow Back</span>
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="w-4 h-4" />
+                      <span>Follow Channel</span>
+                    </>
+                  )}
+                </button>
+
+                {relationship.isMutualFriend && onRemoveFriend && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveFriend(summary.username)}
+                    className="px-4 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                    title="Remove mutual friendship"
+                  >
+                    <UserMinus className="w-3.5 h-3.5" />
+                    <span>Remove Friend</span>
+                  </button>
                 )}
-              </button>
+              </>
             )}
 
             <button

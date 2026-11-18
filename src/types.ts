@@ -7,7 +7,8 @@ export type SoundTrackType =
   | 'naat_serene'
   | 'naat_medina'
   | 'punjabi_dhol'
-  | 'sufi_acoustic';
+  | 'sufi_acoustic'
+  | 'punjabi_tribute';
 
 export interface AudioTrackOption {
   id: string;
@@ -180,6 +181,8 @@ export interface DownloadItem {
   description?: string;
   youtubeId?: string;
   youtubeUrl?: string;
+  directVideoUrl?: string;
+  embedUrl?: string;
 }
 
 export interface TrendingHashtag {

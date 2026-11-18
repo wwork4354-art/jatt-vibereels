@@ -170,22 +170,22 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             </span>
           </button>
 
-          {/* Movie Box & Download Hub Tab */}
+          {/* Global YouTube / Movies & Download Hub Tab */}
           <button
             type="button"
             onClick={() => onSelectTab('downloads')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl font-bold text-sm transition-all shadow-xs group ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl font-bold text-sm transition-all shadow-xs group cursor-pointer ${
               currentTab === 'downloads'
-                ? 'bg-gradient-to-r from-pink-600/30 to-cyan-600/30 text-cyan-300 border border-cyan-400 shadow-md'
+                ? 'bg-gradient-to-r from-red-600/30 to-cyan-600/30 text-cyan-300 border border-cyan-400 shadow-md'
                 : 'text-cyan-400 bg-cyan-600/10 hover:bg-cyan-600/20 border border-cyan-500/25'
             }`}
           >
             <div className="flex items-center gap-3.5">
               <Film className="w-5 h-5 shrink-0 text-cyan-400 group-hover:scale-110 transition-transform" />
-              <span>Movie Box</span>
+              <span>YouTube / Movies</span>
             </div>
-            <span className="text-[10px] uppercase font-black tracking-wider bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/35">
-              Stream/DL
+            <span className="text-[10px] uppercase font-black tracking-wider bg-red-500/20 text-rose-300 px-2 py-0.5 rounded-full border border-red-500/35">
+              Global
             </span>
           </button>
 

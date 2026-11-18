@@ -15,9 +15,8 @@ import {
   Download,
   Eye,
   Trash2,
-  Maximize2,
-  Minimize2,
   Lock,
+  Users,
 } from 'lucide-react';
 import { VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
@@ -38,6 +37,9 @@ interface VideoCardProps {
   isMuted: boolean;
   currentUserId?: string;
   currentUsername?: string;
+  isFollowingCreator?: boolean;
+  isFollowerCreator?: boolean;
+  isMutualFriend?: boolean;
   onToggleMute: () => void;
   onLikeToggle: (id: string) => void;
   onSaveToggle: (id: string) => void;
@@ -67,6 +69,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   isMuted,
   currentUserId,
   currentUsername,
+  isFollowingCreator,
+  isFollowerCreator = false,
+  isMutualFriend = false,
   onToggleMute,
   onLikeToggle,
   onSaveToggle,
@@ -88,9 +93,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
-  const [isFillScreen, setIsFillScreen] = useState(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [isDownloadBlockedOpen, setIsDownloadBlockedOpen] = useState(false);
+
+  const effectiveIsFollowing = isFollowingCreator ?? video.creator.isFollowing;
+  const effectiveIsMutual = Boolean(isMutualFriend && effectiveIsFollowing);
 
   const [currentTime, setCurrentTime] = useState(() => getSavedVideoTimestamp(video.id));
   const [duration, setDuration] = useState(0);
@@ -695,13 +702,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         className="relative w-full h-full flex items-center justify-center cursor-pointer"
         onClick={handleVideoAreaClick}
       >
-        {/* Image Post OR HTML5 Video element (9:16 Vertical Reels or Fill Screen) */}
+        {/* Image Post OR HTML5 Video element (9:16 Vertical Reels or Natural Landscape) */}
         {video.mediaType === 'image' ? (
           <div
             className={
-              isFillScreen
-                ? 'relative w-full h-full flex items-center justify-center overflow-hidden bg-black'
-                : isLandscape
+              isLandscape
                 ? 'relative w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
                 : 'relative w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center'
             }
@@ -717,9 +722,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   setIsLandscape(true);
                 }
               }}
-              className={`w-full h-full [transform:translate3d(0,0,0)] will-change-transform ${
-                isFillScreen ? 'object-cover' : 'object-contain'
-              }`}
+              className="w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform"
             />
             {isPlaying && (
               <div className="absolute top-16 left-4 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none">
@@ -735,9 +738,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             {!videoError && (
               <div
                 className={
-                  isFillScreen
-                    ? 'w-full h-full flex items-center justify-center overflow-hidden bg-black'
-                    : isLandscape
+                  isLandscape
                     ? 'w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
                     : 'w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center'
                 }
@@ -773,9 +774,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                     if (isActive) setVideoError(true);
                   }}
                   className={
-                    isFillScreen
-                      ? 'w-full h-full object-cover [transform:translate3d(0,0,0)] will-change-transform'
-                      : isLandscape
+                    isLandscape
                       ? 'w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform'
                       : 'w-full h-full object-cover sm:object-contain [transform:translate3d(0,0,0)] will-change-transform'
                   }
@@ -826,10 +825,10 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       {/* Top Scrim Bar for Controls */}
       <div
         className={`absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:mx-auto [transform:translateZ(0)] ${
-          isFillScreen ? 'max-w-none' : isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
+          isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
         }`}
       >
-        {/* Audio Mute / Unmute + Playit Fill Screen Button */}
+        {/* Audio Mute / Unmute */}
         <div className="flex items-center gap-1.5 sm:gap-2 pointer-events-auto flex-wrap">
           <button
             type="button"
@@ -852,27 +851,6 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 <span className="text-[11px] text-pink-400 hidden xs:inline">Audio on</span>
               </>
             )}
-          </button>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsFillScreen((prev) => !prev);
-            }}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-[10px] font-black tracking-wide transition-all cursor-pointer [transform:translateZ(0)] ${
-              isFillScreen
-                ? 'bg-pink-600/90 border-pink-400 text-white shadow-md shadow-pink-500/25'
-                : 'bg-neutral-900/90 hover:bg-neutral-800 border-white/15 text-cyan-300'
-            }`}
-            title={isFillScreen ? 'Switch to Original Aspect Ratio' : 'Stretch to Fill Screen (Playit Style)'}
-          >
-            {isFillScreen ? (
-              <Minimize2 className="w-3 h-3" />
-            ) : (
-              <Maximize2 className="w-3 h-3" />
-            )}
-            <span>{isFillScreen ? 'Fit' : 'Fill Screen'}</span>
           </button>
         </div>
 
@@ -1007,24 +985,45 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               referrerPolicy="no-referrer"
             />
           </button>
-          {!video.creator.isFollowing && (
+          {!isOwnPost && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onFollowToggle(video.creator.username);
-                onShowToast(`Followed @${video.creator.username}`);
               }}
-              className="absolute -bottom-2 w-5 h-5 rounded-full bg-rose-500 hover:bg-rose-400 text-white flex items-center justify-center shadow-sm active:scale-90 transition-transform"
-              aria-label="Follow creator"
+              className={`absolute -bottom-2 w-5 h-5 rounded-full text-white flex items-center justify-center shadow-sm active:scale-90 transition-transform cursor-pointer ${
+                effectiveIsMutual
+                  ? 'bg-cyan-500 hover:bg-cyan-400'
+                  : effectiveIsFollowing
+                  ? 'bg-emerald-500 hover:bg-emerald-400'
+                  : 'bg-rose-500 hover:bg-rose-400'
+              }`}
+              aria-label={
+                effectiveIsMutual
+                  ? 'Mutual Friends - click to unfollow'
+                  : effectiveIsFollowing
+                  ? 'Following - click to unfollow'
+                  : 'Follow creator'
+              }
+              title={
+                effectiveIsMutual
+                  ? 'Mutual Friends (tap to unfollow)'
+                  : effectiveIsFollowing
+                  ? 'Following (tap to unfollow)'
+                  : isFollowerCreator
+                  ? 'Follow Back'
+                  : 'Follow'
+              }
             >
-              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              {effectiveIsMutual ? (
+                <Users className="w-3 h-3 stroke-[2.5]" />
+              ) : effectiveIsFollowing ? (
+                <Check className="w-3.5 h-3.5 stroke-[3]" />
+              ) : (
+                <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              )}
             </button>
-          )}
-          {video.creator.isFollowing && (
-            <div className="absolute -bottom-2 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-sm">
-              <Check className="w-3.5 h-3.5 stroke-[3]" />
-            </div>
           )}
         </div>
 
@@ -1202,8 +1201,8 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         }`}
       >
         <div className="pointer-events-auto pr-14">
-          {/* Clickable Creator Handle */}
-          <div className="flex items-center gap-2 mb-1">
+          {/* Clickable Creator Handle + Interactive Follow / Following / Friends Pill */}
+          <div className="flex items-center flex-wrap gap-1.5 mb-1">
             <button
               type="button"
               onClick={(e) => {
@@ -1220,7 +1219,48 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               @{video.creator.username}
             </button>
             {video.creator.isVerified && (
-              <CheckCircle2 className="w-4 h-4 text-sky-400 fill-sky-400/20" />
+              <CheckCircle2 className="w-4 h-4 text-sky-400 fill-sky-400/20 shrink-0" />
+            )}
+            {!isOwnPost && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFollowToggle(video.creator.username);
+                }}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-black border flex items-center gap-1 transition-all active:scale-95 cursor-pointer ${
+                  effectiveIsMutual
+                    ? 'bg-cyan-500/20 border-cyan-400/60 text-cyan-300 hover:bg-cyan-500/30'
+                    : effectiveIsFollowing
+                    ? 'bg-neutral-900/90 border-emerald-500/50 text-emerald-300 hover:bg-neutral-800'
+                    : isFollowerCreator
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-600 border-pink-400/50 text-white shadow-sm'
+                    : 'bg-rose-600 hover:bg-rose-500 border-rose-400/50 text-white shadow-sm'
+                }`}
+                title={
+                  effectiveIsMutual
+                    ? 'Mutual Friends — tap to unfollow'
+                    : effectiveIsFollowing
+                    ? 'Following — tap to unfollow'
+                    : isFollowerCreator
+                    ? 'Follow Back to become Friends'
+                    : 'Follow creator'
+                }
+              >
+                {effectiveIsMutual ? (
+                  <>
+                    <Users className="w-2.5 h-2.5" />
+                    <span>Friends</span>
+                  </>
+                ) : effectiveIsFollowing ? (
+                  <>
+                    <Check className="w-2.5 h-2.5" />
+                    <span>Following</span>
+                  </>
+                ) : (
+                  <span>{isFollowerCreator ? 'Follow Back' : 'Follow'}</span>
+                )}
+              </button>
             )}
             <span className="text-xs text-neutral-400 font-medium">
               · {video.createdAt ? formatRelativeTime(video.createdAt) : '1d ago'}

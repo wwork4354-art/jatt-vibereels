@@ -222,8 +222,9 @@ function drawTemplateFrame(
     tx = Math.sin(elapsedSec * 36) * beatPulse * (w * 0.022);
     ty = Math.cos(elapsedSec * 28) * beatPulse * (h * 0.012);
   } else if (template.transitionStyle === 'neon_flash') {
-    scale = 1.04 + beatPulse * 0.09;
-    tx = (clipLocalT - 0.5) * (w * 0.04);
+    scale = 1.05 + beatPulse * 0.12;
+    tx = Math.sin(elapsedSec * 32) * beatPulse * (w * 0.018) + (clipLocalT - 0.5) * (w * 0.03);
+    ty = Math.cos(elapsedSec * 24) * beatPulse * (h * 0.01);
   } else if (template.transitionStyle === 'ken_burns') {
     scale = 1.02 + clipLocalT * 0.12;
     tx = (clipLocalT - 0.5) * (w * 0.045);
@@ -348,9 +349,20 @@ function drawTemplateFrame(
   ctx.fillStyle = scrim;
   ctx.fillRect(0, h * 0.52, w, h * 0.48);
 
-  // Kinetic Typography Overlay
+  // Kinetic Typography & Timed Song-Synced Lyrics Overlay
   const mainTitle = overlayText.trim();
-  const subTitle = secondaryText.trim();
+  let subTitle = secondaryText.trim();
+  if (
+    template.lyricLines &&
+    template.lyricLines.length > 0 &&
+    subTitle === template.defaultSecondaryText.trim()
+  ) {
+    const lineIdx =
+      Math.floor((elapsedSec / effectiveDuration) * template.lyricLines.length) %
+      template.lyricLines.length;
+    subTitle = template.lyricLines[lineIdx] || subTitle;
+  }
+
   const titleScale = 1 + beatPulse * 0.055;
   const titleFontSize = Math.round(w * 0.072);
   const subFontSize = Math.round(w * 0.036);
@@ -374,9 +386,9 @@ function drawTemplateFrame(
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = `700 ${subFontSize}px "Plus Jakarta Sans", system-ui, sans-serif`;
-    ctx.fillStyle = 'rgba(244, 244, 245, 0.92)';
+    ctx.fillStyle = 'rgba(244, 244, 245, 0.94)';
     const lyricY = template.transitionStyle === 'lyrics_frame' ? h * 0.8 : h * 0.825;
-    ctx.fillText(subTitle.slice(0, 44), w / 2, lyricY, w * 0.84);
+    ctx.fillText(subTitle.slice(0, 48), w / 2, lyricY, w * 0.84);
     ctx.restore();
   }
 
@@ -583,7 +595,9 @@ export const TemplatesStudioView: React.FC<TemplatesStudioViewProps> = ({
     setActiveTemplate(tpl);
     setOverlayText(tpl.defaultOverlayText);
     setSecondaryText(tpl.defaultSecondaryText);
-    setSpeedMultiplier(tpl.category === 'beat_sync' ? 0.75 : 1);
+    setSpeedMultiplier(
+      tpl.category === 'beat_sync' || tpl.id === 'tpl-punjabi-attitude-zoom' ? 0.75 : 1
+    );
     setCustomAudioFile(null);
     if (customAudioUrl) {
       try {
@@ -881,10 +895,11 @@ export const TemplatesStudioView: React.FC<TemplatesStudioViewProps> = ({
     const mimeType = pickSupportedRecorderMime();
     const canvasStream = renderCanvas.captureStream(30);
 
-    // Best-effort attach live custom audio stream if uploaded
+    // Best-effort attach live custom audio or curated Web Audio synth track into recorded video
     let audioCtx: AudioContext | null = null;
     let exportAudioEl: HTMLAudioElement | null = null;
-    if (customAudioUrl) {
+    let synthExportHandle: { stream: MediaStream; stop: () => void } | null = null;
+    if (!isAudioMuted && customAudioUrl) {
       try {
         const AudioCtx =
           window.AudioContext ||
@@ -900,6 +915,14 @@ export const TemplatesStudioView: React.FC<TemplatesStudioViewProps> = ({
         void exportAudioEl.play().catch(() => {});
       } catch {
         // Fallback: video stream only, feed plays soundEngine
+      }
+    } else if (!isAudioMuted && selectedAudioTrack) {
+      synthExportHandle = soundEngine.createExportAudioStream(
+        selectedAudioTrack.trackType,
+        0.85
+      );
+      if (synthExportHandle) {
+        synthExportHandle.stream.getAudioTracks().forEach((tr) => canvasStream.addTrack(tr));
       }
     }
 
@@ -977,6 +1000,9 @@ export const TemplatesStudioView: React.FC<TemplatesStudioViewProps> = ({
     }
     if (audioCtx) {
       void audioCtx.close().catch(() => {});
+    }
+    if (synthExportHandle) {
+      synthExportHandle.stop();
     }
     canvasStream.getTracks().forEach((t) => t.stop());
 

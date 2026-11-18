@@ -176,7 +176,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     searchResults.audioTracks.length > 0;
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 [transform:translateZ(0)]">
+    <header className="hidden lg:flex fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-4 sm:px-6 py-2.5 items-center justify-between gap-3 [transform:translateZ(0)]">
       {/* Brand Zone: Replaced text with Image Logo Tag */}
       <div className="flex items-center shrink-0">
         <img

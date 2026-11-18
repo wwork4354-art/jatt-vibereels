@@ -167,6 +167,14 @@ class SoundEngine {
       trackGain.connect(this.masterGain);
     }
 
+    return this.runSynthesizedLoopOnNode(ctx, trackGain, trackType);
+  }
+
+  private runSynthesizedLoopOnNode(
+    ctx: AudioContext,
+    trackGain: GainNode,
+    trackType: string
+  ): () => void {
     let isRunning = true;
     let timer: number | null = null;
     let step = 0;
@@ -181,15 +189,19 @@ class SoundEngine {
       naat_medina: [261.63, 293.66, 311.13, 392.0, 440.0, 523.25], // Warm devotional scale
       punjabi_dhol: [196.0, 220.0, 261.63, 293.66, 329.63, 392.0], // Energetic G pentatonic
       sufi_acoustic: [220.0, 246.94, 261.63, 329.63, 349.23, 440.0], // Soulful A natural minor
+      punjabi_tribute: [146.83, 164.81, 174.61, 220.0, 233.08, 293.66], // Deep Dm Phrygian-minor tumbi + 808
     };
 
     const isDevotional = trackType === 'naat_serene' || trackType === 'naat_medina';
     const isSufi = trackType === 'sufi_acoustic';
     const isPunjabi = trackType === 'punjabi_dhol';
+    const isTribute = trackType === 'punjabi_tribute';
 
     const scale = scales[trackType] || scales.ambient_lofi;
     const bpm = isPunjabi
       ? 128
+      : isTribute
+      ? 92
       : trackType === 'tokyo_drift'
       ? 120
       : trackType === 'future_bass'
@@ -252,23 +264,26 @@ class SoundEngine {
           overOsc.stop(now + stepDuration * 2.6);
         }
       } else {
-        // Kick drum on 1 and 3 (or heavier syncopation for Punjabi Dhol)
-        if (step % 4 === 0 || (isPunjabi && step % 8 === 6)) {
+        // Kick drum on 1 and 3 (or heavier syncopation for Punjabi Dhol / 808 Tribute)
+        if (step % 4 === 0 || (isPunjabi && step % 8 === 6) || (isTribute && step % 16 === 10)) {
           const kickOsc = ctx.createOscillator();
           const kickGain = ctx.createGain();
           kickOsc.type = 'sine';
-          kickOsc.frequency.setValueAtTime(isPunjabi ? 145 : 120, now);
-          kickOsc.frequency.exponentialRampToValueAtTime(isPunjabi ? 48 : 35, now + 0.16);
-          kickGain.gain.setValueAtTime(isPunjabi ? 0.58 : 0.5, now);
-          kickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+          kickOsc.frequency.setValueAtTime(isTribute ? 110 : isPunjabi ? 145 : 120, now);
+          kickOsc.frequency.exponentialRampToValueAtTime(
+            isTribute ? 32 : isPunjabi ? 48 : 35,
+            now + (isTribute ? 0.28 : 0.16)
+          );
+          kickGain.gain.setValueAtTime(isTribute ? 0.65 : isPunjabi ? 0.58 : 0.5, now);
+          kickGain.gain.exponentialRampToValueAtTime(0.001, now + (isTribute ? 0.34 : 0.19));
           kickOsc.connect(kickGain);
           kickGain.connect(trackGain);
           kickOsc.start(now);
-          kickOsc.stop(now + 0.19);
+          kickOsc.stop(now + (isTribute ? 0.34 : 0.19));
         }
 
         // Snare / clap on 2 and 4
-        if (step % 8 === 4 || (isPunjabi && step % 8 === 2)) {
+        if (step % 8 === 4 || (isPunjabi && step % 8 === 2) || (isTribute && step % 4 === 2)) {
           const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 0.1, ctx.sampleRate);
           const output = noiseBuffer.getChannelData(0);
           for (let i = 0; i < noiseBuffer.length; i++) {
@@ -278,9 +293,9 @@ class SoundEngine {
           whiteNoise.buffer = noiseBuffer;
           const filter = ctx.createBiquadFilter();
           filter.type = 'highpass';
-          filter.frequency.value = 1000;
+          filter.frequency.value = isTribute && step % 8 !== 4 ? 4200 : 1000;
           const snareGain = ctx.createGain();
-          snareGain.gain.setValueAtTime(0.2, now);
+          snareGain.gain.setValueAtTime(isTribute && step % 8 !== 4 ? 0.08 : 0.2, now);
           snareGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
           whiteNoise.connect(filter);
           filter.connect(snareGain);
@@ -288,18 +303,34 @@ class SoundEngine {
           whiteNoise.start(now);
         }
 
-        // Melodic synth note on rhythmic pulses
-        if (step % 2 === 0 || (step % 7 === 0 && Math.random() > 0.4)) {
-          const noteIndex = (step * 2 + Math.floor(step / 3)) % scale.length;
-          const freq = scale[noteIndex];
+        // Melodic synth note / emotional tumbi pluck on rhythmic pulses
+        if (step % 2 === 0 || isTribute || (step % 7 === 0 && Math.random() > 0.4)) {
+          const tributePattern = [0, 3, 2, 1, 0, 4, 3, 2];
+          const noteIndex = isTribute
+            ? tributePattern[step % tributePattern.length] % scale.length
+            : (step * 2 + Math.floor(step / 3)) % scale.length;
+          const freq = scale[noteIndex] * (isTribute ? 2 : 1);
           const melOsc = ctx.createOscillator();
           const melGain = ctx.createGain();
-          melOsc.type = isPunjabi ? 'triangle' : 'sine';
-          melOsc.frequency.setValueAtTime(freq, now);
-          melGain.gain.setValueAtTime(0.18, now);
-          melGain.gain.exponentialRampToValueAtTime(0.001, now + stepDuration * 1.8);
-          melOsc.connect(melGain);
-          melGain.connect(trackGain);
+          melOsc.type = isTribute ? 'sawtooth' : isPunjabi ? 'triangle' : 'sine';
+          if (isTribute) {
+            const pluckFilter = ctx.createBiquadFilter();
+            pluckFilter.type = 'lowpass';
+            pluckFilter.frequency.setValueAtTime(1850, now);
+            pluckFilter.frequency.exponentialRampToValueAtTime(420, now + stepDuration * 1.4);
+            melOsc.frequency.setValueAtTime(freq, now);
+            melGain.gain.setValueAtTime(0.16, now);
+            melGain.gain.exponentialRampToValueAtTime(0.001, now + stepDuration * 1.45);
+            melOsc.connect(pluckFilter);
+            pluckFilter.connect(melGain);
+            melGain.connect(trackGain);
+          } else {
+            melOsc.frequency.setValueAtTime(freq, now);
+            melGain.gain.setValueAtTime(0.18, now);
+            melGain.gain.exponentialRampToValueAtTime(0.001, now + stepDuration * 1.8);
+            melOsc.connect(melGain);
+            melGain.connect(trackGain);
+          }
           melOsc.start(now);
           melOsc.stop(now + stepDuration * 1.8);
         }
@@ -355,6 +386,38 @@ class SoundEngine {
     if (this.previewTrackStop) {
       this.previewTrackStop();
       this.previewTrackStop = null;
+    }
+  }
+
+  /**
+   * Creates an isolated Web Audio stream for MediaRecorder template video export
+   * so built-in beats and songs are baked into saved/published video files.
+   */
+  public createExportAudioStream(
+    trackType: string,
+    volumeMultiplier: number = 0.85
+  ): { stream: MediaStream; stop: () => void } | null {
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const exportCtx = new AudioContextClass();
+      const dest = exportCtx.createMediaStreamDestination();
+      const exportGain = exportCtx.createGain();
+      exportGain.gain.value = 0.42 * Math.max(0, Math.min(1, volumeMultiplier));
+      exportGain.connect(dest);
+
+      const stopLoop = this.runSynthesizedLoopOnNode(exportCtx, exportGain, trackType);
+
+      return {
+        stream: dest.stream,
+        stop: () => {
+          stopLoop();
+          void exportCtx.close().catch(() => {});
+        },
+      };
+    } catch {
+      return null;
     }
   }
 

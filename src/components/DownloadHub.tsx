@@ -31,7 +31,9 @@ import {
   RectangleHorizontal,
   WifiOff,
   ArrowRight,
+  AlertTriangle,
 } from 'lucide-react';
+import Hls from 'hls.js';
 import { DownloadItem, DownloadCategory } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
 import { soundEngine } from '../utils/soundEngine';
@@ -45,12 +47,17 @@ import {
   unlockOrientationToPortrait,
   addFullscreenChangeListener,
 } from '../utils/fullscreenOrientation';
-import { sanitizeSearchQuery, sanitizeInputLive, sanitizeText } from '../utils/security';
+import {
+  sanitizeSearchQuery,
+  sanitizeInputLive,
+  sanitizeText,
+  sanitizeSafeUrl,
+} from '../utils/security';
 
 const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
 
 interface GlobalHubTab {
-  id: 'all' | 'hollywood_english' | 'english_dubbed' | 'dramas' | 'songs' | 'viral';
+  id: 'all' | 'punjabi_songs' | 'full_movies' | 'dramas' | 'live_trending';
   label: string;
   query: string;
 }
@@ -58,39 +65,34 @@ interface GlobalHubTab {
 const GLOBAL_HUB_TABS: GlobalHubTab[] = [
   { id: 'all', label: 'All', query: '' },
   {
-    id: 'hollywood_english',
-    label: 'Hollywood & English',
-    query: 'Hollywood English full action adventure movies clean HD',
+    id: 'punjabi_songs',
+    label: 'Punjabi Songs',
+    query: 'Sidhu Moose Wala Karan Aujla Diljit Dosanjh Punjabi official songs HD',
   },
   {
-    id: 'english_dubbed',
-    label: 'English Dubbed Movies',
-    query: 'English dubbed full action sci-fi fantasy movies HD',
+    id: 'full_movies',
+    label: 'Full Movies',
+    query: 'Hollywood Hindi dubbed Punjabi full movies HD',
   },
   {
     id: 'dramas',
     label: 'Dramas',
-    query: 'Pakistani Turkish family dramas full episodes HD',
+    query: 'Pakistani Indian Turkish full dramas episodes HD',
   },
   {
-    id: 'songs',
-    label: 'Trending Songs',
-    query: 'Trending Punjabi English hit songs official music video',
-  },
-  {
-    id: 'viral',
-    label: 'Viral Videos',
-    query: 'viral trending sports comedy nature clean videos HD',
+    id: 'live_trending',
+    label: 'Live TV/Trending',
+    query: 'live TV news sports music viral trending HD',
   },
 ];
 
 const QUICK_MOVIEBOX_CHIPS = [
-  'Hollywood & English',
-  'English Dubbed Movies',
-  'Trending Movies',
   'Punjabi Songs',
+  'Full Movies',
   'Pakistani Dramas',
-  'Viral Videos',
+  'Turkish Dramas',
+  'Hollywood & English',
+  'Live TV/Trending',
 ];
 
 const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
@@ -308,24 +310,118 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       youtubeId: 'aqz-KE-bpKQ',
     },
   ],
-  'Action Movies': [
+  'Full Movies': [
     {
       id: 'yt-R6MlUcmOul8',
-      title: 'Tears of Steel - Sci-Fi Action Movie 4K',
-      subtitle: 'Mango Open Movie',
+      title: 'Tears of Steel - Sci-Fi Action Feature Film 4K',
+      subtitle: 'Blender Foundation Cinema',
       category: 'movies',
-      categoryLabel: 'YouTube Live',
-      fileSize: 'Streaming HD',
+      categoryLabel: 'Full Movies',
+      fileSize: 'Streaming 4K',
       sizeBytes: 180000000,
-      durationOrVersion: 'Action 4K',
-      qualityBadge: 'YouTube 4K',
+      durationOrVersion: 'Movie 4K',
+      qualityBadge: '4K Stream',
       thumbnailUrl: 'https://i.ytimg.com/vi/R6MlUcmOul8/hqdefault.jpg',
       fallbackGradient: 'from-cyan-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
       rating: 4.9,
-      tags: ['Action Movies', 'Sci-Fi'],
-      description: 'High-octane sci-fi action film.',
+      tags: ['Full Movies', 'Sci-Fi', '4K'],
+      description: 'Clean sci-fi action film in 4K UHD.',
       youtubeId: 'R6MlUcmOul8',
+    },
+    {
+      id: 'yt-YE7VzlLtp-4',
+      title: 'Big Buck Bunny - Full Family Animated Adventure 4K 60fps',
+      subtitle: 'Blender Foundation',
+      category: 'movies',
+      categoryLabel: 'Full Movies',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 150000000,
+      durationOrVersion: '4K 60FPS',
+      qualityBadge: '4K Stream',
+      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/hqdefault.jpg',
+      fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Full Movies', 'Family', '4K'],
+      description: 'Award-winning family animated comedy film.',
+      youtubeId: 'YE7VzlLtp-4',
+    },
+    {
+      id: 'yt-eRsGyueVLvQ',
+      title: 'Sintel - Fantasy Adventure Movie HD',
+      subtitle: 'Cinema Fantasy Studio',
+      category: 'movies',
+      categoryLabel: 'Full Movies',
+      fileSize: 'Streaming HD',
+      sizeBytes: 125000000,
+      durationOrVersion: 'Movie HD',
+      qualityBadge: '1080p Stream',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Full Movies', 'Fantasy', 'HD'],
+      description: 'Dramatic fantasy adventure feature.',
+      youtubeId: 'eRsGyueVLvQ',
+    },
+  ],
+  'Live TV/Trending': [
+    {
+      id: 'yt-aqz-KE-bpKQ',
+      title: '4K 60FPS Live Action & Nature Showcase Stream',
+      subtitle: 'Global Trending Hub',
+      category: 'movies',
+      categoryLabel: 'Live TV/Trending',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 95000000,
+      durationOrVersion: '4K 60FPS',
+      qualityBadge: 'Live Trending HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
+      fallbackGradient: 'from-emerald-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Live TV', 'Trending', '4K'],
+      description: 'Clean trending 4K 60FPS live showcase.',
+      youtubeId: 'aqz-KE-bpKQ',
+    },
+    {
+      id: 'yt-jfKfPfyJRdk',
+      title: '24/7 Live Lo-Fi Chill & Global Study Radio',
+      subtitle: 'Lofi Girl Live Stream',
+      category: 'songs',
+      categoryLabel: 'Live TV/Trending',
+      fileSize: 'Live Stream',
+      sizeBytes: 45000000,
+      durationOrVersion: 'LIVE 24/7',
+      qualityBadge: 'Live Radio HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
+      fallbackGradient: 'from-rose-950 via-purple-950 to-black',
+      downloadsCount: 'Live',
+      rating: 4.95,
+      tags: ['Live TV', '24/7 Radio', 'Music'],
+      description: 'Continuous 24/7 live music radio broadcast.',
+      youtubeId: 'jfKfPfyJRdk',
+    },
+  ],
+  'Turkish Dramas': [
+    {
+      id: 'yt-eRsGyueVLvQ',
+      title: 'Epic Historical & Family Drama Feature HD',
+      subtitle: 'Drama Central Global',
+      category: 'dramas',
+      categoryLabel: 'Turkish Dramas',
+      fileSize: 'Streaming HD',
+      sizeBytes: 85000000,
+      durationOrVersion: 'Drama HD',
+      qualityBadge: 'YouTube HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Turkish Dramas', 'Family', 'HD'],
+      description: 'Clean family drama showcase.',
+      youtubeId: 'eRsGyueVLvQ',
     },
   ],
 };
@@ -385,14 +481,16 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     return {};
   });
 
-  // Track active video player item, 16:9 cinema fullscreen mode & Playit-style stretch/fill mode
+  // Track active video player item, 16:9 cinema fullscreen mode, HLS/MP4 direct playback, & never-blank error state
   const [previewItem, setPreviewItem] = useState<DownloadItem | null>(null);
+  const [playerError, setPlayerError] = useState<string | null>(null);
   const [isCinemaMode, setIsCinemaMode] = useState<boolean>(false);
-  const [playerScaleMode, setPlayerScaleMode] = useState<'fill' | 'fit'>('fill');
+  const [playerScaleMode, setPlayerScaleMode] = useState<'fill' | 'fit'>('fit');
   const [orientationLockBlocked, setOrientationLockBlocked] = useState<boolean>(false);
   const [viewportPortrait, setViewportPortrait] = useState<boolean>(() => isPortraitViewport());
   const cinemaViewportRef = React.useRef<HTMLDivElement | null>(null);
   const playerIframeRef = React.useRef<HTMLIFrameElement | null>(null);
+  const directVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const didEnterCinemaFullscreenRef = React.useRef<boolean>(false);
 
   const cssLandscapeActive = isCinemaMode && orientationLockBlocked && viewportPortrait;
@@ -400,9 +498,13 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
   const buildYouTube1080Url = (youtubeId: string) =>
     `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&rel=0&playsinline=1&fs=1&vq=hd1080&hd=1&modestbranding=1&iv_load_policy=3&enablejsapi=1`;
 
-  const enforceYouTube1080p = (iframe: HTMLIFrameElement | null) => {
+  const enforceYouTube1080p = (iframe: HTMLIFrameElement | null, youtubeId?: string) => {
     if (!iframe?.contentWindow) return;
     try {
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: 'listening', id: youtubeId || 'yt-player', channel: 'widget' }),
+        '*'
+      );
       iframe.contentWindow.postMessage(
         JSON.stringify({ event: 'command', func: 'setPlaybackQuality', args: ['hd1080'] }),
         '*'
@@ -415,6 +517,83 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
       // ignore cross-origin postMessage restrictions
     }
   };
+
+  // Detect YouTube IFrame embedding restrictions (errors 100, 101, 150, 2, 5) so screen is NEVER blank
+  useEffect(() => {
+    if (!previewItem?.youtubeId) return;
+    const handleYouTubeMessage = (event: MessageEvent) => {
+      if (
+        typeof event.origin !== 'string' ||
+        (!event.origin.includes('youtube.com') && !event.origin.includes('youtube-nocookie.com'))
+      ) {
+        return;
+      }
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (!data || typeof data !== 'object') return;
+        if (data.event === 'onError') {
+          const code = Number(data.info);
+          if (code === 101 || code === 150) {
+            setPlayerError(
+              'The video owner restricted in-app embedding for this video. Tap below to watch it directly on YouTube.'
+            );
+          } else if (code === 100) {
+            setPlayerError('This video is private or unavailable for embed playback.');
+          } else {
+            setPlayerError('In-app YouTube playback encountered an error. Open directly on YouTube.');
+          }
+        }
+      } catch {
+        // ignore non-JSON messages
+      }
+    };
+
+    window.addEventListener('message', handleYouTubeMessage);
+    return () => window.removeEventListener('message', handleYouTubeMessage);
+  }, [previewItem?.youtubeId]);
+
+  // Attach HLS.js / direct MP4 streaming when previewItem has directVideoUrl
+  useEffect(() => {
+    const videoEl = directVideoRef.current;
+    const rawUrl = previewItem?.directVideoUrl;
+    if (!videoEl || !rawUrl) return;
+
+    const safeUrl = sanitizeSafeUrl(rawUrl, { allowBlob: false, allowDataImageAudio: false });
+    if (!safeUrl) {
+      setPlayerError('Blocked unsafe or invalid video URL.');
+      return;
+    }
+
+    const isHls = /\.m3u8(?:$|\?|#)/i.test(safeUrl);
+    let hlsInstance: Hls | null = null;
+
+    if (isHls && videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = safeUrl;
+      void videoEl.play().catch(() => {});
+    } else if (isHls && Hls.isSupported()) {
+      hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true });
+      hlsInstance.loadSource(safeUrl);
+      hlsInstance.attachMedia(videoEl);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+        void videoEl.play().catch(() => {});
+      });
+      hlsInstance.on(Hls.Events.ERROR, (_ev, data) => {
+        if (data.fatal) {
+          setPlayerError('Could not load this live .m3u8 stream (CORS or offline source).');
+        }
+      });
+    } else {
+      videoEl.src = safeUrl;
+      void videoEl.play().catch(() => {});
+    }
+
+    return () => {
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+    };
+  }, [previewItem?.directVideoUrl]);
 
   // Track viewport orientation for CSS rotation fallback
   useEffect(() => {
@@ -559,66 +738,192 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     }
   };
 
-  // Extract valid 11-char YouTube Video ID from any URL format or direct ID
+  // Extract valid 11-char YouTube Video ID from any URL format (/watch?v=, youtu.be/, /shorts/, /live/, /embed/, music.youtube.com) or direct ID
   const extractYouTubeId = (input: string): string | null => {
     if (!input) return null;
     const trimmed = input.trim();
     if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
       return trimmed;
     }
-    const shortMatch = trimmed.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
-    if (shortMatch) return shortMatch[1];
-    const longMatch = trimmed.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-    if (longMatch) return longMatch[1];
-    const embedMatch = trimmed.match(/(?:embed|v)\/([a-zA-Z0-9_-]{11})/);
-    if (embedMatch) return embedMatch[1];
+
+    // Attempt standard URL parsing first so ?si=, &t=, m.youtube.com, music.youtube.com all work cleanly
+    try {
+      const withProto = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+      const url = new URL(withProto);
+      const host = url.hostname.toLowerCase();
+
+      if (host === 'youtu.be' || host.endsWith('.youtu.be')) {
+        const seg = url.pathname.split('/').filter(Boolean)[0];
+        if (seg && /^[a-zA-Z0-9_-]{11}$/.test(seg)) return seg;
+      }
+
+      if (host.includes('youtube.com') || host.includes('youtube-nocookie.com')) {
+        const vParam = url.searchParams.get('v');
+        if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam)) return vParam;
+
+        const segments = url.pathname.split('/').filter(Boolean);
+        if (
+          segments.length >= 2 &&
+          ['shorts', 'live', 'embed', 'v'].includes(segments[0].toLowerCase()) &&
+          /^[a-zA-Z0-9_-]{11}$/.test(segments[1])
+        ) {
+          return segments[1];
+        }
+      }
+    } catch {
+      // Fall back to regex below
+    }
+
+    const fallbackMatch = trimmed.match(
+      /(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/|embed\/|v\/))([a-zA-Z0-9_-]{11})/i
+    );
+    return fallbackMatch ? fallbackMatch[1] : null;
+  };
+
+  type ParsedPlayableLink =
+    | { kind: 'youtube'; youtubeId: string }
+    | { kind: 'direct_video'; directVideoUrl: string; isHls: boolean }
+    | { kind: 'embed'; embedUrl: string }
+    | null;
+
+  const parseUniversalPlayableLink = (rawInput: string): ParsedPlayableLink => {
+    const clean = sanitizeText(rawInput, 600);
+    if (!clean) return null;
+
+    const ytid = extractYouTubeId(clean);
+    if (ytid) {
+      return { kind: 'youtube', youtubeId: ytid };
+    }
+
+    if (/^(?:https?:\/\/|[a-z0-9.-]+\.[a-z]{2,}\/)/i.test(clean)) {
+      const withProto = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+      const safeUrl = sanitizeSafeUrl(withProto, {
+        allowBlob: false,
+        allowDataImageAudio: false,
+      });
+      if (!safeUrl) return null;
+
+      try {
+        const parsed = new URL(safeUrl);
+        const pathLower = parsed.pathname.toLowerCase();
+        if (
+          pathLower.endsWith('.mp4') ||
+          pathLower.endsWith('.webm') ||
+          pathLower.endsWith('.m3u8') ||
+          /\.(?:mp4|webm|m3u8)(?:$|\?|&)/i.test(safeUrl)
+        ) {
+          return {
+            kind: 'direct_video',
+            directVideoUrl: safeUrl,
+            isHls: pathLower.endsWith('.m3u8') || /\.m3u8(?:$|\?|&)/i.test(safeUrl),
+          };
+        }
+        return { kind: 'embed', embedUrl: safeUrl };
+      } catch {
+        return null;
+      }
+    }
+
     return null;
   };
 
   const openVideoPlayer = (item: DownloadItem) => {
+    setPlayerError(null);
     setPreviewItem(item);
     setActiveTab('marketplace');
-    if (!isOnline && item.youtubeId) {
-      onShowToast('You are offline. Online YouTube streaming needs internet — check Saved / Downloads!');
+    if (!isOnline && (item.youtubeId || item.directVideoUrl || item.embedUrl)) {
+      onShowToast('You are offline. Online streaming needs internet — check Saved / Downloads!');
     }
     setTimeout(() => {
       scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     }, 30);
   };
 
-  // Play any custom YouTube link or video ID directly in standard embed player
-  const handlePlayDirectUrl = () => {
-    if (!isOnline) {
-      onShowToast('Offline Mode: Connect to internet to stream YouTube links, or open Saved / Downloads.');
-      return;
+  const playParsedUniversalLink = (parsed: NonNullable<ParsedPlayableLink>): DownloadItem => {
+    if (parsed.kind === 'youtube') {
+      return {
+        id: `custom-yt-${parsed.youtubeId}`,
+        title: 'YouTube Custom Stream',
+        subtitle: `Privacy-Enhanced Player (ID: ${parsed.youtubeId})`,
+        category: 'movies',
+        categoryLabel: 'YouTube Stream',
+        fileSize: 'Streaming 1080p',
+        sizeBytes: 150000000,
+        durationOrVersion: 'YouTube HD',
+        qualityBadge: 'YouTube 1080p',
+        thumbnailUrl: `https://i.ytimg.com/vi/${parsed.youtubeId}/hqdefault.jpg`,
+        fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
+        downloadsCount: 'Stream',
+        rating: 5.0,
+        tags: ['YouTube', '16:9 Widescreen'],
+        description: 'Streamed via privacy-enhanced youtube-nocookie player.',
+        youtubeId: parsed.youtubeId,
+      };
     }
-    const safeInput = sanitizeText(directUrlInput, 300);
-    const ytid = extractYouTubeId(safeInput);
-    if (!ytid) {
-      onShowToast('Please enter a valid YouTube video link or 11-char ID.');
-      return;
+
+    if (parsed.kind === 'direct_video') {
+      return {
+        id: `custom-vid-${Date.now()}`,
+        title: parsed.isHls ? 'Live HLS (.m3u8) Stream' : 'Direct Video Stream',
+        subtitle: parsed.directVideoUrl,
+        category: 'movies',
+        categoryLabel: parsed.isHls ? 'Live HLS' : 'Direct MP4',
+        fileSize: 'Direct Stream',
+        sizeBytes: 120000000,
+        durationOrVersion: parsed.isHls ? 'LIVE .m3u8' : 'HD Video',
+        qualityBadge: parsed.isHls ? 'HLS Adaptive' : 'Direct MP4',
+        thumbnailUrl: '',
+        fallbackGradient: 'from-cyan-950 via-neutral-950 to-black',
+        downloadsCount: 'Direct',
+        rating: 5.0,
+        tags: ['Direct Video', '16:9 Widescreen'],
+        description: 'Direct HTML5 / HLS adaptive stream inside built-in 16:9 widescreen player.',
+        directVideoUrl: parsed.directVideoUrl,
+      };
     }
-    const directItem: DownloadItem = {
-      id: `custom-yt-${ytid}`,
-      title: 'YouTube Custom Stream',
-      subtitle: `Official Privacy-Enhanced Embed (ID: ${ytid})`,
+
+    return {
+      id: `custom-embed-${Date.now()}`,
+      title: 'Public Video Embed Stream',
+      subtitle: parsed.embedUrl,
       category: 'movies',
-      categoryLabel: 'Movie Box Stream',
-      fileSize: 'Streaming 1080p',
-      sizeBytes: 150000000,
-      durationOrVersion: 'Live / HD',
-      qualityBadge: 'YouTube 1080p Embed',
-      thumbnailUrl: `https://i.ytimg.com/vi/${ytid}/hqdefault.jpg`,
-      fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'Stream',
-      rating: 5.0,
-      tags: ['YouTube Stream', 'Movie Box'],
-      description: 'Streamed cleanly using privacy-enhanced YouTube embed player.',
-      youtubeId: ytid,
+      categoryLabel: 'Public Embed',
+      fileSize: 'Web Embed',
+      sizeBytes: 100000000,
+      durationOrVersion: 'Embed Player',
+      qualityBadge: 'Public Embed',
+      thumbnailUrl: '',
+      fallbackGradient: 'from-indigo-950 via-neutral-950 to-black',
+      downloadsCount: 'Embed',
+      rating: 4.9,
+      tags: ['Embed URL', '16:9 Widescreen'],
+      description: 'Public embed URL loaded in built-in 16:9 widescreen viewport.',
+      embedUrl: parsed.embedUrl,
     };
+  };
+
+  // Play any custom YouTube URL, .mp4/.m3u8 direct link, or public embed URL in 16:9 Landscape Fullscreen Player
+  const handlePlayDirectUrl = (overrideInput?: string) => {
+    if (!isOnline) {
+      onShowToast('Offline Mode: Connect to internet to stream links, or open Saved / Downloads.');
+      return;
+    }
+    const raw = (overrideInput !== undefined ? overrideInput : directUrlInput).trim();
+    if (!raw && previewItem) {
+      void enterFullscreenAndLandscape('fit');
+      onShowToast('Entered 16:9 Widescreen Landscape mode');
+      return;
+    }
+    const parsed = parseUniversalPlayableLink(raw);
+    if (!parsed) {
+      onShowToast('Paste a valid YouTube link, .mp4 / .m3u8 URL, or public embed URL.');
+      return;
+    }
+    const directItem = playParsedUniversalLink(parsed);
     openVideoPlayer(directItem);
-    setDirectUrlInput('');
-    onShowToast('Playing in Movie Box! 🎬🔥');
+    void enterFullscreenAndLandscape('fit');
+    if (overrideInput === undefined) setDirectUrlInput('');
+    onShowToast('Playing in 16:9 Widescreen Landscape Fullscreen!');
   };
 
   // Toggle Offline Watchlist / Cache thumbnail locally for YouTube-sourced movies & videos
@@ -693,11 +998,24 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
       onShowToast('Offline Mode: Online YouTube search needs internet. Watch Saved / Downloads offline!');
       return;
     }
-    const query = sanitizeText(targetQuery !== undefined ? targetQuery : searchQuery, 120);
+    const query = sanitizeText(targetQuery !== undefined ? targetQuery : searchQuery, 600);
     if (!query) {
-      onShowToast('Type a movie, drama, or song title to search.');
+      onShowToast('Type a movie, drama, or song title — or paste any video URL.');
       return;
     }
+
+    // If user pasted a direct YouTube/MP4/M3U8/Embed link in the search bar, play it right away in 16:9 Landscape!
+    if (targetQuery === undefined) {
+      const parsedLink = parseUniversalPlayableLink(query);
+      if (parsedLink) {
+        const playable = playParsedUniversalLink(parsedLink);
+        openVideoPlayer(playable);
+        void enterFullscreenAndLandscape('fit');
+        onShowToast('Link loaded in 16:9 Widescreen Landscape Fullscreen!');
+        return;
+      }
+    }
+
     if (targetQuery !== undefined && displayLabel === undefined) {
       setSearchQuery(query);
     }
@@ -1248,15 +1566,22 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                         </span>
                       </button>
 
-                      {previewItem.youtubeId && (
+                      {(previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) && (
                         <a
-                          href={`https://www.youtube.com/watch?v=${previewItem.youtubeId}`}
+                          href={
+                            previewItem.youtubeId
+                              ? `https://www.youtube.com/watch?v=${previewItem.youtubeId}`
+                              : previewItem.directVideoUrl || previewItem.embedUrl
+                          }
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="px-2.5 py-1.5 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 text-xs font-bold flex items-center gap-1.5"
+                          className="px-2.5 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/35 text-rose-200 border border-red-500/40 text-xs font-bold flex items-center gap-1.5"
+                          title="Open source directly in YouTube / Browser"
                         >
                           <ExternalLink className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">Download Helper</span>
+                          <span className="hidden sm:inline">
+                            {previewItem.youtubeId ? 'Watch on YouTube' : 'Open Source'}
+                          </span>
                         </a>
                       )}
 
@@ -1358,9 +1683,23 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                     }
                   >
                     {!isCinemaMode && (
-                      <span className="absolute top-2.5 left-2.5 z-20 px-2 py-0.5 rounded-full bg-black/80 border border-cyan-400/50 text-cyan-300 text-[10px] font-black tracking-wide pointer-events-none">
-                        1080p FHD · {playerScaleMode === 'fill' ? 'STRETCH FILL' : '16:9 FIT'}
-                      </span>
+                      <>
+                        <span className="absolute top-2.5 left-2.5 z-20 px-2 py-0.5 rounded-full bg-black/80 border border-cyan-400/50 text-cyan-300 text-[10px] font-black tracking-wide pointer-events-none">
+                          1080p FHD · {playerScaleMode === 'fill' ? 'STRETCH FILL' : '16:9 FIT'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void enterFullscreenAndLandscape('fit');
+                          }}
+                          className="absolute top-2.5 right-2.5 z-20 p-2 rounded-xl bg-black/80 hover:bg-cyan-600/80 text-white border border-cyan-400/50 shadow-lg backdrop-blur-sm transition-all active:scale-95 cursor-pointer"
+                          title="Enter Full Screen & Lock Landscape"
+                          aria-label="Enter Full Screen Landscape"
+                        >
+                          <Maximize2 className="w-4 h-4 text-cyan-300" />
+                        </button>
+                      </>
                     )}
 
                     {/* Floating Cinema / Fullscreen Controls Header */}
@@ -1448,7 +1787,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                           : 'relative w-full h-full overflow-hidden bg-black'
                       }
                     >
-                      {!isOnline && previewItem.youtubeId ? (
+                      {!isOnline && (previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) ? (
                         <div className="w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950/95 space-y-3">
                           <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center">
                             <WifiOff className="w-6 h-6" />
@@ -1458,7 +1797,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                               You&apos;re in Offline Mode
                             </h3>
                             <p className="text-xs text-neutral-300 leading-relaxed">
-                              Online YouTube streaming needs an internet connection. Your saved reels, photos, songs, and naats are ready in <strong>Saved / Downloads</strong>!
+                              Online streaming needs an internet connection. Your saved reels, photos, songs, and naats are ready in <strong>Saved / Downloads</strong>!
                             </p>
                           </div>
                           {onOpenSavedOffline && (
@@ -1476,13 +1815,99 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             </button>
                           )}
                         </div>
+                      ) : playerError ? (
+                        <div className="relative w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950 space-y-3">
+                          {previewItem.thumbnailUrl && (
+                            <img
+                              src={previewItem.thumbnailUrl}
+                              alt={previewItem.title}
+                              className="absolute inset-0 w-full h-full object-cover opacity-25 pointer-events-none"
+                            />
+                          )}
+                          <div className="relative z-10 flex flex-col items-center gap-2.5 max-w-md">
+                            <div className="w-11 h-11 rounded-2xl bg-red-500/20 border border-red-500/45 text-red-400 flex items-center justify-center">
+                              <AlertTriangle className="w-5 h-5" />
+                            </div>
+                            <h3 className="text-sm sm:text-base font-black text-white line-clamp-1">
+                              {previewItem.title}
+                            </h3>
+                            <p className="text-xs text-neutral-300 leading-relaxed">
+                              {playerError}
+                            </p>
+                            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                              <a
+                                href={
+                                  previewItem.youtubeId
+                                    ? `https://www.youtube.com/watch?v=${previewItem.youtubeId}`
+                                    : previewItem.directVideoUrl || previewItem.embedUrl || '#'
+                                }
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-red-600/35"
+                              >
+                                <Youtube className="w-4 h-4 fill-white" />
+                                <span>
+                                  {previewItem.youtubeId
+                                    ? 'Open & Watch on YouTube'
+                                    : 'Open Video Source'}
+                                </span>
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => setPlayerError(null)}
+                                className="px-3.5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-bold cursor-pointer"
+                              >
+                                Retry Embed
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : previewItem.directVideoUrl ? (
+                        <video
+                          ref={directVideoRef}
+                          key={previewItem.directVideoUrl}
+                          controls
+                          autoPlay
+                          playsInline
+                          onError={() =>
+                            setPlayerError(
+                              'This direct video URL could not play in-app. Open source link directly.'
+                            )
+                          }
+                          className={`w-full h-full bg-black ${
+                            playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
+                          }`}
+                        />
+                      ) : previewItem.embedUrl ? (
+                        <iframe
+                          key={previewItem.embedUrl}
+                          src={sanitizeSafeUrl(previewItem.embedUrl, {
+                            allowBlob: false,
+                            allowDataImageAudio: false,
+                          })}
+                          title={previewItem.title}
+                          onError={() =>
+                            setPlayerError('Remote embed blocked playback inside frame.')
+                          }
+                          className="w-full h-full border-0 bg-black"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                          allowFullScreen
+                        />
                       ) : previewItem.youtubeId ? (
                         <iframe
                           ref={playerIframeRef}
                           key={previewItem.youtubeId}
                           src={buildYouTube1080Url(previewItem.youtubeId)}
                           title={previewItem.title}
-                          onLoad={() => enforceYouTube1080p(playerIframeRef.current)}
+                          onLoad={() =>
+                            enforceYouTube1080p(playerIframeRef.current, previewItem.youtubeId)
+                          }
+                          onError={() =>
+                            setPlayerError(
+                              'Unable to embed this YouTube video in-app. Tap below to open and watch on YouTube.'
+                            )
+                          }
                           className={
                             isCinemaMode
                               ? cssLandscapeActive || playerScaleMode === 'fit'
@@ -1497,13 +1922,15 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                         />
                       ) : (
                         <div className="w-full h-full relative flex flex-col items-center justify-center p-4 text-center">
-                          <img
-                            src={previewItem.thumbnailUrl}
-                            alt={previewItem.title}
-                            className={`absolute inset-0 w-full h-full opacity-55 ${
-                              playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
-                            }`}
-                          />
+                          {previewItem.thumbnailUrl && (
+                            <img
+                              src={previewItem.thumbnailUrl}
+                              alt={previewItem.title}
+                              className={`absolute inset-0 w-full h-full opacity-55 ${
+                                playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
+                              }`}
+                            />
+                          )}
                           <div className="relative z-10 flex flex-col items-center gap-2">
                             <Film className="w-10 h-10 text-cyan-400" />
                             <p className="text-sm text-white font-bold">{previewItem.title}</p>
@@ -1565,8 +1992,8 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   <input
                     type="text"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(sanitizeSearchQuery(e.target.value, 120))}
-                    placeholder="Search Trending Movies, Punjabi Songs, Pakistani Dramas..."
+                    onChange={(e) => setSearchQuery(sanitizeSearchQuery(e.target.value, 400))}
+                    placeholder="Search ANY movie, drama, song, or paste YouTube / .mp4 / .m3u8 link..."
                     className="w-full bg-neutral-900/90 text-xs sm:text-sm text-white placeholder-neutral-500 pl-10 pr-9 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/50 transition-all shadow-inner"
                   />
                   {searchQuery && (
@@ -1590,7 +2017,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-red-600/30 active:scale-95 transition-all shrink-0 border border-red-400/30 cursor-pointer"
                 >
                   <Youtube className="w-4 h-4 fill-white" />
-                  <span>{isSearchingYouTube ? 'Searching...' : 'Search'}</span>
+                  <span>{isSearchingYouTube ? 'Searching...' : 'Search / Play'}</span>
                 </button>
               </form>
 
@@ -1611,6 +2038,33 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   </select>
                 </div>
               )}
+            </div>
+
+            {/* Universal Link Bar: Paste YouTube, Shorts, Live, .mp4, .m3u8, or Public Embed URL */}
+            <div className="max-w-6xl mx-auto p-2.5 sm:p-3 rounded-2xl bg-neutral-900/75 border border-cyan-500/25 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs text-cyan-300 shrink-0">
+                <Link2 className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span className="font-bold text-[11px] sm:text-xs">
+                  Paste Any Link (YouTube, Shorts, .mp4, .m3u8, Embed):
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-1 sm:max-w-lg">
+                <input
+                  type="text"
+                  value={directUrlInput}
+                  onChange={(e) => setDirectUrlInput(sanitizeInputLive(e.target.value, 500))}
+                  onKeyDown={(e) => e.key === 'Enter' && handlePlayDirectUrl()}
+                  placeholder="youtube.com/..., youtu.be/..., .../video.mp4, .../live.m3u8"
+                  className="w-full bg-black/70 text-xs text-white placeholder-neutral-500 px-3 py-2 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-cyan-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => handlePlayDirectUrl()}
+                  className="px-3.5 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-black rounded-xl shrink-0 active:scale-95 transition-all shadow-md cursor-pointer"
+                >
+                  Play 16:9
+                </button>
+              </div>
             </div>
 
             {/* Global Content Hub Dedicated Category Tabs */}
@@ -1812,7 +2266,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                       <div
                         key={item.id}
                         onClick={() => {
-                          if (item.youtubeId) {
+                          if (item.youtubeId || item.directVideoUrl || item.embedUrl) {
                             openVideoPlayer(item);
                             onShowToast(`Playing "${item.title}"`);
                           }
@@ -1820,7 +2274,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                         className={`group cv-auto-card bg-neutral-900/90 hover:bg-neutral-900 border rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between [transform:translateZ(0)] relative overflow-hidden ${
                           isCurrentlyPlaying
                             ? 'border-red-500 ring-1 ring-red-500/40'
-                            : item.youtubeId
+                            : item.youtubeId || item.directVideoUrl || item.embedUrl
                             ? 'border-neutral-800 hover:border-pink-500/60 cursor-pointer'
                             : 'border-neutral-800 hover:border-pink-500/50'
                         }`}
@@ -2143,32 +2597,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
             )}
           </div>
 
-          {/* Direct YouTube Link Streamer Bar (placed cleanly below results so fetched cards come first) */}
-          <div className="max-w-6xl mx-auto p-3 rounded-2xl bg-neutral-900/60 border border-neutral-800/80 flex flex-col sm:flex-row items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2 text-xs text-neutral-300">
-              <Link2 className="w-4 h-4 text-cyan-400 shrink-0" />
-              <span className="font-semibold text-[11px] sm:text-xs">
-                Paste any YouTube link or Video ID to play:
-              </span>
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto flex-1 sm:max-w-md">
-              <input
-                type="text"
-                value={directUrlInput}
-                onChange={(e) => setDirectUrlInput(sanitizeInputLive(e.target.value, 300))}
-                onKeyDown={(e) => e.key === 'Enter' && handlePlayDirectUrl()}
-                placeholder="Paste YouTube link (https://youtube.com...) or Video ID"
-                className="w-full bg-black/60 text-xs text-white placeholder-neutral-500 px-3 py-1.5 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
-              />
-              <button
-                type="button"
-                onClick={handlePlayDirectUrl}
-                className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl shrink-0 active:scale-95 transition-all shadow-md cursor-pointer"
-              >
-                Play
-              </button>
-            </div>
-          </div>
+          {/* Duplicate quick paste bar removed (now elevated cleanly near the top search bar) */}
         </div>
       </div>
       ) : (

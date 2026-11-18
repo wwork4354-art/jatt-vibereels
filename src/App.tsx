@@ -70,6 +70,14 @@ import {
   savePostForOffline,
 } from './lib/offlineMediaStore';
 import { loadPlaybackState, savePlaybackState } from './lib/playbackPersistence';
+import {
+  buildMergedSocialEdges,
+  getFollowRelationship,
+  getFollowingList,
+  removeFriendInSocialGraph,
+  toggleFollowInSocialGraph,
+} from './lib/socialGraph';
+import type { ProfileSubTab } from './components/CreatorProfileView';
 
 // Lazy-load offscreen tabs and modals so initial page load is fast
 const CommentsDrawer = lazy(() =>
@@ -436,9 +444,10 @@ export default function App() {
   const [storiesDragOffsetPx, setStoriesDragOffsetPx] = useState<number | null>(null);
   const [isMobileBottomNavOpen, setIsMobileBottomNavOpen] = useState(false);
   const [snapReplyTarget, setSnapReplyTarget] = useState<DirectSnapRecipient | null>(null);
-  const [profileInitialSubTab, setProfileInitialSubTab] = useState<
-    'videos' | 'saved' | 'liked' | 'activity' | undefined
-  >(undefined);
+  const [followGraphVersion, setFollowGraphVersion] = useState(0);
+  const [profileInitialSubTab, setProfileInitialSubTab] = useState<ProfileSubTab | undefined>(
+    undefined
+  );
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const isOnline = useOnlineStatus();
 
@@ -1428,36 +1437,107 @@ export default function App() {
     [videos, logActivity]
   );
 
-  // Follow toggle (persisted + updates creator follower delta)
-  const handleFollowToggle = useCallback((username: string) => {
-    const followed = getStoredFollowedUsernames();
-    const isCurrentlyFollowing = followed.has(username);
-    if (isCurrentlyFollowing) {
-      followed.delete(username);
-    } else {
-      followed.add(username);
-    }
-    saveStoredFollowedUsernames(followed);
-    adjustCreatorFollowerDelta(username, isCurrentlyFollowing ? -1 : 1);
+  // Follow / Unfollow / Follow Back toggle (persisted in directional social graph + creator follower delta)
+  const handleFollowToggle = useCallback(
+    (username: string) => {
+      const cleanTarget =
+        normalizeCreatorUsername(username) || username.trim().replace(/^@+/, '').toLowerCase();
+      if (!cleanTarget) return;
 
-    setVideos((prev) =>
-      prev.map((v) => {
-        if (
+      const actor = getActiveActor();
+      const actorClean = normalizeCreatorUsername(actor.actorUsername);
+      if (actorClean && cleanTarget === actorClean) {
+        showToast('You cannot follow your own profile');
+        return;
+      }
+
+      const result = toggleFollowInSocialGraph(
+        actor.actorUsername,
+        cleanTarget,
+        activityEvents
+      );
+      setFollowGraphVersion((prev) => prev + 1);
+
+      setVideos((prev) =>
+        prev.map((v) => {
+          if (
+            v.creator.username === username ||
+            normalizeCreatorUsername(v.creator.username) === cleanTarget
+          ) {
+            return {
+              ...v,
+              creator: {
+                ...v.creator,
+                isFollowing: result.isFollowing,
+              },
+            };
+          }
+          return v;
+        })
+      );
+
+      if (result.isFollowing) {
+        const targetVideo = videosRef.current.find(
+          (v) => normalizeCreatorUsername(v.creator.username) === cleanTarget
+        );
+        void recordActivityEventInSupabase({
+          postId: targetVideo?.id || `follow-${cleanTarget}`,
+          postTitle: targetVideo?.title || `Followed @${cleanTarget}`,
+          postThumbnail:
+            targetVideo?.mediaType === 'image'
+              ? targetVideo.videoUrl
+              : targetVideo?.posterUrl || '',
+          postMediaType: targetVideo?.mediaType || 'video',
+          postOwnerId: targetVideo?.userId || cleanTarget,
+          postOwnerUsername: cleanTarget,
+          ...actor,
+          type: 'follow',
+        }).then((created) => {
+          setActivityEvents((prev) =>
+            [created, ...prev.filter((e) => e.id !== created.id)].slice(0, 200)
+          );
+        });
+        showToast(
+          result.isMutualFriend
+            ? `You and @${cleanTarget} are now Friends!`
+            : `Followed @${cleanTarget}`
+        );
+      } else {
+        showToast(`Unfollowed @${cleanTarget}`);
+      }
+    },
+    [activityEvents, getActiveActor, showToast]
+  );
+
+  // Remove mutual friend cleanly from both sides of the local social graph
+  const handleRemoveFriend = useCallback(
+    (username: string) => {
+      const cleanTarget =
+        normalizeCreatorUsername(username) || username.trim().replace(/^@+/, '').toLowerCase();
+      if (!cleanTarget) return;
+
+      const actor = getActiveActor();
+      removeFriendInSocialGraph(actor.actorUsername, cleanTarget, activityEvents);
+      setFollowGraphVersion((prev) => prev + 1);
+
+      setVideos((prev) =>
+        prev.map((v) =>
           v.creator.username === username ||
-          normalizeCreatorUsername(v.creator.username) === normalizeCreatorUsername(username)
-        ) {
-          return {
-            ...v,
-            creator: {
-              ...v.creator,
-              isFollowing: !isCurrentlyFollowing,
-            },
-          };
-        }
-        return v;
-      })
-    );
-  }, []);
+          normalizeCreatorUsername(v.creator.username) === cleanTarget
+            ? {
+                ...v,
+                creator: {
+                  ...v.creator,
+                  isFollowing: false,
+                },
+              }
+            : v
+        )
+      );
+      showToast(`Removed @${cleanTarget} from Friends`);
+    },
+    [activityEvents, getActiveActor, showToast]
+  );
 
   const handleOpenCreatorProfile = useCallback((username: string) => {
     const clean = normalizeCreatorUsername(username) || username.trim().replace(/^@+/, '');
@@ -1975,6 +2055,11 @@ export default function App() {
     };
   }, []);
 
+  const socialEdges = useMemo(
+    () => buildMergedSocialEdges(creatorProfile.username, activityEvents),
+    [creatorProfile.username, activityEvents, followGraphVersion]
+  );
+
   // Real-time total likes & following count for Creator Profile (memoized)
   const { totalProfileLikes, followingCount } = useMemo(() => {
     let likesSum = 0;
@@ -1994,15 +2079,17 @@ export default function App() {
       }
 
       if (v.creator.isFollowing) {
-        followedSet.add(v.creator.username);
+        followedSet.add(normalizeCreatorUsername(v.creator.username) || v.creator.username);
       }
     }
 
+    const graphFollowingCount = getFollowingList(creatorProfile.username, socialEdges).length;
+
     return {
       totalProfileLikes: likesSum + likedOthers,
-      followingCount: followedSet.size,
+      followingCount: Math.max(followedSet.size, graphFollowingCount),
     };
-  }, [videos, creatorProfile.id, creatorProfile.username]);
+  }, [videos, creatorProfile.id, creatorProfile.username, socialEdges]);
 
   // Play video from Creator Profile grid in full-screen vertical feed
   const handlePlayVideoFromProfile = useCallback(
@@ -2067,7 +2154,7 @@ export default function App() {
       )}
 
       {/* Main Body with Sidebar + Stage */}
-      <div className="flex flex-1 pt-12 sm:pt-13 h-[calc(100dvh-48px)] overflow-hidden relative">
+      <div className="flex flex-1 min-h-0 pt-[calc(4.75rem+env(safe-area-inset-top))] lg:pt-13 overflow-hidden relative">
         {/* Desktop Navigation Sidebar */}
         <SidebarDesktop
           currentTab={currentTab}
@@ -2180,6 +2267,9 @@ export default function App() {
             <Suspense fallback={<LazyTabFallback />}>
               <CreatorProfileView
                 profile={creatorProfile}
+                currentUser={currentUser}
+                allUsers={users}
+                socialEdges={socialEdges}
                 onUpdateProfile={handleUpdateCreatorProfile}
                 onSyncProfileByUsername={handleSyncProfileByUsername}
                 videos={videos}
@@ -2193,6 +2283,12 @@ export default function App() {
                 onDeletePost={handleDeletePost}
                 onOpenUpload={handleOpenUpload}
                 onOpenPublicChannel={() => handleOpenCreatorProfile(creatorProfile.username)}
+                onToggleFollowUser={handleFollowToggle}
+                onRemoveFriend={handleRemoveFriend}
+                onOpenCreatorProfile={handleOpenCreatorProfile}
+                isAdminUnlocked={isAdminUnlocked}
+                onAdminUnlockSuccess={() => setIsAdminUnlocked(true)}
+                onRefreshLiveUsers={refreshLiveUsers}
                 onBackToFeed={handleBackToFeed}
                 onShowToast={showToast}
               />
@@ -2204,11 +2300,13 @@ export default function App() {
                 username={selectedChannelUsername}
                 videos={videos}
                 ownProfile={creatorProfile}
+                socialEdges={socialEdges}
                 onBack={() => {
                   setSelectedChannelUsername(null);
                   setCurrentTab('foryou');
                 }}
                 onFollowToggle={handleFollowToggle}
+                onRemoveFriend={handleRemoveFriend}
                 onPlayVideo={handlePlayVideoFromProfile}
                 onEditOwnProfile={() => {
                   setSelectedChannelUsername(null);
@@ -2391,30 +2489,40 @@ export default function App() {
                     onScroll={handleScroll}
                     className="flex-1 min-h-0 w-full snap-container overflow-y-scroll overflow-x-hidden overscroll-y-contain no-scrollbar [will-change:scroll-position]"
                   >
-                    {displayedVideos.map((video, idx) => (
-                      <VideoCard
-                        key={video.id}
-                        video={video}
-                        isActive={idx === activeIndex}
-                        isNext={idx === activeIndex + 1}
-                        isNearViewport={Math.abs(idx - activeIndex) <= 1}
-                        isMuted={isMuted}
-                        currentUserId={creatorProfile.id}
-                        currentUsername={creatorProfile.username}
-                        onToggleMute={handleToggleMute}
-                        onLikeToggle={handleLikeToggle}
-                        onSaveToggle={handleSaveToggle}
-                        onFollowToggle={handleFollowToggle}
-                        onOpenComments={handleOpenComments}
-                        onOpenShare={handleOpenShare}
-                        onViewTracked={handleViewTracked}
-                        onDownloadTracked={handleDownloadTracked}
-                        onDeletePost={handleDeletePost}
-                        onHashtagClick={handleHashtagClick}
-                        onOpenCreatorProfile={handleOpenCreatorProfile}
-                        onShowToast={showToast}
-                      />
-                    ))}
+                    {displayedVideos.map((video, idx) => {
+                      const rel = getFollowRelationship(
+                        creatorProfile.username,
+                        video.creator.username,
+                        socialEdges
+                      );
+                      return (
+                        <VideoCard
+                          key={video.id}
+                          video={video}
+                          isActive={idx === activeIndex}
+                          isNext={idx === activeIndex + 1}
+                          isNearViewport={Math.abs(idx - activeIndex) <= 1}
+                          isMuted={isMuted}
+                          currentUserId={creatorProfile.id}
+                          currentUsername={creatorProfile.username}
+                          isFollowingCreator={rel.isFollowing || video.creator.isFollowing}
+                          isFollowerCreator={rel.isFollower}
+                          isMutualFriend={rel.isMutualFriend}
+                          onToggleMute={handleToggleMute}
+                          onLikeToggle={handleLikeToggle}
+                          onSaveToggle={handleSaveToggle}
+                          onFollowToggle={handleFollowToggle}
+                          onOpenComments={handleOpenComments}
+                          onOpenShare={handleOpenShare}
+                          onViewTracked={handleViewTracked}
+                          onDownloadTracked={handleDownloadTracked}
+                          onDeletePost={handleDeletePost}
+                          onHashtagClick={handleHashtagClick}
+                          onOpenCreatorProfile={handleOpenCreatorProfile}
+                          onShowToast={showToast}
+                        />
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2701,6 +2809,7 @@ export default function App() {
             onClose={() => setIsCreatorSearchOpen(false)}
             videos={videos}
             ownProfile={creatorProfile}
+            socialEdges={socialEdges}
             onSelectCreator={handleOpenCreatorProfile}
             onPlayVideo={(vid) => {
               setIsCreatorSearchOpen(false);

@@ -38,6 +38,15 @@ export const CURATED_AUDIO_LIBRARY: AudioTrackOption[] = [
     trackType: 'naat_medina',
   },
   {
+    id: 'song-moose-tribute',
+    title: '295 Legend Tribute Beat (Tumbi & 808)',
+    artist: 'Moose Heritage Beats',
+    category: 'song',
+    duration: '0:36',
+    mood: 'Legend · Tumbi · 808 Tribute',
+    trackType: 'punjabi_tribute',
+  },
+  {
     id: 'song-jatt-swag',
     title: 'Jatt Da Swag (Punjabi Dhol Anthem)',
     artist: 'Jatt Beats Official',
@@ -45,6 +54,15 @@ export const CURATED_AUDIO_LIBRARY: AudioTrackOption[] = [
     duration: '0:35',
     mood: 'Desi · Bhangra · Punjabi Song',
     trackType: 'punjabi_dhol',
+  },
+  {
+    id: 'song-sad-lyrics',
+    title: 'Tu Judaa (Romantic Sad Song Lyrics)',
+    artist: 'Lahore Soul Strings',
+    category: 'song',
+    duration: '0:44',
+    mood: 'Romantic · Sad · Lyrics',
+    trackType: 'sufi_acoustic',
   },
   {
     id: 'song-lahore-nights',

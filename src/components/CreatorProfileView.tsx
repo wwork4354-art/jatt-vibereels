@@ -28,8 +28,18 @@ import {
   Download,
   Maximize2,
   Minimize2,
+  Users,
+  UserPlus,
+  UserMinus,
+  Shield,
+  Lock,
+  KeyRound,
+  AlertTriangle,
+  EyeOff,
+  Search,
+  Clock,
 } from 'lucide-react';
-import { ActivityEvent, CreatorProfileData, VideoPost } from '../types';
+import { ActivityEvent, CreatorProfileData, UserAccount, VideoPost } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { PWAInstallButton } from './PWAInstallButton';
 import {
@@ -38,6 +48,20 @@ import {
   getProfileViewsForUsername,
   normalizeCreatorUsername,
 } from '../lib/supabaseService';
+import {
+  SocialEdgesMap,
+  buildMergedSocialEdges,
+  getFollowRelationship,
+  getFollowersList,
+  getFollowingList,
+  getMutualFriendsList,
+  resolveSocialMemberProfiles,
+} from '../lib/socialGraph';
+import {
+  formatAccountCreatedDateTime,
+  isMainAdminAccount,
+  isUserOnlineNow,
+} from '../data/mockUsers';
 import { CreatorActivityView, PostInsightsModal } from './CreatorActivityView';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 import {
@@ -56,7 +80,22 @@ import {
   sanitizeText,
   sanitizeSafeUrl,
   validateSafeMediaFile,
+  verifyAdminPinAsync,
+  getLockoutStatus,
+  recordFailedAttempt,
+  resetLockout,
+  formatLockoutCountdown,
+  LockoutStatus,
 } from '../utils/security';
+
+export type ProfileSubTab =
+  | 'videos'
+  | 'saved'
+  | 'liked'
+  | 'friends'
+  | 'following'
+  | 'followers'
+  | 'activity';
 
 interface CreatorProfileViewProps {
   profile: CreatorProfileData;
@@ -68,7 +107,16 @@ interface CreatorProfileViewProps {
   onMarkActivityRead?: () => void;
   totalProfileLikes: number;
   followingCount: number;
-  initialSubTab?: 'videos' | 'saved' | 'liked' | 'activity';
+  initialSubTab?: ProfileSubTab;
+  currentUser?: UserAccount | null;
+  allUsers?: UserAccount[];
+  socialEdges?: SocialEdgesMap;
+  onToggleFollowUser?: (username: string) => void;
+  onRemoveFriend?: (username: string) => void;
+  onOpenCreatorProfile?: (username: string) => void;
+  isAdminUnlocked?: boolean;
+  onAdminUnlockSuccess?: () => void;
+  onRefreshLiveUsers?: () => void;
   onPlayVideo: (videoId: string) => void;
   onDeletePost?: (videoId: string) => void;
   onOpenUpload: () => void;
@@ -102,6 +150,15 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   totalProfileLikes,
   followingCount,
   initialSubTab,
+  currentUser = null,
+  allUsers = [],
+  socialEdges,
+  onToggleFollowUser,
+  onRemoveFriend,
+  onOpenCreatorProfile,
+  isAdminUnlocked = false,
+  onAdminUnlockSuccess,
+  onRefreshLiveUsers,
   onPlayVideo,
   onDeletePost,
   onOpenUpload,
@@ -110,8 +167,19 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   onShowToast,
 }) => {
   const isOnline = useOnlineStatus();
-  const [activeSubTab, setActiveSubTab] = useState<'videos' | 'saved' | 'liked' | 'activity'>(
+  const isMainAdmin = isMainAdminAccount(currentUser);
+  const [activeSubTab, setActiveSubTab] = useState<ProfileSubTab>(
     initialSubTab || 'videos'
+  );
+  const [connectionsSearch, setConnectionsSearch] = useState('');
+  const [isRegisteredUsersOpen, setIsRegisteredUsersOpen] = useState(false);
+  const [regUsersSearch, setRegUsersSearch] = useState('');
+  const [adminPinInput, setAdminPinInput] = useState('');
+  const [showAdminPin, setShowAdminPin] = useState(false);
+  const [adminPinError, setAdminPinError] = useState('');
+  const [verifyingAdminPin, setVerifyingAdminPin] = useState(false);
+  const [adminPinLockout, setAdminPinLockout] = useState<LockoutStatus>(() =>
+    getLockoutStatus('admin_pin')
   );
   const [offlineRecords, setOfflineRecords] = useState<OfflineMediaRecord[]>([]);
   const [savedFilter, setSavedFilter] = useState<'all' | 'reels' | 'audio'>('all');
@@ -150,6 +218,15 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
       setActiveSubTab(initialSubTab);
     }
   }, [initialSubTab]);
+
+  React.useEffect(() => {
+    if (!isRegisteredUsersOpen) return;
+    setAdminPinLockout(getLockoutStatus('admin_pin'));
+    const timer = window.setInterval(() => {
+      setAdminPinLockout(getLockoutStatus('admin_pin'));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isRegisteredUsersOpen, isAdminUnlocked]);
 
   React.useEffect(() => {
     const loadOffline = () => {
@@ -246,6 +323,64 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   const profileViewsCount = getProfileViewsForUsername(
     profile.username,
     profile.profileViews ?? 0
+  );
+
+  // Bidirectional Social Graph: Following, Followers, Mutual Friends
+  const activeEdges = React.useMemo(
+    () => socialEdges || buildMergedSocialEdges(profile.username, activityEvents),
+    [socialEdges, profile.username, activityEvents]
+  );
+  const followingUsernames = React.useMemo(
+    () => getFollowingList(profile.username, activeEdges),
+    [profile.username, activeEdges]
+  );
+  const followersUsernames = React.useMemo(
+    () => getFollowersList(profile.username, activeEdges),
+    [profile.username, activeEdges]
+  );
+  const mutualFriendsUsernames = React.useMemo(
+    () => getMutualFriendsList(profile.username, activeEdges),
+    [profile.username, activeEdges]
+  );
+
+  const effectiveFollowingCount = Math.max(followingCount, followingUsernames.length);
+  const effectiveFollowersCount = Math.max(profile.baseFollowers, followersUsernames.length);
+
+  const followingMembers = React.useMemo(
+    () =>
+      resolveSocialMemberProfiles(
+        followingUsernames,
+        profile.username,
+        activeEdges,
+        allUsers,
+        videos,
+        profile
+      ),
+    [followingUsernames, profile, activeEdges, allUsers, videos]
+  );
+  const followersMembers = React.useMemo(
+    () =>
+      resolveSocialMemberProfiles(
+        followersUsernames,
+        profile.username,
+        activeEdges,
+        allUsers,
+        videos,
+        profile
+      ),
+    [followersUsernames, profile, activeEdges, allUsers, videos]
+  );
+  const friendsMembers = React.useMemo(
+    () =>
+      resolveSocialMemberProfiles(
+        mutualFriendsUsernames,
+        profile.username,
+        activeEdges,
+        allUsers,
+        videos,
+        profile
+      ),
+    [mutualFriendsUsernames, profile, activeEdges, allUsers, videos]
   );
 
   React.useEffect(() => {
@@ -539,34 +674,66 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
             <p className="text-xs font-bold text-cyan-400">@{profile.username}</p>
           </div>
 
-          {/* TikTok-Style Stats Row */}
-          <div className="grid grid-cols-5 gap-1.5 sm:gap-5 py-2.5 px-3 sm:px-6 rounded-2xl bg-neutral-900/80 border border-neutral-800/90 w-full max-w-xl">
-            <div className="flex flex-col items-center">
-              <span className="text-sm sm:text-lg font-black text-white tabular-nums">
-                {followingCount.toLocaleString()}
+          {/* TikTok-Style Clickable Stats Row (Following / Followers / Friends / Likes / Post Views / Profile Views) */}
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-3 py-2.5 px-3 sm:px-5 rounded-2xl bg-neutral-900/80 border border-neutral-800/90 w-full max-w-2xl">
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('following')}
+              className={`flex flex-col items-center py-1 rounded-xl transition-colors cursor-pointer ${
+                activeSubTab === 'following' ? 'bg-pink-500/15' : 'hover:bg-neutral-800/60'
+              }`}
+              title="View & manage accounts you follow"
+            >
+              <span className="text-sm sm:text-base font-black text-white tabular-nums">
+                {effectiveFollowingCount.toLocaleString()}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Following</span>
-            </div>
-            <div className="flex flex-col items-center border-l border-neutral-800 pl-1.5 sm:pl-4">
-              <span className="text-sm sm:text-lg font-black text-white tabular-nums">
-                {formatCompactCount(profile.baseFollowers)}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('followers')}
+              className={`flex flex-col items-center py-1 rounded-xl border-l border-neutral-800 pl-1.5 transition-colors cursor-pointer ${
+                activeSubTab === 'followers' ? 'bg-purple-500/15' : 'hover:bg-neutral-800/60'
+              }`}
+              title="View your followers & follow back"
+            >
+              <span className="text-sm sm:text-base font-black text-white tabular-nums">
+                {formatCompactCount(effectiveFollowersCount)}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Followers</span>
-            </div>
-            <div className="flex flex-col items-center border-l border-neutral-800 pl-1.5 sm:pl-4">
-              <span className="text-sm sm:text-lg font-black text-pink-400 tabular-nums">
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('friends')}
+              className={`flex flex-col items-center py-1 rounded-xl border-l border-neutral-800 pl-1.5 transition-colors cursor-pointer ${
+                activeSubTab === 'friends' ? 'bg-cyan-500/15' : 'hover:bg-neutral-800/60'
+              }`}
+              title="View Mutual Friends"
+            >
+              <span className="text-sm sm:text-base font-black text-cyan-300 tabular-nums">
+                {friendsMembers.length.toLocaleString()}
+              </span>
+              <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Friends</span>
+            </button>
+
+            <div className="flex flex-col items-center py-1 sm:border-l sm:border-neutral-800 sm:pl-1.5">
+              <span className="text-sm sm:text-base font-black text-pink-400 tabular-nums">
                 {formatCompactCount(totalProfileLikes)}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Likes</span>
             </div>
-            <div className="flex flex-col items-center border-l border-neutral-800 pl-1.5 sm:pl-4">
-              <span className="text-sm sm:text-lg font-black text-cyan-400 tabular-nums">
+
+            <div className="flex flex-col items-center py-1 border-l border-neutral-800 pl-1.5">
+              <span className="text-sm sm:text-base font-black text-cyan-400 tabular-nums">
                 {formatCompactCount(totalOwnViews)}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Post Views</span>
             </div>
-            <div className="flex flex-col items-center border-l border-neutral-800 pl-1.5 sm:pl-4">
-              <span className="text-sm sm:text-lg font-black text-emerald-400 tabular-nums">
+
+            <div className="flex flex-col items-center py-1 border-l border-neutral-800 pl-1.5">
+              <span className="text-sm sm:text-base font-black text-emerald-400 tabular-nums">
                 {formatCompactCount(profileViewsCount)}
               </span>
               <span className="text-[10px] sm:text-[11px] text-neutral-400 font-semibold">Profile Views</span>
@@ -618,48 +785,111 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <span>Cloud Sync</span>
               </button>
             )}
+            {isMainAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isAdminUnlocked) {
+                    onRefreshLiveUsers?.();
+                  }
+                  setAdminPinError('');
+                  setAdminPinInput('');
+                  setIsRegisteredUsersOpen(true);
+                }}
+                className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-pink-500/20 to-rose-500/20 hover:from-amber-500/30 hover:to-rose-500/30 text-amber-200 border border-amber-400/50 text-xs font-black flex items-center gap-1.5 shadow-md shadow-amber-500/10 transition-all active:scale-95 cursor-pointer"
+                title="Admin-Only: View all registered app accounts"
+              >
+                <Shield className="w-3.5 h-3.5 text-amber-400" />
+                <Users className="w-3.5 h-3.5 text-pink-400" />
+                <span>Registered Users</span>
+                {isAdminUnlocked && allUsers.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-black text-[10px] font-black">
+                    {allUsers.length}
+                  </span>
+                )}
+              </button>
+            )}
             <PWAInstallButton variant="topbar" onShowToast={onShowToast} />
           </div>
         </div>
 
-        {/* Sub-Tabs (My Posts | Saved | Liked | Insights & Activity) */}
-        <div className="border-b border-neutral-800 flex items-center justify-around">
+        {/* Sub-Tabs (Posts | Friends | Following | Followers | Saved | Liked | Insights) */}
+        <div className="border-b border-neutral-800 flex items-center gap-1 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setActiveSubTab('videos')}
-            className={`flex-1 py-3 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            className={`px-3 py-3 shrink-0 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
               activeSubTab === 'videos'
                 ? 'border-pink-500 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'
             }`}
           >
-            <Video className="w-4 h-4 shrink-0" />
+            <Video className="w-3.5 h-3.5 shrink-0" />
             <span>Posts ({userVideos.length})</span>
           </button>
 
           <button
             type="button"
+            onClick={() => setActiveSubTab('friends')}
+            className={`px-3 py-3 shrink-0 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              activeSubTab === 'friends'
+                ? 'border-cyan-400 text-white'
+                : 'border-transparent text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+            <span>Friends ({friendsMembers.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('following')}
+            className={`px-3 py-3 shrink-0 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              activeSubTab === 'following'
+                ? 'border-pink-500 text-white'
+                : 'border-transparent text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <UserPlus className="w-3.5 h-3.5 shrink-0 text-pink-400" />
+            <span>Following ({followingMembers.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('followers')}
+            className={`px-3 py-3 shrink-0 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              activeSubTab === 'followers'
+                ? 'border-purple-400 text-white'
+                : 'border-transparent text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <UserIcon className="w-3.5 h-3.5 shrink-0 text-purple-400" />
+            <span>Followers ({followersMembers.length})</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveSubTab('saved')}
-            className={`flex-1 py-3 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            className={`px-3 py-3 shrink-0 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
               activeSubTab === 'saved'
                 ? 'border-amber-400 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'
             }`}
           >
             <HardDrive className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-            <span className="truncate">Saved / Downloads ({totalSavedDownloadsCount})</span>
+            <span className="whitespace-nowrap">Saved ({totalSavedDownloadsCount})</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveSubTab('liked')}
-            className={`flex-1 py-3 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            className={`px-3 py-3 shrink-0 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer ${
               activeSubTab === 'liked'
                 ? 'border-rose-500 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'
             }`}
           >
-            <Heart className="w-4 h-4 shrink-0" />
+            <Heart className="w-3.5 h-3.5 shrink-0" />
             <span>Liked ({likedVideos.length})</span>
           </button>
 
@@ -669,13 +899,13 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               setActiveSubTab('activity');
               onMarkActivityRead?.();
             }}
-            className={`flex-1 py-3 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer relative ${
+            className={`px-3 py-3 shrink-0 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-bold border-b-2 transition-all cursor-pointer relative ${
               activeSubTab === 'activity'
                 ? 'border-cyan-400 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'
             }`}
           >
-            <TrendingUp className="w-4 h-4 shrink-0" />
+            <TrendingUp className="w-3.5 h-3.5 shrink-0" />
             <span>Insights</span>
             {unreadActivityCount > 0 && activeSubTab !== 'activity' && (
               <span className="w-1.5 h-1.5 rounded-full bg-pink-500" />
@@ -735,6 +965,183 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
             onMarkAllRead={onMarkActivityRead}
             onShowToast={onShowToast}
           />
+        ) : activeSubTab === 'friends' ||
+          activeSubTab === 'following' ||
+          activeSubTab === 'followers' ? (
+          (() => {
+            const baseList =
+              activeSubTab === 'friends'
+                ? friendsMembers
+                : activeSubTab === 'following'
+                ? followingMembers
+                : followersMembers;
+            const q = sanitizeText(connectionsSearch, 80).toLowerCase();
+            const filteredList = q
+              ? baseList.filter(
+                  (m) =>
+                    m.name.toLowerCase().includes(q) ||
+                    m.username.toLowerCase().includes(q)
+                )
+              : baseList;
+
+            return (
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-neutral-900/70 border border-neutral-800 rounded-2xl p-3">
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-black text-white flex items-center gap-1.5">
+                      {activeSubTab === 'friends' ? (
+                        <>
+                          <Users className="w-4 h-4 text-cyan-400" />
+                          <span>Mutual Friends ({friendsMembers.length})</span>
+                        </>
+                      ) : activeSubTab === 'following' ? (
+                        <>
+                          <UserPlus className="w-4 h-4 text-pink-400" />
+                          <span>Following ({followingMembers.length})</span>
+                        </>
+                      ) : (
+                        <>
+                          <UserIcon className="w-4 h-4 text-purple-400" />
+                          <span>Followers ({followersMembers.length})</span>
+                        </>
+                      )}
+                    </h3>
+                    <p className="text-[11px] text-neutral-400">
+                      {activeSubTab === 'friends'
+                        ? 'You follow each other back — marked as Mutual Friends.'
+                        : activeSubTab === 'following'
+                        ? 'Creators and members you follow. Unfollow anytime.'
+                        : 'People following you. Tap Follow Back to become Friends.'}
+                    </p>
+                  </div>
+
+                  <div className="relative w-full sm:w-56">
+                    <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={connectionsSearch}
+                      onChange={(e) => setConnectionsSearch(sanitizeInputLive(e.target.value, 80))}
+                      placeholder="Filter by name or @username..."
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-cyan-400"
+                    />
+                  </div>
+                </div>
+
+                {filteredList.length === 0 ? (
+                  <div className="py-12 px-4 text-center rounded-2xl border border-dashed border-neutral-800 bg-neutral-900/30 space-y-2.5">
+                    <Users className="w-9 h-9 text-neutral-600 mx-auto" />
+                    <p className="text-sm font-bold text-neutral-200">
+                      {q
+                        ? `No matches for "${q}"`
+                        : activeSubTab === 'friends'
+                        ? 'No mutual friends yet'
+                        : activeSubTab === 'following'
+                        ? 'You are not following anyone yet'
+                        : 'No followers yet'}
+                    </p>
+                    <p className="text-xs text-neutral-400 max-w-xs mx-auto">
+                      {activeSubTab === 'friends'
+                        ? 'When someone follows you and you follow them back, they appear here with a Friends badge.'
+                        : activeSubTab === 'following'
+                        ? 'Tap Follow on any reel or creator profile to see them here.'
+                        : 'Share reels or follow creators so others follow your profile back.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredList.map((member) => (
+                      <div
+                        key={member.username}
+                        className="p-3 rounded-2xl bg-neutral-900/85 border border-neutral-800 hover:border-pink-500/40 flex items-center justify-between gap-3 transition-colors"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onOpenCreatorProfile?.(member.username)}
+                          className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer group"
+                        >
+                          <img
+                            src={optimizeThumbnailUrl(member.avatar, 'grid')}
+                            alt={member.name}
+                            className="w-11 h-11 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs sm:text-sm font-bold text-white truncate group-hover:text-pink-400 transition-colors">
+                                {member.name}
+                              </span>
+                              {member.isVerified && (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                              )}
+                              {member.isMutualFriend && (
+                                <span className="inline-flex items-center gap-0.5 px-2 py-0.2 rounded-full bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 text-[9px] font-black uppercase">
+                                  <Users className="w-2.5 h-2.5" />
+                                  <span>Friends</span>
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] font-semibold text-cyan-400 truncate">
+                              @{member.username}
+                            </p>
+                          </div>
+                        </button>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {activeSubTab === 'friends' ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => onOpenCreatorProfile?.(member.username)}
+                                className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-bold cursor-pointer"
+                              >
+                                Profile
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onRemoveFriend?.(member.username)}
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                                title="Remove mutual friend"
+                              >
+                                <UserMinus className="w-3 h-3" />
+                                <span>Remove Friend</span>
+                              </button>
+                            </>
+                          ) : activeSubTab === 'following' ? (
+                            <button
+                              type="button"
+                              onClick={() => onToggleFollowUser?.(member.username)}
+                              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-rose-500/20 text-neutral-200 hover:text-rose-300 border border-neutral-700 hover:border-rose-500/40 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span>Unfollow</span>
+                            </button>
+                          ) : member.isFollowing ? (
+                            <button
+                              type="button"
+                              onClick={() => onToggleFollowUser?.(member.username)}
+                              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-rose-500/20 text-emerald-300 hover:text-rose-300 border border-emerald-500/40 hover:border-rose-500/40 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Check className="w-3 h-3" />
+                              <span>Following</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => onToggleFollowUser?.(member.username)}
+                              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white text-[11px] font-black flex items-center gap-1 shadow-sm cursor-pointer"
+                            >
+                              <UserPlus className="w-3 h-3" />
+                              <span>Follow Back</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()
         ) : currentGridVideos.length === 0 ? (
           <div className="py-14 px-4 text-center rounded-2xl border border-dashed border-neutral-800 bg-neutral-900/30 space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-neutral-900 border border-neutral-800 mx-auto flex items-center justify-center text-pink-400">
@@ -1358,6 +1765,335 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Admin-Only All Registered Users Modal (with PIN Protection Gate) */}
+      {isRegisteredUsersOpen && isMainAdmin && (
+        <div
+          className="fixed inset-0 z-55 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150"
+          onClick={() => setIsRegisteredUsersOpen(false)}
+        >
+          {!isAdminUnlocked ? (
+            <div
+              className="w-full max-w-sm bg-neutral-950 border border-pink-500/40 rounded-3xl p-6 space-y-4 shadow-[0_0_50px_rgba(236,72,153,0.2)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-pink-600 to-rose-600 text-white flex items-center justify-center shadow-lg shadow-pink-600/25">
+                    <Shield className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white">Admin Security Verification</h3>
+                    <p className="text-[11px] text-neutral-400">Enter PIN to view Registered Users</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsRegisteredUsersOpen(false)}
+                  className="p-1.5 text-neutral-400 hover:text-white rounded-full hover:bg-neutral-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {adminPinLockout.isLocked && (
+                <div className="p-3 rounded-xl bg-rose-950/75 border border-rose-500/50 flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2 text-rose-200">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span className="font-black text-rose-300">Locked for 5 Minutes</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded bg-black/60 font-mono font-black text-rose-300">
+                    {formatLockoutCountdown(adminPinLockout.remainingSeconds)}
+                  </span>
+                </div>
+              )}
+
+              {adminPinError && (
+                <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{adminPinError}</span>
+                </div>
+              )}
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setAdminPinError('');
+                  const lock = getLockoutStatus('admin_pin');
+                  setAdminPinLockout(lock);
+                  if (lock.isLocked) {
+                    setAdminPinError(
+                      `Locked for ${formatLockoutCountdown(lock.remainingSeconds)} due to failed attempts.`
+                    );
+                    return;
+                  }
+                  setVerifyingAdminPin(true);
+                  try {
+                    const ok = await verifyAdminPinAsync(adminPinInput);
+                    if (!ok) {
+                      const nextLock = recordFailedAttempt('admin_pin');
+                      setAdminPinLockout(nextLock);
+                      setAdminPinInput('');
+                      setAdminPinError(
+                        nextLock.isLocked
+                          ? `3 failed PIN attempts. Locked for ${formatLockoutCountdown(nextLock.remainingSeconds)}.`
+                          : `Invalid Admin Security PIN (${nextLock.attemptsLeft} attempt${
+                              nextLock.attemptsLeft === 1 ? '' : 's'
+                            } left).`
+                      );
+                      return;
+                    }
+                    resetLockout('admin_pin');
+                    setAdminPinLockout(getLockoutStatus('admin_pin'));
+                    setAdminPinInput('');
+                    setAdminPinError('');
+                    onAdminUnlockSuccess?.();
+                    onRefreshLiveUsers?.();
+                    onShowToast('Admin verified · Registered Users unlocked');
+                  } finally {
+                    setVerifyingAdminPin(false);
+                  }
+                }}
+                className="space-y-3"
+              >
+                <div className="relative">
+                  <input
+                    type={showAdminPin ? 'text' : 'password'}
+                    required
+                    autoFocus
+                    disabled={adminPinLockout.isLocked}
+                    value={adminPinInput}
+                    onChange={(e) => setAdminPinInput(e.target.value)}
+                    placeholder="Enter Admin Security PIN"
+                    className="w-full bg-neutral-900 border border-neutral-800 focus:border-pink-500 rounded-xl pl-9 pr-10 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-hidden disabled:opacity-50"
+                  />
+                  <KeyRound className="w-4 h-4 text-pink-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminPin((p) => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                  >
+                    {showAdminPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={verifyingAdminPin || adminPinLockout.isLocked}
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>
+                    {adminPinLockout.isLocked
+                      ? `Locked (${formatLockoutCountdown(adminPinLockout.remainingSeconds)})`
+                      : verifyingAdminPin
+                      ? 'Verifying...'
+                      : 'Unlock Registered Users'}
+                  </span>
+                </button>
+              </form>
+            </div>
+          ) : (
+            <div
+              className="w-full max-w-2xl bg-neutral-950 border border-neutral-800 rounded-3xl shadow-2xl flex flex-col max-h-[88vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-5 py-4 border-b border-neutral-800 flex items-center justify-between gap-3 bg-neutral-900/60 shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-pink-600 text-white flex items-center justify-center shrink-0">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2 flex-wrap">
+                      <span>All Registered Users</span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[10px] font-black">
+                        {allUsers.length} Accounts
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-neutral-400 truncate">
+                      Admin-only directory · View profiles or follow any member
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onRefreshLiveUsers?.();
+                      onShowToast('Synced live registered users');
+                    }}
+                    className="p-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-neutral-800 cursor-pointer"
+                    title="Refresh registered users"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsRegisteredUsersOpen(false)}
+                    className="p-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-800 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="px-5 py-3 border-b border-neutral-800/70 bg-neutral-900/30 shrink-0">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={regUsersSearch}
+                    onChange={(e) => setRegUsersSearch(sanitizeInputLive(e.target.value, 100))}
+                    placeholder="Search registered users by name, @username, or email..."
+                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-pink-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2.5 no-scrollbar">
+                {(() => {
+                  const q = sanitizeText(regUsersSearch, 100).toLowerCase();
+                  const sorted = [...allUsers].sort((a, b) => {
+                    const tA = a.createdAtIso ? new Date(a.createdAtIso).getTime() : 0;
+                    const tB = b.createdAtIso ? new Date(b.createdAtIso).getTime() : 0;
+                    return tB - tA;
+                  });
+                  const filtered = q
+                    ? sorted.filter(
+                        (u) =>
+                          u.name.toLowerCase().includes(q) ||
+                          u.username.toLowerCase().includes(q) ||
+                          u.email.toLowerCase().includes(q)
+                      )
+                    : sorted;
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="py-12 text-center text-neutral-400 text-xs">
+                        No registered accounts found matching &ldquo;{q}&rdquo;.
+                      </div>
+                    );
+                  }
+
+                  const nowMs = Date.now();
+                  return filtered.map((u) => {
+                    const isSelf =
+                      normalizeCreatorUsername(u.username) ===
+                        normalizeCreatorUsername(profile.username) || u.id === currentUser?.id;
+                    const online = isUserOnlineNow(u, nowMs);
+                    const joined = formatAccountCreatedDateTime(u);
+                    const rel = getFollowRelationship(profile.username, u.username, activeEdges);
+
+                    return (
+                      <div
+                        key={u.id}
+                        className="p-3 rounded-2xl bg-neutral-900/85 border border-neutral-800 hover:border-pink-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="relative shrink-0">
+                            <img
+                              src={optimizeThumbnailUrl(u.avatar, 'grid')}
+                              alt={u.name}
+                              className="w-11 h-11 rounded-full object-cover bg-neutral-800 border border-neutral-700"
+                              referrerPolicy="no-referrer"
+                            />
+                            <span
+                              className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-neutral-900 ${
+                                u.status === 'suspended'
+                                  ? 'bg-rose-500'
+                                  : online
+                                  ? 'bg-emerald-400'
+                                  : 'bg-neutral-500'
+                              }`}
+                            />
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs sm:text-sm font-black text-white truncate">
+                                {u.name}
+                              </span>
+                              <span
+                                className={`text-[9px] font-black uppercase px-1.5 py-0.2 rounded ${
+                                  u.role === 'admin'
+                                    ? 'bg-pink-500/20 text-pink-300'
+                                    : u.role === 'creator'
+                                    ? 'bg-indigo-500/20 text-indigo-300'
+                                    : 'bg-neutral-800 text-neutral-400'
+                                }`}
+                              >
+                                {u.role}
+                              </span>
+                              {!isSelf && rel.isMutualFriend && (
+                                <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 text-[9px] font-black">
+                                  Friends
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] font-bold text-cyan-400 truncate">
+                              @{u.username}
+                            </p>
+                            <p className="text-[10px] text-neutral-400 flex items-center gap-1 mt-0.5 truncate">
+                              <Clock className="w-3 h-3 shrink-0" />
+                              <span>
+                                Joined {joined.dateLabel} · {joined.timeLabel}
+                              </span>
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsRegisteredUsersOpen(false);
+                              onOpenCreatorProfile?.(u.username);
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-[11px] font-bold border border-neutral-700 cursor-pointer"
+                          >
+                            View Profile
+                          </button>
+                          {!isSelf && onToggleFollowUser && (
+                            <button
+                              type="button"
+                              onClick={() => onToggleFollowUser(u.username)}
+                              className={`px-3 py-1.5 rounded-xl text-[11px] font-black flex items-center gap-1 border cursor-pointer transition-colors ${
+                                rel.isMutualFriend
+                                  ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200'
+                                  : rel.isFollowing
+                                  ? 'bg-neutral-800 border-emerald-500/40 text-emerald-300'
+                                  : 'bg-gradient-to-r from-pink-600 to-rose-600 border-pink-400/40 text-white'
+                              }`}
+                            >
+                              {rel.isMutualFriend ? (
+                                <>
+                                  <Users className="w-3 h-3" />
+                                  <span>Friends</span>
+                                </>
+                              ) : rel.isFollowing ? (
+                                <>
+                                  <Check className="w-3 h-3" />
+                                  <span>Following</span>
+                                </>
+                              ) : (
+                                <>
+                                  <UserPlus className="w-3 h-3" />
+                                  <span>{rel.isFollower ? 'Follow Back' : 'Follow'}</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -22,6 +22,7 @@ import {
   Send,
   Wand2,
   ArrowUpDown,
+  Youtube,
 } from 'lucide-react';
 import {
   FeedTab,
@@ -163,165 +164,169 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 
   return (
     <>
-      {/* Mobile Top Header (Branding Header: Image Logo + Tabs + Actions) */}
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-3 py-2 flex items-center justify-between gap-2 [transform:translateZ(0)]">
-        {/* Left: Brand Image Logo Tag with placeholder src */}
-        <div className="flex items-center shrink-0">
-          <img
-            src={BRAND_LOGO_SRC}
-            alt="Jatt VibeReels"
-            className="h-7 w-auto max-w-[110px] object-contain rounded-md"
-          />
+      {/* Mobile Top Header (Notch/Status-bar safe + Compact LIVE / Following / For You Tabs Row) */}
+      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 backdrop-blur-md border-b border-neutral-800/80 pt-[max(0.65rem,env(safe-area-inset-top))] pb-1.5 px-2.5 flex flex-col gap-1.5 [transform:translateZ(0)]">
+        {/* Top Row: Compact Brand Logo + Quick Utility Icons */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center shrink-0">
+            <img
+              src={BRAND_LOGO_SRC}
+              alt="Jatt VibeReels"
+              className="h-6 w-auto max-w-[98px] object-contain rounded-md"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <PWAInstallButton variant="mobile-header" />
+            <button
+              type="button"
+              onClick={() => setIsMobileSearchOpen((prev) => !prev)}
+              className={`p-1.5 rounded-lg border transition-colors ${
+                isMobileSearchOpen
+                  ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                  : 'bg-neutral-900 border-neutral-800 text-cyan-400 hover:text-white'
+              }`}
+              title="Search User ID (@username) or Creator Name"
+              aria-label="Search Creators"
+            >
+              {isMobileSearchOpen ? <X className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
+            </button>
+            {onOpenDirectSnaps && (
+              <button
+                type="button"
+                onClick={onOpenDirectSnaps}
+                className="relative p-1.5 rounded-lg border bg-neutral-900 border-amber-500/40 text-amber-300 cursor-pointer"
+                title="Direct Chat & Live Snaps Inbox"
+                aria-label="Direct Chat & Live Snaps"
+              >
+                <Send className="w-3.5 h-3.5" />
+                {unreadDirectSnapsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-amber-400 text-black text-[8px] font-black flex items-center justify-center">
+                    {unreadDirectSnapsCount > 9 ? '9+' : unreadDirectSnapsCount}
+                  </span>
+                )}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onSelectTab('activity')}
+              className={`relative p-1.5 rounded-lg border transition-colors ${
+                currentTab === 'activity'
+                  ? 'bg-pink-600/25 border-pink-500/50 text-pink-300'
+                  : 'bg-neutral-900 border-neutral-800 text-neutral-300'
+              }`}
+              title="Notifications & Activity"
+              aria-label="Activity"
+            >
+              <Bell className="w-3.5 h-3.5" />
+              {unreadActivityCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center">
+                  {unreadActivityCount > 9 ? '9+' : unreadActivityCount}
+                </span>
+              )}
+            </button>
+
+            {!currentUser ? (
+              <button
+                type="button"
+                onClick={onOpenLogin}
+                className="px-2 py-1 bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 text-white rounded-lg text-[10px] font-black border border-pink-400/50 shadow-md shadow-pink-600/25 active:scale-95"
+              >
+                Log In
+              </button>
+            ) : (
+              <div className="flex items-center gap-1">
+                {isMainAdminAccount(currentUser) && (
+                  <button
+                    type="button"
+                    onClick={onOpenAdmin}
+                    className="p-1 bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-lg text-xs"
+                    title="Admin Panel"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsMobileProfileOpen(true)}
+                  className="rounded-full ring-2 ring-pink-500/40 p-0.5 active:scale-95 transition-transform"
+                  title="View user profile & developer credit"
+                >
+                  <img
+                    src={currentUser.avatar}
+                    alt={currentUser.name}
+                    className="w-6 h-6 rounded-full object-cover bg-neutral-800"
+                    referrerPolicy="no-referrer"
+                  />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Center Tabs, Live & Trends */}
-        <div className="flex items-center gap-2 text-xs font-bold overflow-x-auto no-scrollbar">
-          {/* Live Tab Button */}
+        {/* Lower Compact Tabs Row: LIVE / Following / For You / Movie Box (never clipped by phone notch) */}
+        <nav
+          aria-label="Feed feeds"
+          className="flex items-center justify-center gap-2 sm:gap-3.5 pt-0.5 pb-0.5 overflow-x-auto no-scrollbar"
+        >
           <button
             type="button"
             onClick={onOpenLive}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 transition-all ${
+            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 transition-all cursor-pointer ${
               currentTab === 'live'
-                ? 'bg-red-600 text-white shadow-md shadow-red-600/35 border border-red-400'
+                ? 'bg-red-600 text-white shadow-sm shadow-red-600/35 border border-red-400'
                 : 'bg-red-600/20 border border-red-500/40 text-red-400'
             }`}
             title="Open TikTok-style Live Stream"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
             <Radio className="w-2.5 h-2.5" />
-            <span>LIVE</span>
+            <span>Live</span>
           </button>
 
           <button
             type="button"
             onClick={() => onSelectTab('following')}
-            className={`shrink-0 transition-all ${
+            className={`px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 transition-all cursor-pointer ${
               currentTab === 'following'
-                ? 'text-white border-b-2 border-white pb-0.5'
-                : 'text-neutral-400 hover:text-white pb-0.5'
+                ? 'bg-white/15 text-white border border-white/30'
+                : 'text-neutral-400 hover:text-white border border-transparent'
             }`}
           >
             Following
           </button>
+
           <button
             type="button"
             onClick={() => onSelectTab('foryou')}
-            className={`shrink-0 transition-all ${
+            className={`px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 transition-all cursor-pointer ${
               currentTab === 'foryou'
-                ? 'text-white border-b-2 border-white pb-0.5'
-                : 'text-neutral-400 hover:text-white pb-0.5'
+                ? 'bg-white/15 text-white border border-white/30'
+                : 'text-neutral-400 hover:text-white border border-transparent'
             }`}
           >
             For You
           </button>
-          {/* Movie Box & Downloads Hub Button */}
+
           <button
             type="button"
             onClick={() => onSelectTab('downloads')}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 transition-all ${
+            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 transition-all cursor-pointer ${
               currentTab === 'downloads'
-                ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white shadow-md border border-cyan-400'
+                ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white shadow-sm border border-cyan-400'
                 : 'bg-cyan-600/15 border border-cyan-500/30 text-cyan-300'
             }`}
-            title="Open Movie Box & Download Hub (Movies, Dramas, Songs, Apps, Quran)"
+            title="Open Movie Box & Download Hub"
           >
             <Film className="w-2.5 h-2.5 text-cyan-400" />
             <span>Movie Box</span>
           </button>
-        </div>
-
-        {/* Right Creator Search, Install, Direct Snaps, Activity Bell & Auth / Admin */}
-        <div className="flex items-center gap-1.5">
-          <PWAInstallButton variant="mobile-header" />
-          <button
-            type="button"
-            onClick={() => setIsMobileSearchOpen((prev) => !prev)}
-            className={`p-1.5 rounded-lg border transition-colors ${
-              isMobileSearchOpen
-                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
-                : 'bg-neutral-900 border-neutral-800 text-cyan-400 hover:text-white'
-            }`}
-            title="Search User ID (@username) or Creator Name"
-            aria-label="Search Creators"
-          >
-            {isMobileSearchOpen ? <X className="w-4 h-4" /> : <Search className="w-4 h-4" />}
-          </button>
-          {onOpenDirectSnaps && (
-            <button
-              type="button"
-              onClick={onOpenDirectSnaps}
-              className="relative p-1.5 rounded-lg border bg-neutral-900 border-amber-500/40 text-amber-300 cursor-pointer"
-              title="Direct Chat & Live Snaps Inbox"
-              aria-label="Direct Chat & Live Snaps"
-            >
-              <Send className="w-4 h-4" />
-              {unreadDirectSnapsCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-amber-400 text-black text-[8px] font-black flex items-center justify-center">
-                  {unreadDirectSnapsCount > 9 ? '9+' : unreadDirectSnapsCount}
-                </span>
-              )}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => onSelectTab('activity')}
-            className={`relative p-1.5 rounded-lg border transition-colors ${
-              currentTab === 'activity'
-                ? 'bg-pink-600/25 border-pink-500/50 text-pink-300'
-                : 'bg-neutral-900 border-neutral-800 text-neutral-300'
-            }`}
-            title="Notifications & Activity"
-            aria-label="Activity"
-          >
-            <Bell className="w-4 h-4" />
-            {unreadActivityCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center">
-                {unreadActivityCount > 9 ? '9+' : unreadActivityCount}
-              </span>
-            )}
-          </button>
-
-          {!currentUser ? (
-            <button
-              type="button"
-              onClick={onOpenLogin}
-              className="px-2.5 py-1 bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 text-white rounded-lg text-[11px] font-black border border-pink-400/50 shadow-md shadow-pink-600/25 active:scale-95"
-            >
-              Log In
-            </button>
-          ) : (
-            <div className="flex items-center gap-1">
-              {isMainAdminAccount(currentUser) && (
-                <button
-                  type="button"
-                  onClick={onOpenAdmin}
-                  className="p-1 bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-lg text-xs"
-                  title="Admin Panel"
-                >
-                  <Shield className="w-4 h-4" />
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setIsMobileProfileOpen(true)}
-                className="rounded-full ring-2 ring-pink-500/40 p-0.5 active:scale-95 transition-transform"
-                title="View user profile & developer credit"
-              >
-                <img
-                  src={currentUser.avatar}
-                  alt={currentUser.name}
-                  className="w-7 h-7 rounded-full object-cover bg-neutral-800"
-                  referrerPolicy="no-referrer"
-                />
-              </button>
-            </div>
-          )}
-        </div>
+        </nav>
       </header>
 
       {/* Mobile Expandable Top Creator ID & Name Search Bar */}
       {isMobileSearchOpen && (
-        <div className="lg:hidden fixed top-11 left-0 right-0 z-40 bg-neutral-950/98 border-b border-neutral-800 p-3 shadow-2xl space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="lg:hidden fixed top-[calc(4.6rem+env(safe-area-inset-top))] left-0 right-0 z-40 bg-neutral-950/98 border-b border-neutral-800 p-3 shadow-2xl space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <Search className="w-3.5 h-3.5 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -543,7 +548,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
       {/* Collapsible Mobile Bottom Tab Bar */}
       <nav
         aria-hidden={!isBottomNavOpen}
-        className={`lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800/80 px-2 py-1.5 flex items-center justify-around pb-safe transition-[transform,opacity] duration-200 ease-out [transform:translateZ(0)] ${
+        className={`lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800/80 px-1 py-1.5 flex items-center justify-between gap-0.5 pb-safe transition-[transform,opacity] duration-200 ease-out [transform:translateZ(0)] ${
           isBottomNavOpen
             ? 'translate-y-0 opacity-100 pointer-events-auto'
             : 'translate-y-full opacity-0 pointer-events-none'
@@ -552,21 +557,23 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
         <button
           type="button"
           onClick={() => onSelectTab('foryou')}
-          className={`flex flex-col items-center gap-0.5 min-w-[48px] min-h-[44px] justify-center transition-colors ${
+          className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 min-h-[44px] justify-center transition-colors cursor-pointer ${
             currentTab === 'foryou' ? 'text-pink-400 font-bold' : 'text-neutral-400 hover:text-white'
           }`}
         >
-          <Home className="w-5 h-5" />
-          <span className="text-[10px]">Home</span>
+          <Home className="w-[18px] h-[18px] shrink-0" />
+          <span className="text-[9.5px] leading-tight truncate max-w-full">Home</span>
         </button>
 
         <button
           type="button"
           onClick={onOpenTrends}
-          className="flex flex-col items-center gap-0.5 min-w-[48px] min-h-[44px] justify-center transition-colors text-amber-400 hover:text-amber-300 active:scale-95"
+          className="flex-1 min-w-0 flex flex-col items-center gap-0.5 min-h-[44px] justify-center transition-colors text-amber-400 hover:text-amber-300 active:scale-95 cursor-pointer"
         >
-          <Compass className="w-5 h-5 text-amber-400" />
-          <span className="text-[10px] font-bold text-amber-300">Trends</span>
+          <Compass className="w-[18px] h-[18px] text-amber-400 shrink-0" />
+          <span className="text-[9.5px] leading-tight font-bold text-amber-300 truncate max-w-full">
+            Trends
+          </span>
         </button>
 
         {/* Option 1: Live Video Recording with capture="environment" */}
@@ -594,7 +601,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
         <button
           type="button"
           onClick={() => setIsUploadSheetOpen(true)}
-          className="relative flex items-center justify-center p-1 active:scale-90 transition-transform group"
+          className="relative shrink-0 flex items-center justify-center px-1 py-1 active:scale-90 transition-transform group cursor-pointer"
           aria-label="Upload or Record Reel"
           title="Create Reel: Record Live Video or Choose from Gallery"
         >
@@ -602,35 +609,54 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-pink-500/40 via-purple-600/40 to-cyan-400/40 blur-xs group-hover:scale-110 transition-transform animate-pulse" />
 
           {/* Heavy Bezel Shutter */}
-          <div className="relative w-12 h-9 rounded-xl bg-gradient-to-tr from-pink-600 via-rose-500 to-amber-500 p-0.5 shadow-lg shadow-pink-600/50 flex items-center justify-center border border-pink-300/40">
-            <div className="w-full h-full bg-black/40 rounded-[10px] flex items-center justify-center gap-1 text-white">
-              <Camera className="w-4 h-4 text-white group-hover:text-pink-200 transition-colors" />
-              <Plus className="w-3.5 h-3.5 stroke-[3] text-pink-300" />
+          <div className="relative w-11 h-8 rounded-xl bg-gradient-to-tr from-pink-600 via-rose-500 to-amber-500 p-0.5 shadow-lg shadow-pink-600/50 flex items-center justify-center border border-pink-300/40">
+            <div className="w-full h-full bg-black/40 rounded-[9px] flex items-center justify-center gap-0.5 text-white">
+              <Camera className="w-3.5 h-3.5 text-white group-hover:text-pink-200 transition-colors" />
+              <Plus className="w-3 h-3 stroke-[3] text-pink-300" />
             </div>
           </div>
         </button>
 
-        {/* Dedicated CapCut-Style Video & Photo Templates Tab Button (Replaces duplicate Movie tab) */}
+        {/* Global YouTube / Movies & Dramas Hub Tab (right next to Templates) */}
+        <button
+          type="button"
+          onClick={() => onSelectTab('downloads')}
+          className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 min-h-[44px] justify-center transition-colors cursor-pointer ${
+            currentTab === 'downloads'
+              ? 'text-red-400 font-bold'
+              : 'text-neutral-300 hover:text-white'
+          }`}
+          title="YouTube, Movies, Dramas & Songs Hub"
+        >
+          <Youtube
+            className={`w-[18px] h-[18px] shrink-0 ${
+              currentTab === 'downloads' ? 'text-red-400' : 'text-rose-400'
+            }`}
+          />
+          <span className="text-[9.5px] leading-tight truncate max-w-full">YouTube</span>
+        </button>
+
+        {/* Dedicated CapCut-Style Video & Photo Templates Tab Button (Right beside YouTube) */}
         <button
           type="button"
           onClick={() => onSelectTab('templates')}
-          className={`flex flex-col items-center gap-0.5 min-w-[48px] min-h-[44px] justify-center transition-colors ${
+          className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 min-h-[44px] justify-center transition-colors cursor-pointer ${
             currentTab === 'templates' ? 'text-pink-400 font-bold' : 'text-neutral-400 hover:text-white'
           }`}
           title="Video & Photo Templates Studio"
         >
           <Wand2
-            className={`w-5 h-5 ${
+            className={`w-[18px] h-[18px] shrink-0 ${
               currentTab === 'templates' ? 'text-pink-400' : 'text-cyan-400'
             }`}
           />
-          <span className="text-[10px]">Templates</span>
+          <span className="text-[9.5px] leading-tight truncate max-w-full">Templates</span>
         </button>
 
         <button
           type="button"
           onClick={() => onSelectTab('profile')}
-          className={`relative flex flex-col items-center gap-0.5 min-w-[48px] min-h-[44px] justify-center transition-colors ${
+          className={`relative flex-1 min-w-0 flex flex-col items-center gap-0.5 min-h-[44px] justify-center transition-colors cursor-pointer ${
             currentTab === 'profile' ? 'text-pink-400 font-bold' : 'text-neutral-400 hover:text-white'
           }`}
           title="Creator Profile & Uploaded Videos"
@@ -639,17 +665,17 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
             <img
               src={currentUser?.avatar || creatorAvatar}
               alt="Profile"
-              className={`w-5 h-5 rounded-full object-cover border ${
+              className={`w-[18px] h-[18px] rounded-full object-cover border shrink-0 ${
                 currentTab === 'profile' ? 'border-pink-400 ring-2 ring-pink-500/30' : 'border-neutral-600'
               }`}
               referrerPolicy="no-referrer"
             />
           ) : (
-            <User className="w-5 h-5" />
+            <User className="w-[18px] h-[18px] shrink-0" />
           )}
-          <span className="text-[10px]">Profile</span>
+          <span className="text-[9.5px] leading-tight truncate max-w-full">Profile</span>
           {savedCount > 0 && currentTab !== 'profile' && (
-            <span className="absolute top-1 right-2 w-1.5 h-1.5 rounded-full bg-pink-500" />
+            <span className="absolute top-1.5 right-2.5 w-1.5 h-1.5 rounded-full bg-pink-500" />
           )}
         </button>
       </nav>

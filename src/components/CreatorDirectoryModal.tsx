@@ -23,6 +23,7 @@ import {
   VideoPost,
 } from '../types';
 import { advancedSearchAll } from '../lib/supabaseService';
+import { SocialEdgesMap, buildMergedSocialEdges, getFollowRelationship } from '../lib/socialGraph';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 import { soundEngine } from '../utils/soundEngine';
 import { sanitizeSearchQuery } from '../utils/security';
@@ -32,6 +33,7 @@ interface CreatorDirectoryModalProps {
   onClose: () => void;
   videos: VideoPost[];
   ownProfile: CreatorProfileData;
+  socialEdges?: SocialEdgesMap;
   onSelectCreator: (username: string) => void;
   onPlayVideo?: (videoId: string) => void;
   onFollowToggle: (username: string) => void;
@@ -51,11 +53,12 @@ export const CreatorDirectoryModal: React.FC<CreatorDirectoryModalProps> = ({
   onClose,
   videos,
   ownProfile,
+  socialEdges,
   onSelectCreator,
   onPlayVideo,
   onFollowToggle,
-  onShowToast,
 }) => {
+  const activeEdges = socialEdges || buildMergedSocialEdges(ownProfile.username);
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState<SearchCategoryTab>('all');
   const [creators, setCreators] = useState<CreatorChannelSummary[]>([]);
@@ -323,30 +326,44 @@ export const CreatorDirectoryModal: React.FC<CreatorDirectoryModalProps> = ({
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
-                            {!isOwn && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onFollowToggle(channel.username);
-                                  onShowToast(
-                                    channel.isFollowing
-                                      ? `Unfollowed @${channel.username}`
-                                      : `Followed @${channel.username}`
-                                  );
-                                }}
-                                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 border transition-all cursor-pointer ${
-                                  channel.isFollowing
-                                    ? 'bg-neutral-800 text-emerald-300 border-emerald-500/40'
-                                    : 'bg-gradient-to-r from-pink-600 to-rose-600 text-white border-pink-400/40'
-                                }`}
-                              >
-                                {channel.isFollowing ? <Check className="w-3 h-3" /> : <UserPlus className="w-3 h-3" />}
-                                <span className="hidden sm:inline">
-                                  {channel.isFollowing ? 'Following' : 'Follow'}
-                                </span>
-                              </button>
-                            )}
+                            {!isOwn && (() => {
+                              const rel = getFollowRelationship(ownProfile.username, channel.username, activeEdges);
+                              const isFollowing = rel.isFollowing || channel.isFollowing;
+                              const isMutual = rel.isMutualFriend;
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onFollowToggle(channel.username);
+                                  }}
+                                  className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 border transition-all cursor-pointer ${
+                                    isMutual
+                                      ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50'
+                                      : isFollowing
+                                      ? 'bg-neutral-800 text-emerald-300 border-emerald-500/40'
+                                      : 'bg-gradient-to-r from-pink-600 to-rose-600 text-white border-pink-400/40'
+                                  }`}
+                                >
+                                  {isMutual ? (
+                                    <Users className="w-3 h-3" />
+                                  ) : isFollowing ? (
+                                    <Check className="w-3 h-3" />
+                                  ) : (
+                                    <UserPlus className="w-3 h-3" />
+                                  )}
+                                  <span className="hidden sm:inline">
+                                    {isMutual
+                                      ? 'Friends'
+                                      : isFollowing
+                                      ? 'Following'
+                                      : rel.isFollower
+                                      ? 'Follow Back'
+                                      : 'Follow'}
+                                  </span>
+                                </button>
+                              );
+                            })()}
 
                             <button
                               type="button"
