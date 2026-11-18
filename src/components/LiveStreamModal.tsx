@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { UserAccount } from '../types';
 import { soundEngine } from '../utils/soundEngine';
+import { sanitizeInputLive, sanitizeText } from '../utils/security';
 
 interface LiveStreamModalProps {
   isOpen: boolean;
@@ -207,10 +208,11 @@ export const LiveStreamModal: React.FC<LiveStreamModalProps> = ({
 
   const handleSendComment = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    const cleanText = sanitizeText(inputText, 300);
+    if (!cleanText) return;
 
-    const myName = currentUser?.name || 'You';
-    const myUsername = currentUser?.username || 'you';
+    const myName = sanitizeText(currentUser?.name || 'You', 60) || 'You';
+    const myUsername = sanitizeText(currentUser?.username || 'you', 40) || 'you';
     const myAvatar =
       currentUser?.avatar ||
       'https://api.dicebear.com/7.x/bottts/svg?seed=YouLive&backgroundColor=ec4899';
@@ -220,7 +222,7 @@ export const LiveStreamModal: React.FC<LiveStreamModalProps> = ({
       user: myName,
       username: myUsername,
       avatar: myAvatar,
-      text: inputText.trim(),
+      text: cleanText,
       isHost: true,
       badge: 'Host',
     };
@@ -593,7 +595,7 @@ export const LiveStreamModal: React.FC<LiveStreamModalProps> = ({
                 <input
                   type="text"
                   value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
+                  onChange={(e) => setInputText(sanitizeInputLive(e.target.value, 300))}
                   placeholder="Say something nice in chat..."
                   className="flex-1 bg-neutral-900/90 text-xs text-white placeholder-neutral-500 px-3.5 py-2.5 rounded-full border border-neutral-700/60 focus:outline-hidden focus:border-pink-500 transition-colors"
                 />

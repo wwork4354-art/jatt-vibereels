@@ -20,6 +20,7 @@ const VALID_TABS: ReadonlySet<FeedTab> = new Set<FeedTab>([
   'saved',
   'live',
   'downloads',
+  'templates',
   'profile',
   'activity',
   'channel',

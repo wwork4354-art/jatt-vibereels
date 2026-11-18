@@ -3,6 +3,7 @@ import { X, Heart, Send, Sparkles } from 'lucide-react';
 import { CommentItem } from '../types';
 import { soundEngine } from '../utils/soundEngine';
 import { formatExactTimestamp, formatRelativeTime } from '../lib/supabaseService';
+import { sanitizeInputLive, sanitizeText } from '../utils/security';
 
 interface CommentsDrawerProps {
   isOpen: boolean;
@@ -34,8 +35,9 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
-    onAddComment(inputText.trim());
+    const clean = sanitizeText(inputText, 400);
+    if (!clean) return;
+    onAddComment(clean);
     setInputText('');
     soundEngine.playCommentSound();
   };
@@ -211,7 +213,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
           <input
             type="text"
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+            onChange={(e) => setInputText(sanitizeInputLive(e.target.value, 400))}
             placeholder={`Comment as @${activeUsername}...`}
             className="flex-1 bg-neutral-800 text-sm text-white placeholder-neutral-500 px-4 py-2.5 rounded-full border border-neutral-700/60 focus:outline-hidden focus:border-pink-500 transition-colors"
           />

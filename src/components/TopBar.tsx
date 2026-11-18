@@ -28,6 +28,8 @@ import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 import { PWAInstallButton } from './PWAInstallButton';
 import { soundEngine } from '../utils/soundEngine';
+import { isMainAdminAccount } from '../data/mockUsers';
+import { sanitizeSearchQuery } from '../utils/security';
 
 /**
  * PLACEHOLDER: Replace this URL or path with your custom logo image.
@@ -193,7 +195,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             value={searchQuery}
             onFocus={() => setIsSearchOpen(true)}
             onChange={(e) => {
-              setSearchQuery(e.target.value);
+              setSearchQuery(sanitizeSearchQuery(e.target.value, 120));
               setIsSearchOpen(true);
             }}
             placeholder="Search @ID, user, video, or song..."
@@ -547,8 +549,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           /* If Logged In */
           <div className="relative" ref={profileMenuRef}>
             <div className="flex items-center gap-2">
-              {/* Admin Panel button if role is admin */}
-              {currentUser.role === 'admin' && (
+              {/* Admin Panel button strictly for main Admin account */}
+              {isMainAdminAccount(currentUser) && (
                 <button
                   type="button"
                   onClick={onOpenAdmin}
@@ -652,7 +654,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <span>Creator Profile & Videos</span>
                     </button>
                   )}
-                  {currentUser.role === 'admin' && (
+                  {isMainAdminAccount(currentUser) && (
                     <button
                       type="button"
                       onClick={() => {

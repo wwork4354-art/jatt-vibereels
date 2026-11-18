@@ -66,6 +66,7 @@ export interface VideoPost {
   isSupabasePost?: boolean;
   userId?: string;
   mediaType?: 'video' | 'image';
+  allowDownload?: boolean;
   createdAt?: string;
   sound: {
     title: string;
@@ -107,12 +108,17 @@ export interface UserAccount {
   name: string;
   username: string;
   email: string;
+  phone?: string;
   avatar: string;
   role: UserRole;
   status: UserStatus;
   joinedAt: string;
+  createdAtIso?: string;
+  lastActiveAt?: string;
+  isOnline?: boolean;
   videosCount: number;
   bio?: string;
+  passwordHash?: string;
 }
 
 export interface CreatorProfileData {
@@ -149,6 +155,7 @@ export type FeedTab =
   | 'saved'
   | 'live'
   | 'downloads'
+  | 'templates'
   | 'profile'
   | 'activity'
   | 'channel';

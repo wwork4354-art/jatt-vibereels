@@ -6,10 +6,12 @@ import {
   CreatorChannelSummary,
   CreatorProfileData,
   InteractionType,
+  UserAccount,
   VideoPost,
 } from '../types';
 import { searchAudioLibrary } from '../data/audioLibrary';
 import { removeOfflineSavedPost } from './offlineMediaStore';
+import { sanitizeText, sanitizeUsername, sanitizeSafeUrl } from '../utils/security';
 
 export const USER_PROFILE_ID_KEY = 'jatt_user_profile_id';
 export const LIKED_POST_IDS_KEY = 'jatt_liked_post_ids';
@@ -25,6 +27,9 @@ export const CREATOR_PROFILE_VIEWS_KEY = 'jatt_creator_profile_views_v1';
 export const CREATOR_FOLLOWER_DELTAS_KEY = 'jatt_creator_follower_deltas_v1';
 export const CREATOR_DIRECTORY_CACHE_KEY = 'jatt_creator_directory_v1';
 export const POST_AUDIO_META_KEY = 'jatt_post_audio_meta_v1';
+export const POST_PRIVACY_META_KEY = 'jatt_post_privacy_v1';
+export const NO_DOWNLOAD_CAPTION_MARKER = '[[PRIVATE_NO_DL]]';
+export const USERS_BROADCAST_CHANNEL = 'jatt_vibereels_users_live_v1';
 
 export interface SupabasePostRow {
   id: string;
@@ -35,6 +40,7 @@ export interface SupabasePostRow {
   media_url: string;
   media_type: 'video' | 'image' | string;
   caption: string;
+  allow_download?: boolean;
   likes_count: number;
   views_count?: number;
   comments_count?: number;
@@ -96,6 +102,7 @@ const schemaCapabilities = {
   postsHasDownloads: true,
   postsHasShares: true,
   postsHasAudioUrl: false,
+  postsHasAllowDownload: false,
   profilesTableAvailable: true,
   commentsTableAvailable: true,
   interactionsTableAvailable: true,
@@ -121,6 +128,7 @@ function detectPostsColumns(rows: Record<string, unknown>[]): void {
   if ('downloads_count' in sample) schemaCapabilities.postsHasDownloads = true;
   if ('shares_count' in sample) schemaCapabilities.postsHasShares = true;
   if ('audio_url' in sample) schemaCapabilities.postsHasAudioUrl = true;
+  if ('allow_download' in sample) schemaCapabilities.postsHasAllowDownload = true;
 }
 
 export function getSchemaSyncStatus() {
@@ -497,6 +505,48 @@ function extractHashtags(caption: string): string[] {
   return matches.map((tag) => tag.replace(/^#/, '').toLowerCase());
 }
 
+export function getStoredPostPrivacyMap(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(POST_PRIVACY_META_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function savePostPrivacyMeta(keys: (string | undefined)[], allowDownload: boolean): void {
+  try {
+    const map = getStoredPostPrivacyMap();
+    for (const k of keys) {
+      if (k && typeof k === 'string') {
+        map[k] = allowDownload;
+      }
+    }
+    localStorage.setItem(POST_PRIVACY_META_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function getPostAllowDownload(postId: string, mediaUrl?: string): boolean {
+  const map = getStoredPostPrivacyMap();
+  if (typeof map[postId] === 'boolean') return map[postId];
+  if (mediaUrl && typeof map[mediaUrl] === 'boolean') return map[mediaUrl];
+  return true;
+}
+
+export function stripPrivateCaptionMarker(rawCaption: string): {
+  cleanCaption: string;
+  isPrivate: boolean;
+} {
+  if (!rawCaption) return { cleanCaption: 'Shared on Jatt VibeReels', isPrivate: false };
+  const isPrivate = rawCaption.includes(NO_DOWNLOAD_CAPTION_MARKER);
+  const cleanCaption = rawCaption.split(NO_DOWNLOAD_CAPTION_MARKER).join('').trim() || 'Shared on Jatt VibeReels';
+  return { cleanCaption, isPrivate };
+}
+
 export function mapSupabaseRowToVideoPost(
   row: SupabasePostRow,
   likedIds: Set<string>,
@@ -506,10 +556,22 @@ export function mapSupabaseRowToVideoPost(
   currentUsername?: string
 ): VideoPost {
   const id = String(row.id);
-  const caption = row.caption || 'Shared on Jatt VibeReels';
-  const displayName = row.display_name || row.username || 'VibeReels Creator';
-  const username = row.username || 'creator';
+  const { cleanCaption: rawCaption, isPrivate: hasPrivateMarker } = stripPrivateCaptionMarker(
+    row.caption || 'Shared on Jatt VibeReels'
+  );
+  const caption = sanitizeText(rawCaption, 500) || 'Shared on Jatt VibeReels';
+  const allowDownload =
+    row.allow_download === false || hasPrivateMarker
+      ? false
+      : getPostAllowDownload(id, row.media_url);
+  const username = sanitizeUsername(row.username || 'creator') || 'creator';
+  const displayName = sanitizeText(row.display_name || username, 60) || username;
   const mediaType = row.media_type === 'image' ? 'image' : 'video';
+  const safeMediaUrl = sanitizeSafeUrl(row.media_url || '') || '';
+  const safeAvatarUrl =
+    sanitizeSafeUrl(row.avatar_url || '') ||
+    'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+  const safeAudioUrl = row.audio_url ? sanitizeSafeUrl(row.audio_url) : '';
 
   const metricsMap = getStoredPostMetrics();
   const metricOverride = metricsMap[id] || {};
@@ -529,15 +591,15 @@ export function mapSupabaseRowToVideoPost(
     (Boolean(currentUsername) &&
       username.toLowerCase() === currentUsername!.toLowerCase());
 
-  const savedAudio = getPostAudioMeta(id, row.media_url);
+  const savedAudio = getPostAudioMeta(id, safeMediaUrl);
   const resolvedSound: VideoPost['sound'] = savedAudio
     ? savedAudio
-    : row.audio_url || row.audio_title
+    : safeAudioUrl || row.audio_title
     ? {
-        title: row.audio_title || `${displayName}'s Attached Audio`,
-        artist: row.audio_artist || displayName,
+        title: sanitizeText(row.audio_title || `${displayName}'s Attached Audio`, 100),
+        artist: sanitizeText(row.audio_artist || displayName, 60),
         trackType: 'future_bass',
-        audioUrl: row.audio_url || undefined,
+        audioUrl: safeAudioUrl || undefined,
         category:
           row.audio_category === 'naat' ||
           row.audio_category === 'song' ||
@@ -565,21 +627,20 @@ export function mapSupabaseRowToVideoPost(
     title: caption.slice(0, 60),
     description: caption,
     hashtags: extractHashtags(caption),
-    videoUrl: row.media_url,
-    posterUrl: mediaType === 'image' ? row.media_url : undefined,
+    videoUrl: safeMediaUrl,
+    posterUrl: mediaType === 'image' ? safeMediaUrl : undefined,
     fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
     category: 'trending',
     userId: row.user_id,
     mediaType,
+    allowDownload,
     isSupabasePost: true,
     isUserUploaded: isOwnPost,
     createdAt: row.created_at,
     creator: {
       name: displayName,
       username,
-      avatar:
-        row.avatar_url ||
-        'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
+      avatar: safeAvatarUrl,
       isVerified: true,
       isFollowing: followedUsernames.has(username),
       bio: 'Creator on Jatt VibeReels',
@@ -744,6 +805,7 @@ export async function createGlobalPostInSupabase(params: {
   mediaUrl: string;
   mediaType: 'video' | 'image';
   caption: string;
+  allowDownload?: boolean;
   sound?: VideoPost['sound'];
 }): Promise<VideoPost | null> {
   if (!supabase || !isSupabaseConfigured) {
@@ -751,25 +813,41 @@ export async function createGlobalPostInSupabase(params: {
   }
 
   try {
+    const allowDl = params.allowDownload !== false;
+    const safeCaption = sanitizeText(params.caption, 480) || 'Shared on Jatt VibeReels';
+    const safeUsername = sanitizeUsername(params.username) || 'creator';
+    const safeDisplayName = sanitizeText(params.displayName, 60) || safeUsername;
+    const safeAvatarUrl =
+      sanitizeSafeUrl(params.avatarUrl) ||
+      'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+    const safeMediaUrl = sanitizeSafeUrl(params.mediaUrl);
+    if (!safeMediaUrl) return null;
+
+    const encodedCaption = allowDl
+      ? safeCaption
+      : `${safeCaption} ${NO_DOWNLOAD_CAPTION_MARKER}`.trim();
+
     const basePayload: Record<string, unknown> = {
       user_id: params.userId,
-      username: params.username,
-      display_name: params.displayName,
-      avatar_url: params.avatarUrl,
-      media_url: params.mediaUrl,
+      username: safeUsername,
+      display_name: safeDisplayName,
+      avatar_url: safeAvatarUrl,
+      media_url: safeMediaUrl,
       media_type: params.mediaType,
-      caption: params.caption,
+      caption: encodedCaption,
       likes_count: 0,
     };
 
+    if (schemaCapabilities.postsHasAllowDownload) basePayload.allow_download = allowDl;
     if (schemaCapabilities.postsHasViews) basePayload.views_count = 0;
     if (schemaCapabilities.postsHasComments) basePayload.comments_count = 0;
     if (schemaCapabilities.postsHasSaves) basePayload.saves_count = 0;
     if (schemaCapabilities.postsHasDownloads) basePayload.downloads_count = 0;
     if (schemaCapabilities.postsHasAudioUrl && params.sound) {
-      if (params.sound.audioUrl) basePayload.audio_url = params.sound.audioUrl;
-      basePayload.audio_title = params.sound.title;
-      basePayload.audio_artist = params.sound.artist;
+      const safeAudioUrl = params.sound.audioUrl ? sanitizeSafeUrl(params.sound.audioUrl) : '';
+      if (safeAudioUrl) basePayload.audio_url = safeAudioUrl;
+      basePayload.audio_title = sanitizeText(params.sound.title, 100);
+      basePayload.audio_artist = sanitizeText(params.sound.artist, 60);
       basePayload.audio_category = params.sound.category || 'original';
       if (typeof params.sound.originalVolume === 'number') {
         basePayload.original_volume = params.sound.originalVolume;
@@ -790,14 +868,15 @@ export async function createGlobalPostInSupabase(params: {
       schemaCapabilities.postsHasComments = false;
       schemaCapabilities.postsHasSaves = false;
       schemaCapabilities.postsHasDownloads = false;
+      schemaCapabilities.postsHasAllowDownload = false;
       const minimalPayload = {
         user_id: params.userId,
-        username: params.username,
-        display_name: params.displayName,
-        avatar_url: params.avatarUrl,
-        media_url: params.mediaUrl,
+        username: safeUsername,
+        display_name: safeDisplayName,
+        avatar_url: safeAvatarUrl,
+        media_url: safeMediaUrl,
         media_type: params.mediaType,
-        caption: params.caption,
+        caption: encodedCaption,
         likes_count: 0,
       };
       const retry = await supabase.from('posts').insert([minimalPayload]).select().single();
@@ -1070,23 +1149,36 @@ export function saveLocalCreatorDirectoryEntry(profile: CreatorProfileData): voi
 export async function upsertUserProfileInSupabase(
   profile: CreatorProfileData
 ): Promise<boolean> {
-  const cleanUsername = normalizeCreatorUsername(profile.username) || profile.username;
-  saveLocalCreatorDirectoryEntry({ ...profile, username: cleanUsername });
+  const cleanUsername =
+    normalizeCreatorUsername(profile.username) || sanitizeUsername(profile.username) || 'creator';
+  const safeName = sanitizeText(profile.name, 60) || cleanUsername;
+  const safeBio = sanitizeText(profile.bio, 250);
+  const safeAvatar =
+    sanitizeSafeUrl(profile.avatar) ||
+    'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+  const safeProfile: CreatorProfileData = {
+    ...profile,
+    name: safeName,
+    username: cleanUsername,
+    bio: safeBio,
+    avatar: safeAvatar,
+  };
+  saveLocalCreatorDirectoryEntry(safeProfile);
 
   // Also sync creator display_name / username / avatar in local user posts cache
   try {
     const localPosts = getStoredLocalPosts();
     if (localPosts.length > 0) {
       const updatedLocal = localPosts.map((p) =>
-        p.userId === profile.id || p.isUserUploaded
+        p.userId === safeProfile.id || p.isUserUploaded
           ? {
               ...p,
               creator: {
                 ...p.creator,
-                name: profile.name,
+                name: safeProfile.name,
                 username: cleanUsername,
-                avatar: profile.avatar,
-                bio: profile.bio,
+                avatar: safeProfile.avatar,
+                bio: safeProfile.bio,
               },
             }
           : p
@@ -1105,12 +1197,12 @@ export async function upsertUserProfileInSupabase(
   try {
     if (schemaCapabilities.profilesTableAvailable) {
       const { error } = await supabase.from('profiles').upsert({
-        id: profile.id,
+        id: safeProfile.id,
         username: cleanUsername,
-        display_name: profile.name,
-        bio: profile.bio,
-        avatar_url: profile.avatar,
-        followers_count: profile.baseFollowers,
+        display_name: safeProfile.name,
+        bio: safeProfile.bio,
+        avatar_url: safeProfile.avatar,
+        followers_count: safeProfile.baseFollowers,
         updated_at: new Date().toISOString(),
       });
       if (error && isMissingRelationError(error)) {
@@ -1124,11 +1216,11 @@ export async function upsertUserProfileInSupabase(
     const { error: postsErr } = await supabase
       .from('posts')
       .update({
-        display_name: profile.name,
+        display_name: safeProfile.name,
         username: cleanUsername,
-        avatar_url: profile.avatar,
+        avatar_url: safeProfile.avatar,
       })
-      .eq('user_id', profile.id);
+      .eq('user_id', safeProfile.id);
     if (!postsErr) {
       didSync = true;
     }
@@ -1486,19 +1578,22 @@ export async function searchCreatorsDirectory(
 // Comments Sync (Supabase `post_comments` + Local Persistence)
 // =========================================================================
 export function mapSupabaseCommentRow(row: SupabaseCommentRow): CommentItem {
+  const safeUsername = sanitizeUsername(row.author_username || 'user') || 'user';
+  const safeName = sanitizeText(row.author_name || safeUsername || 'VibeReels User', 60);
+  const safeAvatar =
+    sanitizeSafeUrl(row.author_avatar || '') ||
+    `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(
+      safeUsername
+    )}&backgroundColor=ec4899`;
   return {
     id: String(row.id),
     user: {
-      name: row.author_name || row.author_username || 'VibeReels User',
-      username: row.author_username || 'user',
-      avatar:
-        row.author_avatar ||
-        `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(
-          row.author_username || 'user'
-        )}&backgroundColor=ec4899`,
+      name: safeName,
+      username: safeUsername,
+      avatar: safeAvatar,
       isVerified: false,
     },
-    text: row.text,
+    text: sanitizeText(row.text || '', 500),
     timestamp: formatRelativeTime(row.created_at),
     createdAt: row.created_at,
     likes: typeof row.likes_count === 'number' ? row.likes_count : 0,
@@ -1568,15 +1663,20 @@ export async function createCommentInSupabase(params: {
   }
 
   try {
+    const safeAuthorUsername = sanitizeUsername(params.comment.user.username) || 'user';
+    const safeAuthorName = sanitizeText(params.comment.user.name, 60) || safeAuthorUsername;
+    const safeText = sanitizeText(params.comment.text, 500);
+    if (!safeText) return;
+
     const { error } = await supabase.from('post_comments').insert([
       {
         id: params.comment.id,
         post_id: params.postId,
         user_id: params.userId,
-        author_name: params.comment.user.name,
-        author_username: params.comment.user.username,
-        author_avatar: params.comment.user.avatar,
-        text: params.comment.text,
+        author_name: safeAuthorName,
+        author_username: safeAuthorUsername,
+        author_avatar: sanitizeSafeUrl(params.comment.user.avatar),
+        text: safeText,
         likes_count: 0,
         created_at: params.comment.createdAt || new Date().toISOString(),
       },
@@ -1593,24 +1693,27 @@ export async function createCommentInSupabase(params: {
 // Creator Activity / Interactions Tracking (Likes, Comments, Saves, Downloads)
 // =========================================================================
 export function mapSupabaseInteractionRow(row: SupabaseInteractionRow): ActivityEvent {
+  const safeActorUsername = sanitizeUsername(row.actor_username || 'viewer') || 'viewer';
   return {
     id: String(row.id),
     postId: String(row.post_id),
-    postTitle: row.post_title || 'Reel Post',
-    postThumbnail: row.post_thumbnail || undefined,
+    postTitle: sanitizeText(row.post_title || 'Reel Post', 100) || 'Reel Post',
+    postThumbnail: row.post_thumbnail ? sanitizeSafeUrl(row.post_thumbnail) || undefined : undefined,
     postMediaType: row.post_media_type === 'image' ? 'image' : 'video',
     postOwnerId: row.post_owner_id || undefined,
-    postOwnerUsername: row.post_owner_username || undefined,
+    postOwnerUsername: row.post_owner_username
+      ? sanitizeUsername(row.post_owner_username) || undefined
+      : undefined,
     actorId: row.actor_id,
-    actorName: row.actor_name || row.actor_username || 'Viewer',
-    actorUsername: row.actor_username || 'viewer',
+    actorName: sanitizeText(row.actor_name || safeActorUsername || 'Viewer', 60) || 'Viewer',
+    actorUsername: safeActorUsername,
     actorAvatar:
-      row.actor_avatar ||
+      sanitizeSafeUrl(row.actor_avatar || '') ||
       `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(
-        row.actor_username || 'viewer'
+        safeActorUsername
       )}&backgroundColor=06b6d4`,
     type: row.interaction_type,
-    commentText: row.comment_text || undefined,
+    commentText: row.comment_text ? sanitizeText(row.comment_text, 500) || undefined : undefined,
     createdAt: row.created_at || new Date().toISOString(),
   };
 }
@@ -1656,6 +1759,18 @@ export async function recordActivityEventInSupabase(
 ): Promise<ActivityEvent> {
   const newEvent: ActivityEvent = {
     ...eventInput,
+    postTitle: sanitizeText(eventInput.postTitle, 100) || 'Reel Post',
+    postThumbnail: eventInput.postThumbnail
+      ? sanitizeSafeUrl(eventInput.postThumbnail) || undefined
+      : undefined,
+    actorName: sanitizeText(eventInput.actorName, 60) || 'Viewer',
+    actorUsername: sanitizeUsername(eventInput.actorUsername) || 'viewer',
+    actorAvatar:
+      sanitizeSafeUrl(eventInput.actorAvatar) ||
+      'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
+    commentText: eventInput.commentText
+      ? sanitizeText(eventInput.commentText, 500) || undefined
+      : undefined,
     id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     createdAt: new Date().toISOString(),
   };
@@ -1781,6 +1896,24 @@ export async function deletePostEverywhere(params: {
     }
     if (changed) {
       localStorage.setItem(POST_AUDIO_META_KEY, JSON.stringify(audioMap));
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const privacyMap = getStoredPostPrivacyMap();
+    let pChanged = false;
+    if (postId in privacyMap) {
+      delete privacyMap[postId];
+      pChanged = true;
+    }
+    if (mediaUrl && mediaUrl in privacyMap) {
+      delete privacyMap[mediaUrl];
+      pChanged = true;
+    }
+    if (pChanged) {
+      localStorage.setItem(POST_PRIVACY_META_KEY, JSON.stringify(privacyMap));
     }
   } catch {
     // ignore
@@ -1926,4 +2059,124 @@ export async function advancedSearchAll(
     posts,
     audioTracks: [...curatedMatches, ...customPostTracks],
   };
+}
+
+// =========================================================================
+// Live Registered Users Sync (Cross-Tab Broadcast + Supabase Profiles Sync)
+// =========================================================================
+export function broadcastUsersSync(users: UserAccount[]): void {
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const ch = new BroadcastChannel(USERS_BROADCAST_CHANNEL);
+      ch.postMessage({ type: 'USERS_SYNC', users });
+      ch.close();
+    }
+  } catch {
+    // ignore BroadcastChannel failures
+  }
+}
+
+export async function syncRegisteredUserToCloud(user: UserAccount): Promise<void> {
+  const cleanUsername = normalizeCreatorUsername(user.username);
+  if (!cleanUsername) return;
+
+  saveLocalCreatorDirectoryEntry({
+    id: user.id,
+    name: user.name,
+    username: cleanUsername,
+    bio: user.bio || 'VibeReels Member',
+    avatar: user.avatar,
+    baseFollowers: 0,
+    isVerified: user.role === 'creator' || user.role === 'admin',
+  });
+
+  const isOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
+  if (!isOnline || !supabase || !isSupabaseConfigured || !schemaCapabilities.profilesTableAvailable) {
+    return;
+  }
+
+  // Encode contact & registration metadata safely so profiles table works without extra migrations
+  const contactTag = [user.email || '', user.phone || ''].filter(Boolean).join(' · ');
+  const metaBio = contactTag
+    ? `${user.bio || 'VibeReels Member'} [[USER_META:${user.createdAtIso || new Date().toISOString()}|${contactTag}|${user.role}]]`
+    : user.bio || 'VibeReels Member';
+
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .upsert(
+        {
+          id: user.id,
+          username: cleanUsername,
+          display_name: user.name,
+          bio: metaBio,
+          avatar_url: user.avatar,
+          updated_at: user.lastActiveAt || new Date().toISOString(),
+        },
+        { onConflict: 'username' }
+      );
+    if (error && isMissingRelationError(error)) {
+      schemaCapabilities.profilesTableAvailable = false;
+    }
+  } catch {
+    // ignore optional cloud sync failure
+  }
+}
+
+export async function fetchRegisteredUsersFromCloud(): Promise<UserAccount[]> {
+  if (!supabase || !isSupabaseConfigured || !schemaCapabilities.profilesTableAvailable) {
+    return [];
+  }
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, username, display_name, bio, avatar_url, updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(200);
+
+    if (error) {
+      if (isMissingRelationError(error)) {
+        schemaCapabilities.profilesTableAvailable = false;
+      }
+      return [];
+    }
+    if (!Array.isArray(data)) return [];
+
+    return data.map((row) => {
+      const rawBio = String(row.bio || '');
+      const metaMatch = rawBio.match(/\[\[USER_META:([^|\]]*)\|([^|\]]*)\|([^\]]*)\]\]/);
+      const createdAtIso = metaMatch?.[1] || (row.updated_at ? String(row.updated_at) : undefined);
+      const contactRaw = metaMatch?.[2] || '';
+      const roleRaw = metaMatch?.[3] || 'user';
+      const cleanBio = rawBio.replace(/\[\[USER_META:[^\]]*\]\]/g, '').trim();
+      const contactParts = contactRaw.split(' · ').map((s) => s.trim()).filter(Boolean);
+      const emailPart = contactParts.find((c) => c.includes('@')) || `${row.username}@vibereels.app`;
+      const phonePart = contactParts.find((c) => !c.includes('@'));
+      const cleanRole =
+        roleRaw === 'creator' ? 'creator' : roleRaw === 'admin' && row.username === 'admin' ? 'admin' : 'user';
+      const joinedLabel = createdAtIso
+        ? new Date(createdAtIso).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+        : 'Nov 2026';
+
+      return {
+        id: String(row.id || `usr-cloud-${row.username}`),
+        name: String(row.display_name || row.username || 'User'),
+        username: String(row.username || 'user'),
+        email: emailPart,
+        phone: phonePart,
+        avatar:
+          String(row.avatar_url || '') ||
+          `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(String(row.username || 'user'))}&backgroundColor=06b6d4`,
+        role: cleanRole,
+        status: 'active',
+        joinedAt: joinedLabel,
+        createdAtIso,
+        lastActiveAt: row.updated_at ? String(row.updated_at) : createdAtIso,
+        videosCount: 0,
+        bio: cleanBio || 'VibeReels Member',
+      };
+    });
+  } catch {
+    return [];
+  }
 }

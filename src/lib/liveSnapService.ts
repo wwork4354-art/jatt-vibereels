@@ -13,6 +13,7 @@ import {
   searchCreatorsDirectory,
   uploadMediaToReelsBucket,
 } from './supabaseService';
+import { sanitizeText, sanitizeUsername, sanitizeSafeUrl } from '../utils/security';
 
 const LIVE_STORIES_STORAGE_KEY = 'jatt_live_stories_v1';
 const DIRECT_SNAPS_STORAGE_KEY = 'jatt_direct_snaps_v1';
@@ -104,26 +105,33 @@ export async function fetchActiveLiveStories(): Promise<LiveStoryItem[]> {
     if (!Array.isArray(data)) return localStories;
 
     const remoteStories: LiveStoryItem[] = data
-      .filter((row) => row && row.media_url)
-      .map((row) => ({
-        id: String(row.id),
-        userId: String(row.user_id || ''),
-        username: String(row.username || 'creator'),
-        displayName: String(row.display_name || row.username || 'Creator'),
-        avatarUrl:
-          String(row.avatar_url || '') ||
-          `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(
-            String(row.username || 'creator')
-          )}&backgroundColor=ec4899`,
-        mediaUrl: String(row.media_url),
-        mediaType: row.media_type === 'image' ? 'image' : 'video',
-        caption: row.caption ? String(row.caption) : undefined,
-        filterName: row.filter_name ? String(row.filter_name) : undefined,
-        createdAt: String(row.created_at || nowIso),
-        expiresAt: String(row.expires_at || new Date(Date.now() + TWENTY_FOUR_HOURS_MS).toISOString()),
-        viewedByIds: Array.isArray(row.viewed_by_ids) ? row.viewed_by_ids.map(String) : [],
-        isSupabaseBacked: true,
-      }));
+      .filter((row) => row && row.media_url && sanitizeSafeUrl(String(row.media_url)))
+      .map((row) => {
+        const safeUsername = sanitizeUsername(String(row.username || 'creator')) || 'creator';
+        return {
+          id: String(row.id),
+          userId: String(row.user_id || ''),
+          username: safeUsername,
+          displayName: sanitizeText(String(row.display_name || safeUsername), 60) || safeUsername,
+          avatarUrl:
+            sanitizeSafeUrl(String(row.avatar_url || '')) ||
+            `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(
+              safeUsername
+            )}&backgroundColor=ec4899`,
+          mediaUrl: sanitizeSafeUrl(String(row.media_url)),
+          mediaType: row.media_type === 'image' ? 'image' : 'video',
+          caption: row.caption ? sanitizeText(String(row.caption), 160) || undefined : undefined,
+          filterName: row.filter_name
+            ? sanitizeText(String(row.filter_name), 40) || undefined
+            : undefined,
+          createdAt: String(row.created_at || nowIso),
+          expiresAt: String(
+            row.expires_at || new Date(Date.now() + TWENTY_FOUR_HOURS_MS).toISOString()
+          ),
+          viewedByIds: Array.isArray(row.viewed_by_ids) ? row.viewed_by_ids.map(String) : [],
+          isSupabaseBacked: true,
+        };
+      });
 
     const seen = new Set(remoteStories.map((s) => s.id));
     const merged = [
@@ -177,16 +185,22 @@ export async function publishLiveStory(params: {
     }
   }
 
+  const safeUsername = sanitizeUsername(params.username) || 'creator';
+  const safeDisplayName = sanitizeText(params.displayName, 60) || safeUsername;
+  const safeAvatarUrl =
+    sanitizeSafeUrl(params.avatarUrl) ||
+    'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+
   const newStory: LiveStoryItem = {
     id,
     userId: params.userId,
-    username: params.username,
-    displayName: params.displayName,
-    avatarUrl: params.avatarUrl,
-    mediaUrl: finalMediaUrl,
+    username: safeUsername,
+    displayName: safeDisplayName,
+    avatarUrl: safeAvatarUrl,
+    mediaUrl: sanitizeSafeUrl(finalMediaUrl),
     mediaType: params.mediaType,
-    caption: params.caption,
-    filterName: params.filterName,
+    caption: params.caption ? sanitizeText(params.caption, 160) || undefined : undefined,
+    filterName: params.filterName ? sanitizeText(params.filterName, 40) || undefined : undefined,
     createdAt,
     expiresAt,
     viewedByIds: [],
@@ -330,25 +344,33 @@ export async function fetchDirectSnaps(): Promise<DirectSnapMessage[]> {
 
     if (!Array.isArray(data)) return localMessages;
 
-    const remoteMessages: DirectSnapMessage[] = data.map((row) => ({
-      id: String(row.id),
-      senderId: String(row.sender_id || ''),
-      senderUsername: String(row.sender_username || ''),
-      senderName: String(row.sender_name || row.sender_username || 'User'),
-      senderAvatar: String(row.sender_avatar || ''),
-      recipientId: String(row.recipient_id || ''),
-      recipientUsername: String(row.recipient_username || ''),
-      recipientName: String(row.recipient_name || row.recipient_username || 'Friend'),
-      recipientAvatar: String(row.recipient_avatar || ''),
-      mediaUrl: String(row.media_url || ''),
-      mediaType: row.media_type === 'image' ? 'image' : 'video',
-      caption: row.caption ? String(row.caption) : undefined,
-      filterName: row.filter_name ? String(row.filter_name) : undefined,
-      textMessage: row.text_message ? String(row.text_message) : undefined,
-      createdAt: String(row.created_at || new Date().toISOString()),
-      isViewed: Boolean(row.is_viewed),
-      isSupabaseBacked: true,
-    }));
+    const remoteMessages: DirectSnapMessage[] = data.map((row) => {
+      const safeSenderUname = sanitizeUsername(String(row.sender_username || '')) || 'user';
+      const safeRecipUname = sanitizeUsername(String(row.recipient_username || '')) || 'friend';
+      return {
+        id: String(row.id),
+        senderId: String(row.sender_id || ''),
+        senderUsername: safeSenderUname,
+        senderName: sanitizeText(String(row.sender_name || safeSenderUname || 'User'), 60),
+        senderAvatar: sanitizeSafeUrl(String(row.sender_avatar || '')),
+        recipientId: String(row.recipient_id || ''),
+        recipientUsername: safeRecipUname,
+        recipientName: sanitizeText(String(row.recipient_name || safeRecipUname || 'Friend'), 60),
+        recipientAvatar: sanitizeSafeUrl(String(row.recipient_avatar || '')),
+        mediaUrl: sanitizeSafeUrl(String(row.media_url || '')),
+        mediaType: row.media_type === 'image' ? 'image' : 'video',
+        caption: row.caption ? sanitizeText(String(row.caption), 160) || undefined : undefined,
+        filterName: row.filter_name
+          ? sanitizeText(String(row.filter_name), 40) || undefined
+          : undefined,
+        textMessage: row.text_message
+          ? sanitizeText(String(row.text_message), 500) || undefined
+          : undefined,
+        createdAt: String(row.created_at || new Date().toISOString()),
+        isViewed: Boolean(row.is_viewed),
+        isSupabaseBacked: true,
+      };
+    });
 
     const seen = new Set(remoteMessages.map((m) => m.id));
     const merged = [
@@ -403,18 +425,20 @@ export async function sendDirectSnap(params: {
   const newSnap: DirectSnapMessage = {
     id,
     senderId: params.sender.id,
-    senderUsername: params.sender.username,
-    senderName: params.sender.name,
-    senderAvatar: params.sender.avatar,
+    senderUsername: sanitizeUsername(params.sender.username) || 'user',
+    senderName: sanitizeText(params.sender.name, 60) || 'User',
+    senderAvatar: sanitizeSafeUrl(params.sender.avatar),
     recipientId: params.recipient.id,
-    recipientUsername: params.recipient.username,
-    recipientName: params.recipient.name,
-    recipientAvatar: params.recipient.avatar,
-    mediaUrl: finalMediaUrl,
+    recipientUsername: sanitizeUsername(params.recipient.username) || 'friend',
+    recipientName: sanitizeText(params.recipient.name, 60) || 'Friend',
+    recipientAvatar: sanitizeSafeUrl(params.recipient.avatar),
+    mediaUrl: sanitizeSafeUrl(finalMediaUrl),
     mediaType: params.mediaType,
-    caption: params.caption,
-    filterName: params.filterName,
-    textMessage: params.textMessage,
+    caption: params.caption ? sanitizeText(params.caption, 160) || undefined : undefined,
+    filterName: params.filterName ? sanitizeText(params.filterName, 40) || undefined : undefined,
+    textMessage: params.textMessage
+      ? sanitizeText(params.textMessage, 500) || undefined
+      : undefined,
     createdAt,
     isViewed: false,
     isSupabaseBacked: false,

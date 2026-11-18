@@ -45,6 +45,7 @@ import {
   unlockOrientationToPortrait,
   addFullscreenChangeListener,
 } from '../utils/fullscreenOrientation';
+import { sanitizeSearchQuery, sanitizeInputLive, sanitizeText } from '../utils/security';
 
 const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
 
@@ -591,7 +592,8 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
       onShowToast('Offline Mode: Connect to internet to stream YouTube links, or open Saved / Downloads.');
       return;
     }
-    const ytid = extractYouTubeId(directUrlInput);
+    const safeInput = sanitizeText(directUrlInput, 300);
+    const ytid = extractYouTubeId(safeInput);
     if (!ytid) {
       onShowToast('Please enter a valid YouTube video link or 11-char ID.');
       return;
@@ -691,13 +693,13 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
       onShowToast('Offline Mode: Online YouTube search needs internet. Watch Saved / Downloads offline!');
       return;
     }
-    const query = (targetQuery !== undefined ? targetQuery : searchQuery).trim();
+    const query = sanitizeText(targetQuery !== undefined ? targetQuery : searchQuery, 120);
     if (!query) {
       onShowToast('Type a movie, drama, or song title to search.');
       return;
     }
     if (targetQuery !== undefined && displayLabel === undefined) {
-      setSearchQuery(targetQuery);
+      setSearchQuery(query);
     }
 
     const effectiveKey = (
@@ -1563,7 +1565,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                   <input
                     type="text"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => setSearchQuery(sanitizeSearchQuery(e.target.value, 120))}
                     placeholder="Search Trending Movies, Punjabi Songs, Pakistani Dramas..."
                     className="w-full bg-neutral-900/90 text-xs sm:text-sm text-white placeholder-neutral-500 pl-10 pr-9 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/50 transition-all shadow-inner"
                   />
@@ -2153,7 +2155,7 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
               <input
                 type="text"
                 value={directUrlInput}
-                onChange={(e) => setDirectUrlInput(e.target.value)}
+                onChange={(e) => setDirectUrlInput(sanitizeInputLive(e.target.value, 300))}
                 onKeyDown={(e) => e.key === 'Enter' && handlePlayDirectUrl()}
                 placeholder="Paste YouTube link (https://youtube.com...) or Video ID"
                 className="w-full bg-black/60 text-xs text-white placeholder-neutral-500 px-3 py-1.5 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"

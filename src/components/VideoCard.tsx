@@ -17,8 +17,7 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
-  RectangleHorizontal,
-  Smartphone,
+  Lock,
 } from 'lucide-react';
 import { VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
@@ -30,14 +29,6 @@ import {
   savePlaybackState,
   saveVideoTimestamp,
 } from '../lib/playbackPersistence';
-import {
-  getFullscreenElement,
-  isPortraitViewport,
-  requestElementFullscreen,
-  lockScreenLandscape,
-  unlockOrientationToPortrait,
-  addFullscreenChangeListener,
-} from '../utils/fullscreenOrientation';
 
 interface VideoCardProps {
   video: VideoPost;
@@ -92,25 +83,24 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const bgAudioRef = useRef<HTMLAudioElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
-  const widescreenContainerRef = useRef<HTMLDivElement | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
-  const [isWidescreenMode, setIsWidescreenMode] = useState(false);
   const [isFillScreen, setIsFillScreen] = useState(false);
-  const [orientationLockBlocked, setOrientationLockBlocked] = useState(false);
-  const [viewportPortrait, setViewportPortrait] = useState(() => isPortraitViewport());
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [isDownloadBlockedOpen, setIsDownloadBlockedOpen] = useState(false);
 
-  const cssLandscapeActive = isWidescreenMode && orientationLockBlocked && viewportPortrait;
   const [currentTime, setCurrentTime] = useState(() => getSavedVideoTimestamp(video.id));
   const [duration, setDuration] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubHoverPercent, setScrubHoverPercent] = useState<number | null>(null);
+  const wasPlayingBeforeScrubRef = useRef<boolean>(false);
   const [floatingHearts, setFloatingHearts] = useState<FloatingHeart[]>([]);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [isDownloadingReel, setIsDownloadingReel] = useState(false);
+  const isDownloadAllowed = video.allowDownload !== false;
 
   const isOwnPost = Boolean(
     onDeletePost &&
@@ -125,11 +115,10 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const lastSavedStampRef = useRef<number>(0);
   const pendingResumeTimeRef = useRef<number>(getSavedVideoTimestamp(video.id));
   const wasPlayingBeforeHideRef = useRef<boolean>(true);
-  const didEnterFullscreenForWidescreenRef = useRef<boolean>(false);
 
   useEffect(() => {
     setIsLandscape(false);
-    setIsWidescreenMode(false);
+    setCaptionExpanded(false);
     setVideoError(false);
     const savedTime = getSavedVideoTimestamp(video.id);
     pendingResumeTimeRef.current = savedTime;
@@ -388,72 +377,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, video.id, video.videoUrl, video.mediaType, isMuted, originalVol]);
 
-  // Keep viewport portrait state synced for CSS landscape rotation fallback
-  useEffect(() => {
-    const syncViewport = () => setViewportPortrait(isPortraitViewport());
-    window.addEventListener('resize', syncViewport);
-    window.addEventListener('orientationchange', syncViewport);
-    return () => {
-      window.removeEventListener('resize', syncViewport);
-      window.removeEventListener('orientationchange', syncViewport);
-    };
-  }, []);
-
-  // Helper to toggle 16:9 Widescreen Landscape Cinema Mode + mobile screen.orientation lock
-  const exitWidescreenMode = async () => {
-    didEnterFullscreenForWidescreenRef.current = false;
-    setIsWidescreenMode(false);
-    setOrientationLockBlocked(false);
-    await unlockOrientationToPortrait();
-  };
-
-  const enterWidescreenMode = async () => {
-    setIsWidescreenMode(true);
-    const targetEl = widescreenContainerRef.current || document.documentElement;
-    const enteredFs = await requestElementFullscreen(targetEl);
-    didEnterFullscreenForWidescreenRef.current = enteredFs;
-
-    const locked = await lockScreenLandscape();
-    if (!locked) {
-      setOrientationLockBlocked(true);
-      setViewportPortrait(isPortraitViewport());
-    } else {
-      setOrientationLockBlocked(false);
-    }
-  };
-
-  const handleToggleWidescreen = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (isWidescreenMode) {
-      void exitWidescreenMode();
-      onShowToast('Switched to 9:16 Vertical Reels');
-    } else {
-      void enterWidescreenMode();
-      onShowToast('16:9 Widescreen Landscape Mode');
-    }
-  };
-
-  // Sync if user exits fullscreen manually via system back button / Esc
-  useEffect(() => {
-    if (!isWidescreenMode) return;
-    const handleFsChange = () => {
-      if (!getFullscreenElement() && didEnterFullscreenForWidescreenRef.current) {
-        didEnterFullscreenForWidescreenRef.current = false;
-        setIsWidescreenMode(false);
-        setOrientationLockBlocked(false);
-        void unlockOrientationToPortrait();
-      }
-    };
-    return addFullscreenChangeListener(handleFsChange);
-  }, [isWidescreenMode]);
-
-  // Clean up decoder, fullscreen orientation lock & audio on unmount
+  // Clean up decoder & audio on unmount
   useEffect(() => {
     return () => {
-      if (didEnterFullscreenForWidescreenRef.current) {
-        didEnterFullscreenForWidescreenRef.current = false;
-        void unlockOrientationToPortrait();
-      }
       if (videoRef.current) {
         if (isActive && videoRef.current.currentTime > 0.2) {
           saveVideoTimestamp(video.id, videoRef.current.currentTime, !videoRef.current.paused);
@@ -578,17 +504,60 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     }
   };
 
-  // Scrubbing/seeking
-  const handleScrub = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!progressBarRef.current || !videoRef.current) return;
+  // Interactive TikTok-style touch/pointer/click scrubbing
+  const scrubToClientX = (clientX: number) => {
+    if (!progressBarRef.current) return;
     const rect = progressBarRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
-    const targetTime = percentage * (videoRef.current.duration || 1);
-    videoRef.current.currentTime = targetTime;
+    if (rect.width <= 0) return;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    setScrubHoverPercent(pct * 100);
+    const mediaDur = videoRef.current?.duration || duration || 0;
+    const targetTime = mediaDur > 0 ? pct * mediaDur : 0;
+    if (videoRef.current && mediaDur > 0) {
+      videoRef.current.currentTime = targetTime;
+    }
     setCurrentTime(targetTime);
-    if (isActive) {
-      saveVideoTimestamp(video.id, targetTime, !videoRef.current.paused);
+    if (isActive && mediaDur > 0) {
+      saveVideoTimestamp(video.id, targetTime, !videoRef.current?.paused);
+    }
+  };
+
+  const handleScrubPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore if capture unsupported
+    }
+    wasPlayingBeforeScrubRef.current = Boolean(videoRef.current && !videoRef.current.paused);
+    if (videoRef.current && !videoRef.current.paused) {
+      videoRef.current.pause();
+    }
+    setIsScrubbing(true);
+    scrubToClientX(e.clientX);
+  };
+
+  const handleScrubPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbing) return;
+    e.stopPropagation();
+    scrubToClientX(e.clientX);
+  };
+
+  const handleScrubPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbing) return;
+    e.stopPropagation();
+    scrubToClientX(e.clientX);
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+    setIsScrubbing(false);
+    setScrubHoverPercent(null);
+    if (wasPlayingBeforeScrubRef.current && videoRef.current) {
+      videoRef.current.play().catch(() => {});
     }
   };
 
@@ -600,15 +569,24 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   };
 
   const formatTime = (seconds: number): string => {
-    if (isNaN(seconds)) return '0:00';
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // Direct download to device gallery for videos/images in the feed
+  // Direct download to device gallery for videos/images in the feed (checks creator privacy)
   const handleDownloadMedia = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
+
+    if (!isDownloadAllowed) {
+      setIsDownloadBlockedOpen(true);
+      onShowToast(
+        'Download Disabled: The creator has kept this video private and it cannot be downloaded.'
+      );
+      return;
+    }
+
     if (!video.videoUrl || isDownloadingReel) return;
 
     const cleanName = (video.title || 'JattVibeReels_Media')
@@ -697,35 +675,8 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   }
 
   return (
-    <div
-      ref={widescreenContainerRef}
-      className={
-        isWidescreenMode
-          ? 'fixed inset-0 z-[70] bg-black flex flex-col items-center justify-center select-none overflow-hidden'
-          : 'relative w-full h-full snap-item flex items-center justify-center bg-black select-none overflow-hidden'
-      }
-    >
-      {/* Inner Stage: Rotates 90deg via CSS when screen.orientation.lock('landscape') is blocked on portrait viewport */}
-      <div
-        style={
-          cssLandscapeActive
-            ? {
-                position: 'fixed',
-                top: '50%',
-                left: '50%',
-                width: '100dvh',
-                height: '100vw',
-                transform: 'translate3d(-50%, -50%, 0) rotate(90deg)',
-                transformOrigin: 'center center',
-              }
-            : undefined
-        }
-        className={
-          cssLandscapeActive
-            ? 'bg-black flex items-center justify-center overflow-hidden'
-            : 'relative w-full h-full flex items-center justify-center overflow-hidden'
-        }
-      >
+    <div className="relative w-full h-full snap-item flex items-center justify-center bg-black select-none overflow-hidden">
+      <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
       {/* Attached Custom Song / Naat Audio Player (when audioUrl exists) */}
       {hasExternalAudio && (
         <audio
@@ -744,17 +695,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         className="relative w-full h-full flex items-center justify-center cursor-pointer"
         onClick={handleVideoAreaClick}
       >
-        {/* Image Post OR HTML5 Video element (9:16 Vertical Reels default, or 16:9 Widescreen Cinema Mode, or Fill Screen) */}
+        {/* Image Post OR HTML5 Video element (9:16 Vertical Reels or Fill Screen) */}
         {video.mediaType === 'image' ? (
           <div
             className={
-              isWidescreenMode
-                ? cssLandscapeActive
-                  ? isFillScreen
-                    ? 'relative w-full h-full overflow-hidden bg-black flex items-center justify-center'
-                    : 'relative h-full aspect-video max-w-full mx-auto overflow-hidden bg-black flex items-center justify-center'
-                  : 'relative w-full max-w-[min(100vw,calc(100dvh*16/9))] aspect-video mx-auto overflow-hidden bg-black flex items-center justify-center'
-                : isFillScreen
+              isFillScreen
                 ? 'relative w-full h-full flex items-center justify-center overflow-hidden bg-black'
                 : isLandscape
                 ? 'relative w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
@@ -790,13 +735,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             {!videoError && (
               <div
                 className={
-                  isWidescreenMode
-                    ? cssLandscapeActive
-                      ? isFillScreen
-                        ? 'w-full h-full overflow-hidden bg-black flex items-center justify-center'
-                        : 'h-full aspect-video max-w-full mx-auto overflow-hidden bg-black flex items-center justify-center shadow-2xl'
-                      : 'w-full max-w-[min(100vw,calc(100dvh*16/9))] aspect-video mx-auto overflow-hidden bg-black flex items-center justify-center shadow-2xl'
-                    : isFillScreen
+                  isFillScreen
                     ? 'w-full h-full flex items-center justify-center overflow-hidden bg-black'
                     : isLandscape
                     ? 'w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
@@ -810,7 +749,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   playsInline
                   loop
                   muted={isMuted || !isActive}
-                  preload={isActive ? 'auto' : isNext ? 'metadata' : 'none'}
+                  preload={isActive || isNext ? 'auto' : 'metadata'}
                   crossOrigin="anonymous"
                   onTimeUpdate={handleTimeUpdate}
                   onCanPlay={() => {
@@ -836,7 +775,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   className={
                     isFillScreen
                       ? 'w-full h-full object-cover [transform:translate3d(0,0,0)] will-change-transform'
-                      : isWidescreenMode || isLandscape
+                      : isLandscape
                       ? 'w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform'
                       : 'w-full h-full object-cover sm:object-contain [transform:translate3d(0,0,0)] will-change-transform'
                   }
@@ -887,10 +826,10 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       {/* Top Scrim Bar for Controls */}
       <div
         className={`absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:mx-auto [transform:translateZ(0)] ${
-          isWidescreenMode || isFillScreen ? 'max-w-none' : isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
+          isFillScreen ? 'max-w-none' : isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
         }`}
       >
-        {/* Audio Mute / Unmute + 16:9 Widescreen Toggle + Playit Fill Screen Button */}
+        {/* Audio Mute / Unmute + Playit Fill Screen Button */}
         <div className="flex items-center gap-1.5 sm:gap-2 pointer-events-auto flex-wrap">
           <button
             type="button"
@@ -913,28 +852,6 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 <span className="text-[11px] text-pink-400 hidden xs:inline">Audio on</span>
               </>
             )}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleToggleWidescreen}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-[10px] font-black tracking-wide transition-all cursor-pointer [transform:translateZ(0)] ${
-              isWidescreenMode
-                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-300 text-white shadow-md shadow-cyan-500/30'
-                : 'bg-neutral-900/90 hover:bg-neutral-800 border-white/15 text-amber-300'
-            }`}
-            title={
-              isWidescreenMode
-                ? 'Return to 9:16 Vertical Reels Mode'
-                : 'Switch to 16:9 Widescreen Landscape Cinema Mode'
-            }
-          >
-            {isWidescreenMode ? (
-              <Smartphone className="w-3 h-3" />
-            ) : (
-              <RectangleHorizontal className="w-3.5 h-3.5" />
-            )}
-            <span>{isWidescreenMode ? '9:16 Vertical' : '16:9 Widescreen'}</span>
           </button>
 
           <button
@@ -1031,12 +948,41 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         </div>
       )}
 
+      {/* Creator Download Privacy Warning Popup */}
+      {isDownloadBlockedOpen && (
+        <div
+          className="absolute inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsDownloadBlockedOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-xs bg-neutral-950 border border-amber-500/50 rounded-2xl p-5 shadow-2xl space-y-4 text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-400 flex items-center justify-center mx-auto">
+              <Lock className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-black text-white">Download Disabled</h3>
+              <p className="text-xs text-neutral-300 leading-relaxed">
+                Download Disabled: The creator has kept this video private and it cannot be downloaded.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsDownloadBlockedOpen(false)}
+              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-rose-600 hover:brightness-110 text-white text-xs font-black shadow-lg cursor-pointer"
+            >
+              OK, Got It
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Right Side Overlay Action Buttons */}
-      <div
-        className={`absolute right-3 bottom-18 sm:bottom-20 z-30 flex flex-col items-center gap-4.5 sm:max-w-md pointer-events-auto [transform:translateZ(0)] ${
-          isWidescreenMode ? 'hidden sm:flex opacity-80 hover:opacity-100' : ''
-        }`}
-      >
+      <div className="absolute right-3 bottom-24 sm:bottom-20 z-30 flex flex-col items-center gap-4 sm:max-w-md pointer-events-auto [transform:translateZ(0)]">
         {/* Creator Avatar with Follow Button */}
         <div className="relative mb-1 flex flex-col items-center">
           <button
@@ -1185,14 +1131,36 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           disabled={isDownloadingReel}
           onClick={handleDownloadMedia}
           className="flex flex-col items-center gap-1 group active:scale-90 transition-transform disabled:opacity-60"
-          aria-label="Download or save to gallery"
-          title="Download / Save to Device Gallery"
+          aria-label={isDownloadAllowed ? 'Download or save to gallery' : 'Download disabled by creator'}
+          title={
+            isDownloadAllowed
+              ? 'Download / Save to Device Gallery'
+              : 'Private Video: Download Disabled by Creator'
+          }
         >
-          <div className="w-11 h-11 rounded-full bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-300 border border-cyan-400/40 flex items-center justify-center transition-all group-hover:scale-105 [transform:translateZ(0)]">
-            <Download className={`w-5 h-5 text-cyan-300 ${isDownloadingReel ? 'animate-bounce' : ''}`} />
+          <div
+            className={`relative w-11 h-11 rounded-full flex items-center justify-center transition-all group-hover:scale-105 [transform:translateZ(0)] ${
+              isDownloadAllowed
+                ? 'bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-300 border border-cyan-400/40'
+                : 'bg-neutral-900/90 hover:bg-neutral-800 text-amber-400 border border-amber-500/45'
+            }`}
+          >
+            {isDownloadAllowed ? (
+              <Download className={`w-5 h-5 text-cyan-300 ${isDownloadingReel ? 'animate-bounce' : ''}`} />
+            ) : (
+              <Lock className="w-4 h-4 text-amber-400" />
+            )}
           </div>
-          <span className="text-[11px] font-bold text-cyan-300 drop-shadow-md tabular-nums">
-            {isDownloadingReel ? 'Saving' : formatCount(video.stats.downloads)}
+          <span
+            className={`text-[11px] font-bold drop-shadow-md tabular-nums ${
+              isDownloadAllowed ? 'text-cyan-300' : 'text-amber-300'
+            }`}
+          >
+            {isDownloadAllowed
+              ? isDownloadingReel
+                ? 'Saving'
+                : formatCount(video.stats.downloads)
+              : 'Private'}
           </span>
         </button>
 
@@ -1230,7 +1198,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       {/* Bottom Information & Caption Scrim */}
       <div
         className={`absolute bottom-0 left-0 right-0 z-20 pt-16 pb-6 px-4 bg-gradient-to-t from-black/95 via-black/50 to-transparent pointer-events-none flex flex-col justify-end sm:mx-auto ${
-          isWidescreenMode ? 'max-w-4xl' : isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
+          isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
         }`}
       >
         <div className="pointer-events-auto pr-14">
@@ -1259,39 +1227,61 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             </span>
           </div>
 
-          {/* Caption with Expand/Collapse */}
-          <div className="text-xs text-neutral-100 leading-relaxed drop-shadow-sm mb-2">
-            <p className={captionExpanded ? '' : 'line-clamp-2'}>
-              {video.description}
-            </p>
-            {video.description.length > 70 && (
-              <button
-                type="button"
-                onClick={() => setCaptionExpanded(!captionExpanded)}
-                className="text-[11px] font-bold text-neutral-300 hover:text-white mt-0.5 inline-block"
-              >
-                {captionExpanded ? 'less' : 'more'}
-              </button>
-            )}
-          </div>
+          {/* Caption & Hashtags Hidden Under More / Less Toggle */}
+          {(() => {
+            const hasInlineTags = /(?:^|\s)#[^\s#]+/.test(video.description || '');
+            const collapsedText = (video.description || '')
+              .replace(/(?:^|\s)#[^\s#]+/g, '')
+              .replace(/\s{2,}/g, ' ')
+              .trim();
+            const canToggleExpand =
+              (video.description || '').length > 70 ||
+              video.hashtags.length > 0 ||
+              hasInlineTags;
 
-          {/* Clickable Hashtags */}
-          <div className="flex flex-wrap gap-1.5 mb-2.5">
-            {video.hashtags.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onHashtagClick?.(tag);
-                  onShowToast(`Filtered by #${tag}`);
-                }}
-                className="text-xs font-bold text-pink-400 hover:text-pink-300 hover:underline transition-colors"
-              >
-                #{tag}
-              </button>
-            ))}
-          </div>
+            return (
+              <div className="text-xs text-neutral-100 leading-relaxed drop-shadow-sm mb-2.5">
+                {captionExpanded ? (
+                  <p>{video.description}</p>
+                ) : (
+                  collapsedText && <p className="line-clamp-2">{collapsedText}</p>
+                )}
+
+                {/* Hashtags remain completely hidden by default until user clicks "More" */}
+                {captionExpanded && video.hashtags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {video.hashtags.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onHashtagClick?.(tag);
+                          onShowToast(`Filtered by #${tag}`);
+                        }}
+                        className="text-xs font-bold text-pink-400 hover:text-pink-300 hover:underline transition-colors cursor-pointer"
+                      >
+                        #{tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {canToggleExpand && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCaptionExpanded((prev) => !prev);
+                    }}
+                    className="text-[11px] font-bold text-neutral-300 hover:text-white mt-1 inline-block cursor-pointer"
+                  >
+                    {captionExpanded ? 'Less' : 'More'}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Sound Ticker Marquee */}
           <div className="flex items-center gap-2 text-xs text-neutral-200 overflow-hidden max-w-[260px]">
@@ -1309,24 +1299,56 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           </div>
         </div>
 
-        {/* Video Scrubber / Progress Bar */}
+        {/* TikTok-Style Interactive Video Progress Bar (Scrubber) */}
         {video.mediaType !== 'image' && (
           <div
             ref={progressBarRef}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleScrub(e);
-            }}
-            onMouseDown={() => setIsScrubbing(true)}
-            onMouseUp={() => setIsScrubbing(false)}
-            className="pointer-events-auto group mt-3 w-full h-2.5 flex items-end cursor-pointer py-1"
+            onClick={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+            onPointerDown={handleScrubPointerDown}
+            onPointerMove={handleScrubPointerMove}
+            onPointerUp={handleScrubPointerUp}
+            onPointerCancel={handleScrubPointerUp}
+            className="pointer-events-auto relative group mt-3 w-full h-7 flex items-end cursor-pointer touch-none select-none pb-1"
+            role="slider"
+            aria-label="Seek video timeline"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(duration || 0)}
+            aria-valuenow={Math.round(currentTime)}
           >
-            <div className="relative w-full h-1 bg-white/20 rounded-full overflow-hidden group-hover:h-1.5 transition-all">
+            {/* Floating Current Time / Total Duration Pill while Scrubbing */}
+            {isScrubbing && (
               <div
-                style={{ width: `${progressPercent}%` }}
-                className="h-full bg-pink-500 rounded-full transition-all duration-75 relative"
+                style={{
+                  left: `${Math.max(12, Math.min(88, scrubHoverPercent ?? progressPercent))}%`,
+                }}
+                className=" -translate-x-1/2 -top-8 absolute px-3 py-1 rounded-full bg-neutral-950/95 border border-pink-500/60 text-white text-xs font-black tracking-wider tabular-nums shadow-xl whitespace-nowrap pointer-events-none z-40"
               >
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white opacity-0 group-hover:opacity-100 shadow-md" />
+                <span className="text-pink-400">{formatTime(currentTime)}</span>
+                <span className="text-neutral-500 mx-1">/</span>
+                <span className="text-neutral-200">{formatTime(duration)}</span>
+              </div>
+            )}
+
+            <div
+              className={`relative w-full rounded-full transition-all duration-100 ${
+                isScrubbing
+                  ? 'h-2 bg-white/35 shadow-[0_0_12px_rgba(236,72,153,0.45)]'
+                  : 'h-1 bg-white/25 group-hover:h-1.5'
+              }`}
+            >
+              <div
+                style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }}
+                className="h-full bg-gradient-to-r from-pink-500 via-rose-500 to-cyan-400 rounded-full relative"
+              >
+                <div
+                  className={`absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-lg ring-2 ring-pink-500 transition-transform ${
+                    isScrubbing
+                      ? 'w-4 h-4 scale-110 opacity-100'
+                      : 'w-2.5 h-2.5 opacity-0 group-hover:opacity-100'
+                  }`}
+                />
               </div>
             </div>
           </div>

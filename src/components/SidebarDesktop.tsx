@@ -17,11 +17,13 @@ import {
   User as UserIcon,
   Bell,
   Search,
+  Wand2,
 } from 'lucide-react';
 import { FeedTab, UserAccount } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { PWAInstallButton } from './PWAInstallButton';
+import { isMainAdminAccount } from '../data/mockUsers';
 
 
 interface SidebarDesktopProps {
@@ -187,6 +189,25 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             </span>
           </button>
 
+          {/* CapCut-Style Video & Photo Templates Studio Tab */}
+          <button
+            type="button"
+            onClick={() => onSelectTab('templates')}
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl font-bold text-sm transition-all shadow-xs group ${
+              currentTab === 'templates'
+                ? 'bg-gradient-to-r from-pink-600/30 to-amber-500/25 text-pink-300 border border-pink-400 shadow-md'
+                : 'text-pink-300 bg-pink-600/10 hover:bg-pink-600/20 border border-pink-500/25'
+            }`}
+          >
+            <div className="flex items-center gap-3.5">
+              <Wand2 className="w-5 h-5 shrink-0 text-pink-400 group-hover:scale-110 transition-transform" />
+              <span>Templates</span>
+            </div>
+            <span className="text-[10px] uppercase font-black tracking-wider bg-pink-500/20 text-pink-300 px-2 py-0.5 rounded-full border border-pink-500/35">
+              Studio
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => onSelectTab('saved')}
@@ -240,8 +261,8 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
             )}
           </button>
 
-          {/* Admin Console Item */}
-          {currentUser?.role === 'admin' && (
+          {/* Admin Console Item (Main Admin only) */}
+          {isMainAdminAccount(currentUser) && (
             <button
               type="button"
               onClick={onOpenAdmin}

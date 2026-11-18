@@ -25,6 +25,7 @@ import {
 import { advancedSearchAll } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 import { soundEngine } from '../utils/soundEngine';
+import { sanitizeSearchQuery } from '../utils/security';
 
 interface CreatorDirectoryModalProps {
   isOpen: boolean;
@@ -170,7 +171,7 @@ export const CreatorDirectoryModal: React.FC<CreatorDirectoryModalProps> = ({
               ref={inputRef}
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => setQuery(sanitizeSearchQuery(e.target.value, 120))}
               placeholder="Search @username, user ID, video title, #hashtag, or song..."
               className="w-full bg-neutral-900 text-sm text-white placeholder-neutral-500 pl-10 pr-10 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/40 transition-all"
             />

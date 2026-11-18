@@ -13,6 +13,8 @@ import {
   FileAudio,
   Check,
   Trash2,
+  Lock,
+  Download,
 } from 'lucide-react';
 import { VideoPost, UserAccount, CreatorProfileData, AudioTrackOption } from '../types';
 import {
@@ -22,11 +24,23 @@ import {
   fileToPersistentDataUrl,
   saveLocalPostRecord,
   savePostAudioMeta,
+  savePostPrivacyMeta,
 } from '../lib/supabaseService';
 import { compressImageFile } from '../utils/imageOptimize';
 import { searchAudioLibrary } from '../data/audioLibrary';
 import { soundEngine } from '../utils/soundEngine';
 import { savePostForOffline } from '../lib/offlineMediaStore';
+import {
+  sanitizeInputLive,
+  sanitizeText,
+  sanitizeHashtagsInput,
+  sanitizeUsername,
+  sanitizeSafeUrl,
+  validateSafeMediaFile,
+  validateSafeAudioFile,
+  checkRateLimit,
+  recordRateLimitEvent,
+} from '../utils/security';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -35,6 +49,7 @@ interface UploadModalProps {
   creatorProfile?: CreatorProfileData;
   preselectedFile?: File | null;
   onUploadSuccess: (newPost: VideoPost) => void;
+  onUploadCloudSynced?: (tempId: string, syncedPost: VideoPost) => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -45,6 +60,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   creatorProfile,
   preselectedFile,
   onUploadSuccess,
+  onUploadCloudSynced,
   onShowToast,
 }) => {
   const [title, setTitle] = useState('');
@@ -59,8 +75,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [selectedMediaType, setSelectedMediaType] = useState<'video' | 'image'>('video');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [category, setCategory] = useState<VideoPost['category']>('trending');
+  const [allowDownload, setAllowDownload] = useState<boolean>(true);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadSecurityError, setUploadSecurityError] = useState('');
 
   // Song / Naat / Background Audio Picker State
   const [isAudioPanelOpen, setIsAudioPanelOpen] = useState(true);
@@ -119,21 +137,34 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   if (!isOpen) return null;
 
   const processFile = (file: File) => {
-    if (file && (file.type.startsWith('video/') || file.type.startsWith('image/'))) {
-      setSelectedFile(file);
-      const isImg = file.type.startsWith('image/');
-      setSelectedMediaType(isImg ? 'image' : 'video');
-      if (previewUrl && previewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(previewUrl);
-      }
-      const objectUrl = URL.createObjectURL(file);
-      setPreviewUrl(objectUrl);
-      if (!title) {
-        setTitle(file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '));
-      }
-      if (isImg) {
-        setIsAudioPanelOpen(true);
-      }
+    setUploadSecurityError('');
+    const check = validateSafeMediaFile(file);
+    if (!check.valid) {
+      const msg =
+        check.reason ||
+        'Blocked unsafe file. Only .mp4, .webm, .jpg, .png, and .webp are allowed.';
+      setUploadSecurityError(msg);
+      onShowToast?.(msg);
+      return;
+    }
+
+    setSelectedFile(file);
+    const isImg = check.mediaType === 'image';
+    setSelectedMediaType(isImg ? 'image' : 'video');
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+    if (!title) {
+      const safeName = sanitizeText(
+        file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+        100
+      );
+      if (safeName) setTitle(safeName);
+    }
+    if (isImg) {
+      setIsAudioPanelOpen(true);
     }
   };
 
@@ -158,6 +189,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const audioCheck = validateSafeAudioFile(file);
+    if (!audioCheck.valid) {
+      const msg = audioCheck.reason || 'Blocked invalid audio file.';
+      setUploadSecurityError(msg);
+      onShowToast?.(msg);
+      e.target.value = '';
+      return;
+    }
+
+    setUploadSecurityError('');
     soundEngine.stopPreviewTrack();
     if (selectedAudioPreviewUrl && selectedAudioPreviewUrl.startsWith('blob:')) {
       URL.revokeObjectURL(selectedAudioPreviewUrl);
@@ -168,7 +209,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setSelectedAudioPreviewUrl(objUrl);
     setSelectedLibraryTrack(null);
     setPreviewingId(null);
-    onShowToast?.(`Attached audio: ${file.name}`);
+    onShowToast?.(`Attached audio: ${sanitizeText(file.name, 60)}`);
     e.target.value = '';
   };
 
@@ -216,214 +257,272 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   const hasCustomAudioAttached = Boolean(selectedAudioFile || selectedLibraryTrack);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setUploadSecurityError('');
+
+    // Anti-spam rate limit: max 5 uploads per minute
+    const rate = checkRateLimit('upload');
+    if (!rate.allowed) {
+      const msg = `Upload rate limit reached: Max 5 uploads per minute. Please wait ${rate.retryAfterSeconds}s.`;
+      setUploadSecurityError(msg);
+      onShowToast?.(msg);
+      return;
+    }
+
+    if (videoSourceType === 'file') {
+      if (!selectedFile) {
+        setUploadSecurityError('Please select a safe .mp4, .webm, .jpg, .png, or .webp file.');
+        return;
+      }
+      const check = validateSafeMediaFile(selectedFile);
+      if (!check.valid) {
+        setUploadSecurityError(check.reason || 'Unsafe file rejected.');
+        return;
+      }
+    }
+
+    const urlTrimmed = videoUrlInput.trim();
+    let safeExternalUrl = '';
+    if (videoSourceType === 'url' && urlTrimmed) {
+      safeExternalUrl = sanitizeSafeUrl(urlTrimmed, {
+        allowBlob: false,
+        allowDataImageAudio: false,
+      });
+      if (!safeExternalUrl) {
+        setUploadSecurityError('Blocked unsafe URL. Only valid http:// or https:// media links are allowed.');
+        return;
+      }
+    }
+
     soundEngine.stopPreviewTrack();
     if (customAudioPreviewRef.current) {
       customAudioPreviewRef.current.pause();
     }
     setIsUploading(true);
+    recordRateLimitEvent('upload');
 
-    try {
-      const urlTrimmed = videoUrlInput.trim();
-      const inferredUrlMediaType: 'video' | 'image' =
-        /\.(jpg|jpeg|png|gif|webp|avif)(\?|$)/i.test(urlTrimmed) ? 'image' : 'video';
+    const inferredUrlMediaType: 'video' | 'image' =
+      /\.(jpg|jpeg|png|webp)(\?|$)/i.test(safeExternalUrl) ? 'image' : 'video';
 
-      const mediaType: 'video' | 'image' =
-        videoSourceType === 'file' && selectedFile ? selectedMediaType : inferredUrlMediaType;
+    const mediaType: 'video' | 'image' =
+      videoSourceType === 'file' && selectedFile ? selectedMediaType : inferredUrlMediaType;
 
-      let finalMediaUrl =
-        videoSourceType === 'file' && previewUrl
-          ? previewUrl
-          : urlTrimmed ||
-            'https://upload.wikimedia.org/wikipedia/commons/4/47/Astrophysics_Holiday_Vertical_Video_%28SVS14800_-_Fermi_YuleLog_Rotate_Reel%29.webm';
+    // Preserve an independent local object URL so closing modal doesn't revoke feed preview
+    const instantMediaUrl =
+      videoSourceType === 'file' && selectedFile
+        ? URL.createObjectURL(selectedFile)
+        : safeExternalUrl ||
+          'https://upload.wikimedia.org/wikipedia/commons/4/47/Astrophysics_Holiday_Vertical_Video_%28SVS14800_-_Fermi_YuleLog_Rotate_Reel%29.webm';
 
-      const userId = creatorProfile?.id || currentUser?.id || getOrCreateUserProfileId();
-      const authorName =
-        currentUser?.name || creatorProfile?.name || creatorName.trim() || 'Jatt Creator';
-      const authorUsername =
+    const instantAudioUrl = selectedAudioFile ? URL.createObjectURL(selectedAudioFile) : undefined;
+
+    const userId = creatorProfile?.id || currentUser?.id || getOrCreateUserProfileId();
+    const authorName =
+      sanitizeText(
+        currentUser?.name || creatorProfile?.name || creatorName || 'Jatt Creator',
+        80
+      ) || 'Jatt Creator';
+    const authorUsername =
+      sanitizeUsername(
         currentUser?.username ||
-        creatorProfile?.username ||
-        creatorName.toLowerCase().replace(/\s+/g, '_') ||
-        'jatt_official';
-      const authorAvatar =
-        currentUser?.avatar ||
-        creatorProfile?.avatar ||
-        `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(authorUsername)}&backgroundColor=ec4899`;
+          creatorProfile?.username ||
+          creatorName.replace(/\s+/g, '_') ||
+          'jatt_official',
+        40
+      ) || 'jatt_official';
+    const authorAvatar =
+      sanitizeSafeUrl(currentUser?.avatar || creatorProfile?.avatar || '') ||
+      `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(
+        authorUsername
+      )}&backgroundColor=ec4899`;
 
-      const tags = hashtagsStr
-        .split(/[\s,]+/)
-        .map((t) => t.replace(/^#/, '').trim())
-        .filter(Boolean);
-      const captionText = `${title.trim() || 'My New Post'}${
-        description.trim() ? ` - ${description.trim()}` : ''
-      } ${tags.map((t) => `#${t}`).join(' ')}`.trim();
+    const cleanTitle = sanitizeText(title, 140) || 'My New Post';
+    const cleanDescription = sanitizeText(description, 400);
+    const cleanHashtagsStr = sanitizeText(hashtagsStr, 200);
 
-      const isDeviceOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
-      let processedMediaBlob: Blob | undefined = selectedFile || undefined;
+    const tags = cleanHashtagsStr
+      .split(/[\s,]+/)
+      .map((t) => sanitizeUsername(t.replace(/^#/, ''), 32))
+      .filter(Boolean);
+    const captionText = `${cleanTitle}${
+      cleanDescription ? ` - ${cleanDescription}` : ''
+    } ${tags.map((t) => `#${t}`).join(' ')}`.trim();
 
-      if (videoSourceType === 'file' && selectedFile) {
-        const fileToUpload =
-          selectedMediaType === 'image'
-            ? await compressImageFile(selectedFile, 1080, 0.82)
-            : selectedFile;
-        processedMediaBlob = fileToUpload;
-
-        if (isDeviceOnline) {
-          onShowToast?.(`Uploading ${mediaType} to Supabase Storage...`);
-          const uploadedUrl = await uploadMediaToReelsBucket(
-            fileToUpload,
-            'posts',
-            fileToUpload.name
-          );
-          if (uploadedUrl) {
-            finalMediaUrl = uploadedUrl;
-          } else {
-            const dataUrl = await fileToPersistentDataUrl(fileToUpload);
-            if (dataUrl) finalMediaUrl = dataUrl;
-          }
-        } else {
-          finalMediaUrl = URL.createObjectURL(fileToUpload);
+    const instantSound: VideoPost['sound'] = selectedAudioFile
+      ? {
+          title: sanitizeText(selectedAudioFile.name.replace(/\.[^/.]+$/, ''), 80) || 'Attached Audio',
+          artist: authorName,
+          trackType: 'ambient_lofi',
+          audioUrl: instantAudioUrl,
+          category: 'song',
+          originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
+          bgAudioVolume: bgAudioVolume / 100,
+          hasAttachedAudio: true,
         }
-      }
+      : selectedLibraryTrack
+      ? {
+          title: selectedLibraryTrack.title,
+          artist: selectedLibraryTrack.artist,
+          trackType: selectedLibraryTrack.trackType,
+          category: selectedLibraryTrack.category,
+          originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
+          bgAudioVolume: bgAudioVolume / 100,
+          hasAttachedAudio: true,
+        }
+      : {
+          title:
+            mediaType === 'image'
+              ? `${authorName}'s Photo Vibe`
+              : `${authorName}'s Original Audio`,
+          artist: authorName,
+          trackType: mediaType === 'image' ? 'ambient_lofi' : 'future_bass',
+          category: mediaType === 'image' ? 'beat' : 'original',
+          originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
+          bgAudioVolume: mediaType === 'image' ? bgAudioVolume / 100 : 0,
+          hasAttachedAudio: mediaType === 'image',
+        };
 
-      // Upload custom audio file (MP3/M4A/WAV) if picked
-      let finalAudioUrl: string | undefined = undefined;
-      if (selectedAudioFile) {
-        if (isDeviceOnline) {
-          onShowToast?.('Uploading attached audio track...');
+    const tempPostId = `user-vid-${Date.now()}`;
+    const optimisticPost: VideoPost = {
+      id: tempPostId,
+      title: cleanTitle,
+      description: captionText,
+      hashtags: tags.length ? tags : ['foryou', 'trending'],
+      videoUrl: instantMediaUrl,
+      posterUrl: mediaType === 'image' ? instantMediaUrl : undefined,
+      fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
+      category,
+      userId,
+      mediaType,
+      allowDownload,
+      isUserUploaded: true,
+      createdAt: new Date().toISOString(),
+      creator: {
+        name: authorName,
+        username: authorUsername,
+        avatar: authorAvatar,
+        isVerified: currentUser?.role === 'admin' || currentUser?.role === 'creator',
+        isFollowing: false,
+        bio: currentUser?.bio || creatorProfile?.bio || 'Creator on VibeReels',
+      },
+      stats: {
+        views: 0,
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        saves: 0,
+        downloads: 0,
+      },
+      isLiked: false,
+      isSaved: false,
+      sound: instantSound,
+      commentsList: [],
+    };
+
+    // 1. Instant local playback & feed publish (zero lag)
+    savePostPrivacyMeta([tempPostId, instantMediaUrl], allowDownload);
+    savePostAudioMeta([tempPostId, instantMediaUrl], instantSound);
+    saveLocalPostRecord(optimisticPost);
+    onUploadSuccess(optimisticPost);
+    setIsUploading(false);
+    onClose();
+
+    // 2. Background upload & cloud sync (does not block UI or playback)
+    const pickedFile = videoSourceType === 'file' ? selectedFile : null;
+    const pickedAudio = selectedAudioFile;
+    const pickedAllowDl = allowDownload;
+    const isDeviceOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
+
+    void (async () => {
+      try {
+        let finalMediaUrl = instantMediaUrl;
+        let processedMediaBlob: Blob | undefined = pickedFile || undefined;
+
+        if (pickedFile) {
+          const fileToUpload =
+            mediaType === 'image'
+              ? await compressImageFile(pickedFile, 1080, 0.82)
+              : pickedFile;
+          processedMediaBlob = fileToUpload;
+
+          if (isDeviceOnline) {
+            const uploadedUrl = await uploadMediaToReelsBucket(
+              fileToUpload,
+              'posts',
+              fileToUpload.name
+            );
+            if (uploadedUrl) {
+              finalMediaUrl = uploadedUrl;
+            } else {
+              const dataUrl = await fileToPersistentDataUrl(fileToUpload);
+              if (dataUrl) finalMediaUrl = dataUrl;
+            }
+          }
+        }
+
+        let finalAudioUrl: string | undefined = instantAudioUrl;
+        if (pickedAudio && isDeviceOnline) {
           const uploadedAudioUrl = await uploadMediaToReelsBucket(
-            selectedAudioFile,
+            pickedAudio,
             'audio',
-            selectedAudioFile.name
+            pickedAudio.name
           );
           if (uploadedAudioUrl) {
             finalAudioUrl = uploadedAudioUrl;
           } else {
-            const audioDataUrl = await fileToPersistentDataUrl(selectedAudioFile, 3_500_000);
-            finalAudioUrl = audioDataUrl || selectedAudioPreviewUrl || undefined;
+            const audioDataUrl = await fileToPersistentDataUrl(pickedAudio, 3_500_000);
+            if (audioDataUrl) finalAudioUrl = audioDataUrl;
           }
-        } else {
-          finalAudioUrl = URL.createObjectURL(selectedAudioFile);
         }
-      }
 
-      const finalSound: VideoPost['sound'] = selectedAudioFile
-        ? {
-            title: selectedAudioFile.name.replace(/\.[^/.]+$/, ''),
-            artist: authorName,
-            trackType: 'ambient_lofi',
-            audioUrl: finalAudioUrl,
-            category: 'song',
-            originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
-            bgAudioVolume: bgAudioVolume / 100,
-            hasAttachedAudio: true,
-          }
-        : selectedLibraryTrack
-        ? {
-            title: selectedLibraryTrack.title,
-            artist: selectedLibraryTrack.artist,
-            trackType: selectedLibraryTrack.trackType,
-            category: selectedLibraryTrack.category,
-            originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
-            bgAudioVolume: bgAudioVolume / 100,
-            hasAttachedAudio: true,
-          }
-        : {
-            title:
-              mediaType === 'image'
-                ? `${authorName}'s Photo Vibe`
-                : `${authorName}'s Original Audio`,
-            artist: authorName,
-            trackType: mediaType === 'image' ? 'ambient_lofi' : 'future_bass',
-            category: mediaType === 'image' ? 'beat' : 'original',
-            originalVolume: mediaType === 'video' ? originalVolume / 100 : 0,
-            bgAudioVolume: mediaType === 'image' ? bgAudioVolume / 100 : 0,
-            hasAttachedAudio: mediaType === 'image',
-          };
+        const syncedSound: VideoPost['sound'] = pickedAudio
+          ? { ...instantSound, audioUrl: finalAudioUrl }
+          : instantSound;
 
-      const supabasePost = isDeviceOnline
-        ? await createGlobalPostInSupabase({
-            userId,
-            username: authorUsername,
-            displayName: authorName,
-            avatarUrl: authorAvatar,
-            mediaUrl: finalMediaUrl,
-            mediaType,
-            caption: captionText,
-            sound: finalSound,
-          })
-        : null;
+        const supabasePost = isDeviceOnline
+          ? await createGlobalPostInSupabase({
+              userId,
+              username: authorUsername,
+              displayName: authorName,
+              avatarUrl: authorAvatar,
+              mediaUrl: finalMediaUrl,
+              mediaType,
+              caption: captionText,
+              allowDownload: pickedAllowDl,
+              sound: syncedSound,
+            })
+          : null;
 
-      if (supabasePost) {
-        const enrichedSupabasePost: VideoPost = {
-          ...supabasePost,
-          sound: finalSound,
-        };
-        savePostAudioMeta([enrichedSupabasePost.id, finalMediaUrl], finalSound);
-        saveLocalPostRecord(enrichedSupabasePost);
-        await savePostForOffline(enrichedSupabasePost, {
+        const finalSyncedPost: VideoPost = supabasePost
+          ? {
+              ...supabasePost,
+              allowDownload: pickedAllowDl,
+              sound: syncedSound,
+            }
+          : {
+              ...optimisticPost,
+              videoUrl: finalMediaUrl,
+              posterUrl: mediaType === 'image' ? finalMediaUrl : undefined,
+              sound: syncedSound,
+            };
+
+        savePostPrivacyMeta([finalSyncedPost.id, finalMediaUrl, tempPostId], pickedAllowDl);
+        savePostAudioMeta([finalSyncedPost.id, finalMediaUrl], syncedSound);
+        saveLocalPostRecord(finalSyncedPost);
+
+        await savePostForOffline(finalSyncedPost, {
           mediaBlob: processedMediaBlob,
-          audioBlob: selectedAudioFile || undefined,
+          audioBlob: pickedAudio || undefined,
           sourceType: 'uploaded',
           skipRemoteFetch: true,
         });
-        onUploadSuccess(enrichedSupabasePost);
-        onClose();
-        return;
-      }
 
-      const newPost: VideoPost = {
-        id: `user-vid-${Date.now()}`,
-        title: title.trim() || 'My New Post',
-        description: captionText,
-        hashtags: tags.length ? tags : ['foryou', 'trending'],
-        videoUrl: finalMediaUrl,
-        posterUrl: mediaType === 'image' ? finalMediaUrl : undefined,
-        fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
-        category: category,
-        userId,
-        mediaType,
-        isUserUploaded: true,
-        createdAt: new Date().toISOString(),
-        creator: {
-          name: authorName,
-          username: authorUsername,
-          avatar: authorAvatar,
-          isVerified: currentUser?.role === 'admin' || currentUser?.role === 'creator',
-          isFollowing: false,
-          bio: currentUser?.bio || creatorProfile?.bio || 'Creator on VibeReels',
-        },
-        stats: {
-          views: 0,
-          likes: 0,
-          comments: 0,
-          shares: 0,
-          saves: 0,
-          downloads: 0,
-        },
-        isLiked: false,
-        isSaved: false,
-        sound: finalSound,
-        commentsList: [],
-      };
-
-      savePostAudioMeta([newPost.id, finalMediaUrl], finalSound);
-      saveLocalPostRecord(newPost);
-      await savePostForOffline(newPost, {
-        mediaBlob: processedMediaBlob,
-        audioBlob: selectedAudioFile || undefined,
-        sourceType: 'uploaded',
-        skipRemoteFetch: true,
-      });
-      if (!isDeviceOnline) {
-        onShowToast?.('Saved locally in Offline Mode! Available in Saved / Downloads.');
+        onUploadCloudSynced?.(tempPostId, finalSyncedPost);
+      } catch (err) {
+        console.warn('Background upload sync warning:', err);
       }
-      onUploadSuccess(newPost);
-      onClose();
-    } finally {
-      setIsUploading(false);
-    }
+    })();
   };
 
   return (
@@ -469,6 +568,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          {uploadSecurityError && (
+            <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/45 text-xs text-rose-200 font-semibold">
+              {uploadSecurityError}
+            </div>
+          )}
+
           {/* Source Toggle */}
           <div className="flex bg-neutral-950 p-1 rounded-xl border border-neutral-800 text-xs font-semibold">
             <button
@@ -502,7 +607,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="video/*,image/*"
+                accept=".mp4,.webm,.jpg,.jpeg,.png,.webp,video/mp4,video/webm,image/jpeg,image/png,image/webp"
                 className="hidden"
                 onChange={handleFileChange}
               />
@@ -532,7 +637,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       ) : (
                         <video
                           src={previewUrl}
-                          className="w-28 h-44 object-cover rounded-xl shadow-lg mb-2 border border-neutral-700"
+                          preload="auto"
+                          playsInline
+                          className="w-28 h-44 object-cover rounded-xl shadow-lg mb-2 border border-neutral-700 [transform:translate3d(0,0,0)]"
                           muted
                           autoPlay
                           loop
@@ -561,7 +668,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       Select video or image (photo) to upload
                     </p>
                     <p className="text-xs text-neutral-400 mt-1">
-                      Supports MP4, WebM, MOV, JPG, PNG, WebP
+                      Supports safe MP4, WebM, JPG, PNG, WebP only
                     </p>
                   </>
                 )}
@@ -575,7 +682,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <input
                 type="url"
                 value={videoUrlInput}
-                onChange={(e) => setVideoUrlInput(e.target.value)}
+                onChange={(e) => setVideoUrlInput(sanitizeInputLive(e.target.value, 500))}
                 placeholder="https://example.com/video.mp4 or photo.jpg"
                 className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-hidden focus:border-pink-500"
               />
@@ -614,7 +721,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <input
                   ref={audioFileInputRef}
                   type="file"
-                  accept="audio/*,.mp3,.m4a,.wav,.ogg"
+                  accept=".mp3,.m4a,.wav,.ogg,audio/mpeg,audio/mp4,audio/wav,audio/ogg"
                   className="hidden"
                   onChange={handleAudioFileSelected}
                 />
@@ -716,7 +823,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     <input
                       type="text"
                       value={audioSearch}
-                      onChange={(e) => setAudioSearch(e.target.value)}
+                      onChange={(e) => setAudioSearch(sanitizeInputLive(e.target.value, 100))}
                       placeholder="Search songs, naats, Sufi, Punjabi..."
                       className="w-full bg-neutral-900 text-xs text-white placeholder-neutral-500 pl-8 pr-3 py-2 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500"
                     />
@@ -891,7 +998,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               type="text"
               required
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => setTitle(sanitizeInputLive(e.target.value, 140))}
               placeholder="e.g. Peaceful Ramadan Sunset or Midnight City Vibes"
               className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
             />
@@ -906,7 +1013,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <input
                 type="text"
                 value={hashtagsStr}
-                onChange={(e) => setHashtagsStr(e.target.value)}
+                onChange={(e) => setHashtagsStr(sanitizeHashtagsInput(e.target.value, 200))}
                 placeholder="#jattvibereels #naat #punjabi"
                 className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
               />
@@ -927,6 +1034,57 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <option value="cute">Cute &amp; Lifestyle</option>
                 <option value="creative">Creative &amp; Art</option>
               </select>
+            </div>
+          </div>
+
+          {/* Creator Download Privacy Toggle */}
+          <div className="rounded-2xl bg-neutral-950/90 border border-neutral-800 p-3.5 space-y-2.5">
+            <div className="flex items-start gap-2">
+              <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                {allowDownload ? <Download className="w-3.5 h-3.5 text-cyan-400" /> : <Lock className="w-3.5 h-3.5 text-amber-400" />}
+              </div>
+              <div>
+                <p className="text-xs font-black text-white leading-snug">
+                  Allow others to download your video?
+                </p>
+                <p className="text-[11px] text-neutral-400">
+                  (Kya koi aap ki video download kar sakta hai?)
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setAllowDownload(true)}
+                className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                  allowDownload
+                    ? 'bg-emerald-500/15 border-emerald-400/70 text-emerald-200 shadow-sm'
+                    : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+                }`}
+              >
+                <Download className={`w-4 h-4 shrink-0 ${allowDownload ? 'text-emerald-400' : 'text-neutral-500'}`} />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold leading-tight">Yes, Allow Download</p>
+                  <p className="text-[10px] opacity-80 truncate">Viewers can save this video</p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAllowDownload(false)}
+                className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                  !allowDownload
+                    ? 'bg-rose-500/15 border-rose-400/70 text-rose-200 shadow-sm'
+                    : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+                }`}
+              >
+                <Lock className={`w-4 h-4 shrink-0 ${!allowDownload ? 'text-rose-400' : 'text-neutral-500'}`} />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold leading-tight">No, Keep Private (Disable Download)</p>
+                  <p className="text-[10px] opacity-80 truncate">Blocks downloads with alert</p>
+                </div>
+              </button>
             </div>
           </div>
 

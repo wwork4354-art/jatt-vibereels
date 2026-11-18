@@ -16,6 +16,7 @@ import {
 import { DirectSnapMessage, DirectSnapRecipient } from '../types';
 import { normalizeCreatorUsername } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import { sanitizeInputLive, sanitizeSearchQuery, sanitizeText } from '../utils/security';
 
 interface DirectSnapsModalProps {
   isOpen: boolean;
@@ -166,10 +167,11 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
 
   const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeConversation || !textDraft.trim() || isSendingText) return;
+    const cleanText = sanitizeText(textDraft, 500);
+    if (!activeConversation || !cleanText || isSendingText) return;
     setIsSendingText(true);
     try {
-      await onSendTextMessage(activeConversation.partner, textDraft.trim());
+      await onSendTextMessage(activeConversation.partner, cleanText);
       setTextDraft('');
     } catch {
       onShowToast('Could not send message. Please try again.');
@@ -238,7 +240,7 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
                 <input
                   type="text"
                   value={friendSearch}
-                  onChange={(e) => setFriendSearch(e.target.value)}
+                  onChange={(e) => setFriendSearch(sanitizeSearchQuery(e.target.value, 120))}
                   placeholder="Search friends or @username..."
                   className="w-full bg-neutral-900 text-xs text-white placeholder-neutral-400 pl-8.5 pr-3 py-2 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500"
                 />
@@ -530,7 +532,7 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
                   <input
                     type="text"
                     value={textDraft}
-                    onChange={(e) => setTextDraft(e.target.value)}
+                    onChange={(e) => setTextDraft(sanitizeInputLive(e.target.value, 500))}
                     placeholder={`Message @${activeConversation.partner.username}...`}
                     className="flex-1 bg-neutral-900 text-xs text-white placeholder-neutral-500 px-3.5 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500"
                   />

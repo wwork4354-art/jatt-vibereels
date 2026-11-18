@@ -24,6 +24,7 @@ import {
   Clock,
   Search,
   CheckCircle2,
+  Lock,
 } from 'lucide-react';
 import {
   VideoPost,
@@ -42,11 +43,21 @@ import {
   getOrCreateUserProfileId,
   saveLocalPostRecord,
   savePostAudioMeta,
+  savePostPrivacyMeta,
 } from '../lib/supabaseService';
 import { publishLiveStory, sendDirectSnap } from '../lib/liveSnapService';
 import { savePostForOffline } from '../lib/offlineMediaStore';
 import { CURATED_AUDIO_LIBRARY } from '../data/audioLibrary';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import {
+  sanitizeInputLive,
+  sanitizeText,
+  sanitizeHashtagsInput,
+  sanitizeSearchQuery,
+  validateSafeMediaFile,
+  checkRateLimit,
+  recordRateLimitEvent,
+} from '../utils/security';
 
 interface ProCameraModalProps {
   isOpen: boolean;
@@ -58,11 +69,12 @@ interface ProCameraModalProps {
   onPostLiveStory?: (story: LiveStoryItem) => void;
   onDirectSnapSent?: (snap: DirectSnapMessage) => void;
   onRecordSuccess: (newPost: VideoPost) => void;
+  onRecordSynced?: (tempId: string, syncedPost: VideoPost) => void;
   onSwitchToUploadFile: () => void;
   onShowToast: (msg: string) => void;
 }
 
-type ResolutionFpsMode = '1080p/60FPS' | '720p/60FPS';
+type ResolutionFpsMode = '4K UHD/60FPS' | '1080p/60FPS' | '720p/60FPS';
 
 export interface CameraFilterDef {
   id: string;
@@ -165,7 +177,7 @@ function getSupportedRecorderOptions(): MediaRecorderOptions {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeType)) {
       return {
         mimeType,
-        videoBitsPerSecond: 24_000_000,
+        videoBitsPerSecond: 35_000_000,
         audioBitsPerSecond: 192_000,
       };
     }
@@ -186,12 +198,13 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   onPostLiveStory,
   onDirectSnapSent,
   onRecordSuccess,
+  onRecordSynced,
   onSwitchToUploadFile,
   onShowToast,
 }) => {
-  // Camera Settings (Default 1080p/60FPS low-latency for zero ghosting/motion blur)
-  const [resFps, setResFps] = useState<ResolutionFpsMode>('1080p/60FPS');
-  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('1080p · 60fps');
+  // Camera Settings (Default 4K UHD/60FPS with instant hardware fallback for crisp zero-lag capture)
+  const [resFps, setResFps] = useState<ResolutionFpsMode>('4K UHD/60FPS');
+  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('4K UHD · 60fps');
   const [isHighFpsActive, setIsHighFpsActive] = useState<boolean>(true);
   const [selectedFilterId, setSelectedFilterId] = useState<string>('natural');
   const [nightModeLevel, setNightModeLevel] = useState<number>(0); // 0 = off, 1 = 1.5x, 2 = 3.0x
@@ -210,6 +223,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const [recordedMediaType, setRecordedMediaType] = useState<'video' | 'image'>('video');
   const [isSavedToGallery, setIsSavedToGallery] = useState<boolean>(false);
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
+  const [allowDownload, setAllowDownload] = useState<boolean>(true);
 
   // Live Snap & Direct Send State
   const [isSnapSendSheetOpen, setIsSnapSendSheetOpen] = useState<boolean>(false);
@@ -219,7 +233,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
 
   // Post-recording caption & song form
   const [clipTitle, setClipTitle] = useState('');
-  const [clipHashtags, setClipHashtags] = useState('#JattVibe #60FPS #LiveFilter #Trending');
+  const [clipHashtags, setClipHashtags] = useState('#JattVibe #4K60FPS #LiveFilter #Trending');
   const [selectedMusicTrack, setSelectedMusicTrack] = useState<AudioTrackOption | null>(null);
   const [previewMusicId, setPreviewMusicId] = useState<string | null>(null);
   const [showMusicPicker, setShowMusicPicker] = useState<boolean>(false);
@@ -286,11 +300,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const handleNativeCameraCaptured = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const check = validateSafeMediaFile(file);
+      if (!check.valid) {
+        onShowToast(check.reason || 'Security Alert: Only .mp4, .webm, .jpg, .png, .webp allowed.');
+        e.target.value = '';
+        return;
+      }
       const url = URL.createObjectURL(file);
       recordedBlobRef.current = file;
-      setRecordedMediaType(file.type.startsWith('image/') ? 'image' : 'video');
+      setRecordedMediaType(check.mediaType || (file.type.startsWith('image/') ? 'image' : 'video'));
       setRecordedClipUrl(url);
-      const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      const rawName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      const cleanName = sanitizeText(rawName, 80);
       setClipTitle(cleanName || `HD Mobile Reel #${Math.floor(Math.random() * 900 + 100)}`);
       onShowToast('Captured from phone camera! Preview & publish below.');
     }
@@ -348,7 +369,39 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       };
 
       const targetConstraints: MediaStreamConstraints[] =
-        resFps === '1080p/60FPS'
+        resFps === '4K UHD/60FPS'
+          ? [
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 3840 },
+                  height: { ideal: 2160 },
+                  frameRate: { ideal: 60, min: 30 },
+                },
+                audio: audioHighQuality,
+              },
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 1920 },
+                  height: { ideal: 1080 },
+                  frameRate: { ideal: 60, min: 30 },
+                },
+                audio: audioHighQuality,
+              },
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                  frameRate: { ideal: 60, min: 30 },
+                },
+                audio: audioHighQuality,
+              },
+              { video: { facingMode, frameRate: { ideal: 60 } }, audio: true },
+              { video: { facingMode }, audio: false },
+            ]
+          : resFps === '1080p/60FPS'
           ? [
               {
                 video: {
@@ -760,13 +813,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     onShowToast(`Switched Camera: ${nextMode === 'environment' ? 'Back (Rear)' : 'Front (Selfie)'}`);
   };
 
-  // Toggle Low-Latency 1080p/60FPS & 720p/60FPS
+  // Cycle Ultra-HD 4K/60FPS, 1080p/60FPS & 720p/60FPS
   const handleCycleResFps = () => {
     if (isRecording) return;
     soundEngine.playCameraShutter();
-    const nextMode: ResolutionFpsMode = resFps === '1080p/60FPS' ? '720p/60FPS' : '1080p/60FPS';
+    const nextMode: ResolutionFpsMode =
+      resFps === '4K UHD/60FPS'
+        ? '1080p/60FPS'
+        : resFps === '1080p/60FPS'
+        ? '720p/60FPS'
+        : '4K UHD/60FPS';
     setResFps(nextMode);
-    onShowToast(`Low-Latency Camera: ${nextMode}`);
+    onShowToast(`Pro Camera Quality: ${nextMode}`);
   };
 
   // Cycle Night Mode Booster
@@ -815,156 +873,208 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
   };
 
-  // Publish newly captured video or photo to feed (+ Supabase if configured)
-  const handlePublishReel = async () => {
+  // Publish newly captured video or photo optimistically (instant playback) + background cloud sync
+  const handlePublishReel = () => {
     if (!recordedClipUrl || isPublishing) return;
+
+    const rateStatus = checkRateLimit('upload');
+    if (!rateStatus.allowed) {
+      onShowToast(
+        `Anti-spam limit: Max 5 uploads per minute. Please wait ${rateStatus.retryAfterSeconds}s.`
+      );
+      return;
+    }
+    recordRateLimitEvent('upload');
     setIsPublishing(true);
 
-    try {
-      const userId = creatorProfile?.id || currentUser?.id || getOrCreateUserProfileId();
-      const authorName = currentUser?.name || creatorProfile?.name || 'Jatt Creator';
-      const authorUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
-      const authorAvatar =
-        currentUser?.avatar ||
-        creatorProfile?.avatar ||
-        'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
-      const authorBio = currentUser?.bio || creatorProfile?.bio || 'VibeReels Pro Creator';
+    const userId = creatorProfile?.id || currentUser?.id || getOrCreateUserProfileId();
+    const authorName =
+      sanitizeText(currentUser?.name || creatorProfile?.name || 'Jatt Creator', 60) ||
+      'Jatt Creator';
+    const authorUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
+    const authorAvatar =
+      currentUser?.avatar ||
+      creatorProfile?.avatar ||
+      'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
+    const authorBio = sanitizeText(
+      currentUser?.bio || creatorProfile?.bio || 'VibeReels Pro Creator',
+      220
+    );
 
-      const cleanTitle = clipTitle.trim() || `Shot with Jatt VibeReels (${selectedFilter.name})`;
-      const caption = `${cleanTitle} (${streamInfoLabel} · ${selectedFilter.name}) ${clipHashtags}`.trim();
+    const cleanTitle =
+      sanitizeText(clipTitle, 100) || `Shot with Jatt VibeReels (${selectedFilter.name})`;
+    const safeHashtags = sanitizeText(clipHashtags, 200);
+    const caption = sanitizeText(
+      `${cleanTitle} (${streamInfoLabel} · ${selectedFilter.name}) ${safeHashtags}`,
+      320
+    );
 
-      const isDeviceOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
-      let finalMediaUrl = recordedClipUrl;
-      if (recordedBlobRef.current && isSupabaseConfigured && isDeviceOnline) {
-        onShowToast('Uploading high-quality capture to global feed...');
-        const ext = recordedMediaType === 'image' ? 'jpg' : recordedMimeRef.current.includes('mp4') ? 'mp4' : 'webm';
-        const uploadedUrl = await uploadMediaToReelsBucket(
-          recordedBlobRef.current,
-          'posts',
-          `camera-${Date.now()}.${ext}`
-        );
-        if (uploadedUrl) {
-          finalMediaUrl = uploadedUrl;
+    const capturedBlob = recordedBlobRef.current;
+    const instantMediaUrl = capturedBlob ? URL.createObjectURL(capturedBlob) : recordedClipUrl;
+
+    const resolvedSound: VideoPost['sound'] = selectedMusicTrack
+      ? {
+          title: selectedMusicTrack.title,
+          artist: selectedMusicTrack.artist,
+          trackType: selectedMusicTrack.trackType,
+          category: selectedMusicTrack.category,
+          originalVolume: recordedMediaType === 'video' ? 0.55 : 0,
+          bgAudioVolume: 0.85,
+          hasAttachedAudio: true,
         }
-      } else if (recordedBlobRef.current) {
-        finalMediaUrl = URL.createObjectURL(recordedBlobRef.current);
-      }
+      : {
+          title: recordedMediaType === 'image' ? 'Photo Studio Vibe' : 'Original HD Studio Audio',
+          artist: authorName,
+          trackType: 'future_bass',
+          category: recordedMediaType === 'image' ? 'beat' : 'original',
+          originalVolume: recordedMediaType === 'video' ? 1 : 0,
+          bgAudioVolume: 0,
+          hasAttachedAudio: false,
+        };
 
-      const resolvedSound: VideoPost['sound'] = selectedMusicTrack
-        ? {
-            title: selectedMusicTrack.title,
-            artist: selectedMusicTrack.artist,
-            trackType: selectedMusicTrack.trackType,
-            category: selectedMusicTrack.category,
-            originalVolume: recordedMediaType === 'video' ? 0.55 : 0,
-            bgAudioVolume: 0.85,
-            hasAttachedAudio: true,
+    const tags = clipHashtags
+      .split(/[\s,]+/)
+      .map((h) => h.replace(/^#/, '').trim())
+      .filter(Boolean);
+
+    const tempId = `pro-reel-${Date.now()}`;
+    const pickedAllowDl = allowDownload;
+
+    const optimisticPost: VideoPost = {
+      id: tempId,
+      title: cleanTitle,
+      description: caption,
+      hashtags: tags.length ? tags : ['JattVibe', '4K60FPS'],
+      videoUrl: instantMediaUrl,
+      posterUrl: recordedMediaType === 'image' ? instantMediaUrl : undefined,
+      fallbackGradient: 'from-pink-900 via-purple-900 to-black',
+      category: 'trending',
+      userId,
+      mediaType: recordedMediaType,
+      allowDownload: pickedAllowDl,
+      isUserUploaded: true,
+      createdAt: new Date().toISOString(),
+      creator: {
+        name: authorName,
+        username: authorUsername,
+        avatar: authorAvatar,
+        isVerified: true,
+        isFollowing: false,
+        bio: authorBio,
+      },
+      stats: {
+        views: 0,
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        saves: 0,
+        downloads: 0,
+      },
+      isLiked: false,
+      isSaved: false,
+      sound: resolvedSound,
+      commentsList: [],
+    };
+
+    soundEngine.stopPreviewTrack();
+    savePostPrivacyMeta([tempId, instantMediaUrl], pickedAllowDl);
+    savePostAudioMeta([tempId, instantMediaUrl], resolvedSound);
+    saveLocalPostRecord(optimisticPost);
+    onRecordSuccess(optimisticPost);
+    soundEngine.playDownloadComplete();
+    onShowToast(
+      `Published ${recordedMediaType === 'image' ? 'photo' : '4K UHD video'} to feed!`
+    );
+    setIsPublishing(false);
+    onClose();
+
+    // Sync to Supabase Storage + DB in background without interrupting playback
+    const isDeviceOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
+    void (async () => {
+      try {
+        let finalMediaUrl = instantMediaUrl;
+        if (capturedBlob && isSupabaseConfigured && isDeviceOnline) {
+          const ext =
+            recordedMediaType === 'image'
+              ? 'jpg'
+              : recordedMimeRef.current.includes('mp4')
+              ? 'mp4'
+              : 'webm';
+          const uploadedUrl = await uploadMediaToReelsBucket(
+            capturedBlob,
+            'posts',
+            `camera-${Date.now()}.${ext}`
+          );
+          if (uploadedUrl) {
+            finalMediaUrl = uploadedUrl;
           }
-        : {
-            title: recordedMediaType === 'image' ? 'Photo Studio Vibe' : 'Original HD Studio Audio',
-            artist: authorName,
-            trackType: 'future_bass',
-            category: recordedMediaType === 'image' ? 'beat' : 'original',
-            originalVolume: recordedMediaType === 'video' ? 1 : 0,
-            bgAudioVolume: 0,
-            hasAttachedAudio: false,
-          };
+        }
 
-      const supabasePost = isDeviceOnline
-        ? await createGlobalPostInSupabase({
-            userId,
-            username: authorUsername,
-            displayName: authorName,
-            avatarUrl: authorAvatar,
-            mediaUrl: finalMediaUrl,
-            mediaType: recordedMediaType,
-            caption,
-            sound: resolvedSound,
-          })
-        : null;
+        const supabasePost = isDeviceOnline
+          ? await createGlobalPostInSupabase({
+              userId,
+              username: authorUsername,
+              displayName: authorName,
+              avatarUrl: authorAvatar,
+              mediaUrl: finalMediaUrl,
+              mediaType: recordedMediaType,
+              caption,
+              allowDownload: pickedAllowDl,
+              sound: resolvedSound,
+            })
+          : null;
 
-      const tags = clipHashtags
-        .split(/[\s,]+/)
-        .map((h) => h.replace(/^#/, '').trim())
-        .filter(Boolean);
-
-      const newPost: VideoPost =
-        supabasePost
+        const finalSynced: VideoPost = supabasePost
           ? {
               ...supabasePost,
+              allowDownload: pickedAllowDl,
               sound: resolvedSound,
             }
           : {
-              id: `pro-reel-${Date.now()}`,
-              title: cleanTitle,
-              description: caption,
-              hashtags: tags.length ? tags : ['JattVibe', '4K60FPS'],
+              ...optimisticPost,
               videoUrl: finalMediaUrl,
               posterUrl: recordedMediaType === 'image' ? finalMediaUrl : undefined,
-              fallbackGradient: 'from-pink-900 via-purple-900 to-black',
-              category: 'trending',
-              userId,
-              mediaType: recordedMediaType,
-              isUserUploaded: true,
-              createdAt: new Date().toISOString(),
-              creator: {
-                name: authorName,
-                username: authorUsername,
-                avatar: authorAvatar,
-                isVerified: true,
-                isFollowing: false,
-                bio: authorBio,
-              },
-              stats: {
-                views: 0,
-                likes: 0,
-                comments: 0,
-                shares: 0,
-                saves: 0,
-                downloads: 0,
-              },
-              isLiked: false,
-              isSaved: false,
-              sound: resolvedSound,
-              commentsList: [],
             };
 
-      soundEngine.stopPreviewTrack();
-      savePostAudioMeta([newPost.id, finalMediaUrl], resolvedSound);
-      saveLocalPostRecord(newPost);
-      await savePostForOffline(newPost, {
-        mediaBlob: recordedBlobRef.current || undefined,
-        sourceType: 'recorded',
-        skipRemoteFetch: true,
-      });
-      onRecordSuccess(newPost);
-      soundEngine.playDownloadComplete();
-      onShowToast(
-        supabasePost
-          ? `Published ${recordedMediaType === 'image' ? 'photo' : 'HD video'} to global feed!`
-          : !isDeviceOnline
-          ? `Saved ${recordedMediaType === 'image' ? 'photo' : 'HD video'} offline! Play anytime in Saved / Downloads.`
-          : `Published ${recordedMediaType === 'image' ? 'photo' : 'HD video'} to For You feed!`
-      );
-      onClose();
-    } finally {
-      setIsPublishing(false);
-    }
+        savePostPrivacyMeta([finalSynced.id, finalMediaUrl, tempId], pickedAllowDl);
+        savePostAudioMeta([finalSynced.id, finalMediaUrl], resolvedSound);
+        saveLocalPostRecord(finalSynced);
+        await savePostForOffline(finalSynced, {
+          mediaBlob: capturedBlob || undefined,
+          sourceType: 'recorded',
+          skipRemoteFetch: true,
+        });
+        onRecordSynced?.(tempId, finalSynced);
+      } catch (err) {
+        console.warn('ProCamera background sync warning:', err);
+      }
+    })();
   };
 
   // Post recorded snap to 24-Hour Live Stories Bar
   const handlePostToLiveStories = async () => {
     if (!recordedClipUrl || isSendingSnap) return;
+    const rateStatus = checkRateLimit('upload');
+    if (!rateStatus.allowed) {
+      onShowToast(
+        `Anti-spam limit: Max 5 uploads per minute. Please wait ${rateStatus.retryAfterSeconds}s.`
+      );
+      return;
+    }
+    recordRateLimitEvent('upload');
     setIsSendingSnap(true);
     try {
       const senderId = currentUser?.id || creatorProfile?.id || getOrCreateUserProfileId();
-      const senderName = currentUser?.name || creatorProfile?.name || 'Jatt Creator';
+      const senderName =
+        sanitizeText(currentUser?.name || creatorProfile?.name || 'Jatt Creator', 60) ||
+        'Jatt Creator';
       const senderUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
       const senderAvatar =
         currentUser?.avatar ||
         creatorProfile?.avatar ||
         'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
 
+      const safeCaption = sanitizeText(clipTitle, 120);
       const createdStory = await publishLiveStory({
         userId: senderId,
         username: senderUsername,
@@ -973,7 +1083,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaBlob: recordedBlobRef.current,
         fallbackMediaUrl: recordedClipUrl,
         mediaType: recordedMediaType,
-        caption: clipTitle.trim() || undefined,
+        caption: safeCaption || undefined,
         filterName: selectedFilter.name,
       });
 
@@ -992,16 +1102,27 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   // Direct Send live snap privately to a selected friend/user
   const handleDirectSendToFriend = async (recipient: DirectSnapRecipient) => {
     if (!recordedClipUrl || isSendingSnap) return;
+    const rateStatus = checkRateLimit('upload');
+    if (!rateStatus.allowed) {
+      onShowToast(
+        `Anti-spam limit: Max 5 uploads per minute. Please wait ${rateStatus.retryAfterSeconds}s.`
+      );
+      return;
+    }
+    recordRateLimitEvent('upload');
     setIsSendingSnap(true);
     try {
       const senderId = currentUser?.id || creatorProfile?.id || getOrCreateUserProfileId();
-      const senderName = currentUser?.name || creatorProfile?.name || 'Jatt Creator';
+      const senderName =
+        sanitizeText(currentUser?.name || creatorProfile?.name || 'Jatt Creator', 60) ||
+        'Jatt Creator';
       const senderUsername = currentUser?.username || creatorProfile?.username || 'jatt_official';
       const senderAvatar =
         currentUser?.avatar ||
         creatorProfile?.avatar ||
         'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
 
+      const safeCaption = sanitizeText(clipTitle, 120);
       const sentMsg = await sendDirectSnap({
         sender: {
           id: senderId,
@@ -1013,7 +1134,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaBlob: recordedBlobRef.current,
         fallbackMediaUrl: recordedClipUrl,
         mediaType: recordedMediaType,
-        caption: clipTitle.trim() || undefined,
+        caption: safeCaption || undefined,
         filterName: selectedFilter.name,
       });
 
@@ -1071,7 +1192,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       <input
         ref={nativeCameraInputRef}
         type="file"
-        accept="video/*,image/*"
+        accept=".mp4,.webm,.jpg,.jpeg,.png,.webp,video/mp4,video/webm,image/jpeg,image/png,image/webp"
         capture="environment"
         className="hidden"
         onChange={handleNativeCameraCaptured}
@@ -1107,7 +1228,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           </button>
         </div>
 
-        {/* Center: Low-Latency 60FPS Badge + Active Stream Resolution & FPS */}
+        {/* Center: Ultra-HD 4K · 60FPS Badge + Active Stream Resolution & FPS */}
         <div className="flex items-center gap-1.5">
           <span
             className={`px-2 py-1 rounded-full text-[10px] font-black tracking-wider border shadow-sm ${
@@ -1116,14 +1237,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                 : 'bg-neutral-900/90 border-cyan-500/50 text-cyan-300'
             }`}
           >
-            {resFps === '720p/60FPS' ? '720p · 60FPS' : '1080p · 60FPS'}
+            {resFps === '4K UHD/60FPS'
+              ? '4K UHD · 60FPS'
+              : resFps === '720p/60FPS'
+              ? '720p · 60FPS'
+              : '1080p · 60FPS'}
           </span>
 
           <button
             type="button"
             onClick={handleCycleResFps}
             className="px-3 py-1.5 rounded-full bg-neutral-900/90 hover:bg-neutral-800 border border-pink-500/50 text-white text-[11px] font-black flex items-center gap-1.5 shadow-lg shadow-pink-500/15 active:scale-95 transition-transform"
-            title="Tap to toggle 1080p/60FPS and 720p/60FPS low-latency stream"
+            title="Tap to cycle 4K UHD/60FPS, 1080p/60FPS, and 720p/60FPS"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="tracking-wide">{isSimulatedFeed ? resFps : streamInfoLabel}</span>
@@ -1190,11 +1315,12 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             ) : (
               <video
                 src={recordedClipUrl}
+                preload="auto"
                 autoPlay
                 loop
                 controls
                 playsInline
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover [transform:translate3d(0,0,0)]"
               />
             )}
 
@@ -1322,17 +1448,50 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                 <input
                   type="text"
                   value={clipTitle}
-                  onChange={(e) => setClipTitle(e.target.value)}
+                  onChange={(e) => setClipTitle(sanitizeInputLive(e.target.value, 100))}
                   placeholder="Give your reel a title..."
                   className="w-full bg-neutral-900 text-xs text-white px-3 py-2 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
                 />
                 <input
                   type="text"
                   value={clipHashtags}
-                  onChange={(e) => setClipHashtags(e.target.value)}
+                  onChange={(e) => setClipHashtags(sanitizeHashtagsInput(e.target.value, 200))}
                   placeholder="#hashtags"
                   className="w-full bg-neutral-900 text-[11px] text-cyan-300 px-3 py-1.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-cyan-400"
                 />
+              </div>
+
+              {/* Creator Download Privacy Toggle */}
+              <div className="rounded-xl bg-neutral-900/90 border border-neutral-800 px-2.5 py-2 space-y-1.5">
+                <p className="text-[10px] font-bold text-neutral-300 leading-tight">
+                  Allow others to download your video? (Kya koi download kar sakta hai?)
+                </p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAllowDownload(true)}
+                    className={`py-1.5 px-2 rounded-lg text-[10px] font-black border flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                      allowDownload
+                        ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                        : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>Yes, Allow Download</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAllowDownload(false)}
+                    className={`py-1.5 px-2 rounded-lg text-[10px] font-black border flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                      !allowDownload
+                        ? 'bg-rose-500/20 border-rose-400 text-rose-200'
+                        : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>No, Keep Private</span>
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-col sm:flex-row items-stretch gap-2">
@@ -1468,7 +1627,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                       <input
                         type="text"
                         value={snapFriendSearch}
-                        onChange={(e) => setSnapFriendSearch(e.target.value)}
+                        onChange={(e) => setSnapFriendSearch(sanitizeSearchQuery(e.target.value, 80))}
                         placeholder="Search user or @username..."
                         className="w-full bg-neutral-900 text-xs text-white placeholder-neutral-500 pl-8.5 pr-3 py-2 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500"
                       />

@@ -20,6 +20,8 @@ import {
   Pause,
   Image as ImageIcon,
   Send,
+  Wand2,
+  ArrowUpDown,
 } from 'lucide-react';
 import {
   FeedTab,
@@ -34,6 +36,8 @@ import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 import { soundEngine } from '../utils/soundEngine';
 import { PWAInstallButton } from './PWAInstallButton';
+import { isMainAdminAccount } from '../data/mockUsers';
+import { sanitizeSearchQuery, validateSafeMediaFile } from '../utils/security';
 
 interface MobileNavigationProps {
   currentTab: FeedTab;
@@ -58,6 +62,9 @@ interface MobileNavigationProps {
   onOpenRegister: () => void;
   onOpenAdmin: () => void;
   onLogout?: () => void;
+  onShowToast?: (msg: string) => void;
+  isBottomNavOpen: boolean;
+  onToggleBottomNav: () => void;
 }
 
 export const MobileNavigation: React.FC<MobileNavigationProps> = ({
@@ -83,6 +90,9 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onOpenRegister,
   onOpenAdmin,
   onLogout,
+  onShowToast,
+  isBottomNavOpen,
+  onToggleBottomNav,
 }) => {
   const [isMobileProfileOpen, setIsMobileProfileOpen] = useState(false);
   const [isUploadSheetOpen, setIsUploadSheetOpen] = useState(false);
@@ -134,6 +144,16 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   const handleVideoFileSelected = (e: React.ChangeEvent<HTMLInputElement>, source: 'live' | 'gallery') => {
     const file = e.target.files?.[0];
     if (file) {
+      const check = validateSafeMediaFile(file);
+      if (!check.valid) {
+        setIsUploadSheetOpen(false);
+        onShowToast?.(
+          check.reason ||
+            'Blocked unsafe file. Only .mp4, .webm, .jpg, .png, and .webp are allowed.'
+        );
+        e.target.value = '';
+        return;
+      }
       setIsUploadSheetOpen(false);
       onQuickVideoUpload?.(file, source);
     }
@@ -271,7 +291,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
             </button>
           ) : (
             <div className="flex items-center gap-1">
-              {currentUser.role === 'admin' && (
+              {isMainAdminAccount(currentUser) && (
                 <button
                   type="button"
                   onClick={onOpenAdmin}
@@ -309,7 +329,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                 type="text"
                 autoFocus
                 value={mobileSearchQuery}
-                onChange={(e) => setMobileSearchQuery(e.target.value)}
+                onChange={(e) => setMobileSearchQuery(sanitizeSearchQuery(e.target.value, 120))}
                 placeholder="Search @ID, user, video, or song..."
                 className="w-full bg-neutral-900 text-xs text-white placeholder-neutral-400 pl-8.5 pr-8 py-2 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-pink-500"
               />
@@ -497,8 +517,38 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
       )}
 
 
-      {/* Mobile Bottom Tab Bar */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/98 border-t border-neutral-800/80 px-2 py-1.5 flex items-center justify-around pb-safe [transform:translateZ(0)]">
+      {/* Floating Swap / Toggle Menu Button at Bottom-Right Corner (keeps video scrubber completely clear) */}
+      <button
+        type="button"
+        onClick={onToggleBottomNav}
+        aria-expanded={isBottomNavOpen}
+        aria-label={isBottomNavOpen ? 'Hide bottom navigation menu' : 'Show bottom navigation menu'}
+        title={isBottomNavOpen ? 'Hide Navigation Bar' : 'Swap / Show Navigation Bar'}
+        className={`lg:hidden fixed right-3 bottom-9 z-40 min-w-[44px] min-h-[42px] px-2.5 rounded-2xl border backdrop-blur-md flex items-center justify-center gap-1.5 shadow-xl active:scale-95 transition-[transform,background-color,border-color] duration-200 ease-out cursor-pointer [transform:translateZ(0)] ${
+          isBottomNavOpen
+            ? '-translate-y-11 bg-pink-600/90 border-pink-400/70 text-white shadow-pink-600/35'
+            : 'translate-y-0 bg-neutral-950/85 hover:bg-neutral-900 border-white/20 text-neutral-100'
+        }`}
+      >
+        {isBottomNavOpen ? (
+          <X className="w-4 h-4 shrink-0" />
+        ) : (
+          <ArrowUpDown className="w-4 h-4 text-pink-400 shrink-0" />
+        )}
+        <span className="text-[10px] font-black tracking-wide">
+          {isBottomNavOpen ? 'Hide' : 'Swap'}
+        </span>
+      </button>
+
+      {/* Collapsible Mobile Bottom Tab Bar */}
+      <nav
+        aria-hidden={!isBottomNavOpen}
+        className={`lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800/80 px-2 py-1.5 flex items-center justify-around pb-safe transition-[transform,opacity] duration-200 ease-out [transform:translateZ(0)] ${
+          isBottomNavOpen
+            ? 'translate-y-0 opacity-100 pointer-events-auto'
+            : 'translate-y-full opacity-0 pointer-events-none'
+        }`}
+      >
         <button
           type="button"
           onClick={() => onSelectTab('foryou')}
@@ -523,7 +573,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
         <input
           ref={liveRecordInputRef}
           type="file"
-          accept="video/*"
+          accept=".mp4,.webm,video/mp4,video/webm"
           capture="environment"
           className="hidden"
           style={{ display: 'none' }}
@@ -534,7 +584,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
         <input
           ref={galleryInputRef}
           type="file"
-          accept="video/*,image/*"
+          accept=".mp4,.webm,.jpg,.jpeg,.png,.webp,video/mp4,video/webm,image/jpeg,image/png,image/webp"
           className="hidden"
           style={{ display: 'none' }}
           onChange={(e) => handleVideoFileSelected(e, 'gallery')}
@@ -560,17 +610,21 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           </div>
         </button>
 
-        {/* Dedicated Movie Box & Downloads Tab Button */}
+        {/* Dedicated CapCut-Style Video & Photo Templates Tab Button (Replaces duplicate Movie tab) */}
         <button
           type="button"
-          onClick={() => onSelectTab('downloads')}
+          onClick={() => onSelectTab('templates')}
           className={`flex flex-col items-center gap-0.5 min-w-[48px] min-h-[44px] justify-center transition-colors ${
-            currentTab === 'downloads' ? 'text-cyan-400 font-bold' : 'text-neutral-400 hover:text-white'
+            currentTab === 'templates' ? 'text-pink-400 font-bold' : 'text-neutral-400 hover:text-white'
           }`}
-          title="Movie Box & All-in-One Media Hub"
+          title="Video & Photo Templates Studio"
         >
-          <Film className="w-5 h-5 text-cyan-400" />
-          <span className="text-[10px]">Movie Box</span>
+          <Wand2
+            className={`w-5 h-5 ${
+              currentTab === 'templates' ? 'text-pink-400' : 'text-cyan-400'
+            }`}
+          />
+          <span className="text-[10px]">Templates</span>
         </button>
 
         <button
@@ -657,7 +711,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                 <User className="w-4 h-4" />
                 <span>Open Creator Profile</span>
               </button>
-              {currentUser.role === 'admin' && (
+              {isMainAdminAccount(currentUser) && (
                 <button
                   type="button"
                   onClick={() => {

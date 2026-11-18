@@ -15,6 +15,8 @@ import {
   saveStoredUsers,
   getStoredCurrentUser,
   saveStoredCurrentUser,
+  isMainAdminAccount,
+  STORAGE_USERS_KEY,
 } from './data/mockUsers';
 import {
   VideoPost,
@@ -39,6 +41,16 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { soundEngine } from './utils/soundEngine';
 import { compressImageFile } from './utils/imageOptimize';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import {
+  touchSessionActivity,
+  clearSessionActivity,
+  sanitizeText,
+  sanitizeUsername,
+  sanitizeSafeUrl,
+  validateSafeMediaFile,
+  checkRateLimit,
+  recordRateLimitEvent,
+} from './utils/security';
 import {
   isStoryActive,
   getStoredLiveStories,
@@ -105,6 +117,9 @@ const PublicCreatorProfileView = lazy(() =>
 const DirectSnapsModal = lazy(() =>
   import('./components/DirectSnapsModal').then((m) => ({ default: m.DirectSnapsModal }))
 );
+const TemplatesStudioView = lazy(() =>
+  import('./components/TemplatesStudioView').then((m) => ({ default: m.TemplatesStudioView }))
+);
 
 const LazyTabFallback = () => (
   <div className="w-full h-full bg-neutral-950 p-4 sm:p-6 flex flex-col gap-4 overflow-hidden">
@@ -146,6 +161,7 @@ import {
   getStoredPostComments,
   savePostCommentsForPost,
   getPostAudioMeta,
+  getPostAllowDownload,
   getStoredActivityEvents,
   getActivityLastReadAt,
   setActivityLastReadAt,
@@ -167,6 +183,10 @@ import {
   adjustCreatorFollowerDelta,
   normalizeCreatorUsername,
   GLOBAL_FEED_CACHE_KEY,
+  USERS_BROADCAST_CHANNEL,
+  broadcastUsersSync,
+  syncRegisteredUserToCloud,
+  fetchRegisteredUsersFromCloud,
   deletePostEverywhere,
 } from './lib/supabaseService';
 
@@ -277,9 +297,12 @@ function hydrateVideosFromStorage(
       v.creator.username.toLowerCase() === currentUsername.toLowerCase();
 
     const savedSound = getPostAudioMeta(v.id, v.videoUrl);
+    const resolvedAllowDownload =
+      v.allowDownload === false ? false : getPostAllowDownload(v.id, v.videoUrl);
 
     return {
       ...v,
+      allowDownload: resolvedAllowDownload,
       isUserUploaded: isMine,
       sound: savedSound || v.sound,
       isLiked: likedIds.has(v.id) ? true : v.isLiked && m?.likes === undefined ? v.isLiked : likedIds.has(v.id),
@@ -313,6 +336,7 @@ function filterFeedVideos(
   if (
     tab === 'live' ||
     tab === 'downloads' ||
+    tab === 'templates' ||
     tab === 'profile' ||
     tab === 'activity' ||
     tab === 'channel'
@@ -402,6 +426,7 @@ export default function App() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
   const [isCreatorSearchOpen, setIsCreatorSearchOpen] = useState(false);
   const [liveStories, setLiveStories] = useState<LiveStoryItem[]>(getStoredLiveStories);
   const [directSnaps, setDirectSnaps] = useState<DirectSnapMessage[]>(getStoredDirectSnaps);
@@ -409,6 +434,7 @@ export default function App() {
   const [isDirectSnapsOpen, setIsDirectSnapsOpen] = useState(false);
   const [isStoriesBarOpen, setIsStoriesBarOpen] = useState(false);
   const [storiesDragOffsetPx, setStoriesDragOffsetPx] = useState<number | null>(null);
+  const [isMobileBottomNavOpen, setIsMobileBottomNavOpen] = useState(false);
   const [snapReplyTarget, setSnapReplyTarget] = useState<DirectSnapRecipient | null>(null);
   const [profileInitialSubTab, setProfileInitialSubTab] = useState<
     'videos' | 'saved' | 'liked' | 'activity' | undefined
@@ -443,10 +469,40 @@ export default function App() {
     }
   }, [currentTab]);
 
-  // Sync users to localStorage
+  // Merge incoming user records without losing local timestamps or newly registered entries
+  const mergeUsersList = useCallback(
+    (incoming: UserAccount[], base: UserAccount[]): UserAccount[] => {
+      const map = new Map<string, UserAccount>();
+      for (const u of base) {
+        map.set(u.username.toLowerCase(), u);
+      }
+      for (const u of incoming) {
+        const key = u.username.toLowerCase();
+        const existing = map.get(key);
+        if (!existing) {
+          map.set(key, u);
+        } else {
+          const existingActive = existing.lastActiveAt ? new Date(existing.lastActiveAt).getTime() : 0;
+          const nextActive = u.lastActiveAt ? new Date(u.lastActiveAt).getTime() : 0;
+          map.set(key, {
+            ...existing,
+            ...u,
+            phone: u.phone || existing.phone,
+            createdAtIso: existing.createdAtIso || u.createdAtIso,
+            lastActiveAt: nextActive >= existingActive ? u.lastActiveAt || existing.lastActiveAt : existing.lastActiveAt,
+          });
+        }
+      }
+      return Array.from(map.values());
+    },
+    []
+  );
+
+  // Sync users to localStorage + BroadcastChannel across tabs
   const updateUsers = useCallback((newUsers: UserAccount[]) => {
     setUsers(newUsers);
     saveStoredUsers(newUsers);
+    broadcastUsersSync(newUsers);
   }, []);
 
   // Sync current user to localStorage
@@ -455,6 +511,86 @@ export default function App() {
     saveStoredCurrentUser(user);
   }, []);
 
+  const refreshLiveUsers = useCallback(() => {
+    const stored = getStoredUsers();
+    setUsers((prev) => mergeUsersList(stored, prev));
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      void fetchRegisteredUsersFromCloud().then((cloudUsers) => {
+        if (cloudUsers.length > 0) {
+          setUsers((prev) => {
+            const merged = mergeUsersList(cloudUsers, prev);
+            saveStoredUsers(merged);
+            return merged;
+          });
+        }
+      });
+    }
+  }, [mergeUsersList]);
+
+  // Listen for real-time cross-tab registrations & update online user heartbeat
+  useEffect(() => {
+    refreshLiveUsers();
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === STORAGE_USERS_KEY) {
+        const latest = getStoredUsers();
+        setUsers((prev) => mergeUsersList(latest, prev));
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        bc = new BroadcastChannel(USERS_BROADCAST_CHANNEL);
+        bc.onmessage = (ev) => {
+          if (ev.data?.type === 'USERS_SYNC' && Array.isArray(ev.data.users)) {
+            setUsers((prev) => {
+              const merged = mergeUsersList(ev.data.users as UserAccount[], prev);
+              saveStoredUsers(merged);
+              return merged;
+            });
+          }
+        };
+      }
+    } catch {
+      // ignore BroadcastChannel failures
+    }
+
+    const heartbeatTimer = window.setInterval(() => {
+      if (currentUser) {
+        const nowIso = new Date().toISOString();
+        const refreshedUser: UserAccount = {
+          ...currentUser,
+          lastActiveAt: nowIso,
+          isOnline: true,
+        };
+        setCurrentUser(refreshedUser);
+        saveStoredCurrentUser(refreshedUser);
+        setUsers((prev) => {
+          const updated = prev.map((u) =>
+            u.id === refreshedUser.id || u.username.toLowerCase() === refreshedUser.username.toLowerCase()
+              ? { ...u, lastActiveAt: nowIso, isOnline: true }
+              : u
+          );
+          saveStoredUsers(updated);
+          broadcastUsersSync(updated);
+          return updated;
+        });
+        void syncRegisteredUserToCloud(refreshedUser);
+      }
+      if (isAdminPanelOpen) {
+        refreshLiveUsers();
+      }
+    }, 20_000);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      bc?.close();
+      window.clearInterval(heartbeatTimer);
+    };
+  }, [currentUser, isAdminPanelOpen, mergeUsersList, refreshLiveUsers]);
+
   // Show brief toast notification
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -462,6 +598,12 @@ export default function App() {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 2400);
   }, []);
+
+  // Keep active user session permanently persisted across reloads and app updates (never auto-logout)
+  useEffect(() => {
+    if (!currentUser) return;
+    saveStoredCurrentUser(currentUser);
+  }, [currentUser]);
 
   // Load global posts, user's own posts, comments & activity from Supabase + listen for real-time changes
   useEffect(() => {
@@ -570,6 +712,7 @@ export default function App() {
       void import('./components/CreatorDirectoryModal');
       void import('./components/PublicCreatorProfileView');
       void import('./components/DirectSnapsModal');
+      void import('./components/TemplatesStudioView');
     };
     const idleWin = window as Window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
@@ -748,23 +891,33 @@ export default function App() {
   // Update creator profile and persist to localStorage + Supabase
   const handleUpdateCreatorProfile = useCallback(
     (updated: CreatorProfileData) => {
-      setCreatorProfile(updated);
+      const cleanUsername = sanitizeUsername(updated.username) || updated.username;
+      const sanitizedProfile: CreatorProfileData = {
+        ...updated,
+        name: sanitizeText(updated.name, 60) || cleanUsername,
+        username: cleanUsername,
+        bio: sanitizeText(updated.bio, 250),
+        avatar:
+          sanitizeSafeUrl(updated.avatar) ||
+          'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png',
+      };
+      setCreatorProfile(sanitizedProfile);
       try {
-        localStorage.setItem(USER_PROFILE_ID_KEY, updated.id);
-        localStorage.setItem(CREATOR_PROFILE_STORAGE_KEY, JSON.stringify(updated));
+        localStorage.setItem(USER_PROFILE_ID_KEY, sanitizedProfile.id);
+        localStorage.setItem(CREATOR_PROFILE_STORAGE_KEY, JSON.stringify(sanitizedProfile));
       } catch {
         // ignore storage errors
       }
 
-      void upsertUserProfileInSupabase(updated);
+      void upsertUserProfileInSupabase(sanitizedProfile);
 
       if (currentUser) {
         const updatedCurrentUser: UserAccount = {
           ...currentUser,
-          name: updated.name,
-          username: updated.username,
-          bio: updated.bio,
-          avatar: updated.avatar,
+          name: sanitizedProfile.name,
+          username: sanitizedProfile.username,
+          bio: sanitizedProfile.bio,
+          avatar: sanitizedProfile.avatar,
         };
         updateCurrentUser(updatedCurrentUser);
         const updatedUsers = users.map((u) =>
@@ -775,18 +928,18 @@ export default function App() {
 
       setVideos((prev) =>
         prev.map((v) =>
-          v.userId === updated.id ||
+          v.userId === sanitizedProfile.id ||
           v.isUserUploaded ||
-          v.creator.username.toLowerCase() === updated.username.toLowerCase()
+          v.creator.username.toLowerCase() === sanitizedProfile.username.toLowerCase()
             ? {
                 ...v,
                 isUserUploaded: true,
                 creator: {
                   ...v.creator,
-                  name: updated.name,
-                  username: updated.username,
-                  avatar: updated.avatar,
-                  bio: updated.bio,
+                  name: sanitizedProfile.name,
+                  username: sanitizedProfile.username,
+                  avatar: sanitizedProfile.avatar,
+                  bio: sanitizedProfile.bio,
                 },
               }
             : v
@@ -1348,7 +1501,14 @@ export default function App() {
   const handleOpenUpload = useCallback(() => setIsUploadOpen(true), []);
   const handleOpenTrends = useCallback(() => setIsTrendsOpen(true), []);
   const handleOpenProCamera = useCallback(() => setIsProCameraOpen(true), []);
-  const handleOpenAdminPanel = useCallback(() => setIsAdminPanelOpen(true), []);
+  const handleOpenAdminPanel = useCallback(() => {
+    if (!isMainAdminAccount(currentUser)) {
+      showToast('Admin Dashboard is restricted to Main Admin only.');
+      return;
+    }
+    refreshLiveUsers();
+    setIsAdminPanelOpen(true);
+  }, [currentUser, refreshLiveUsers, showToast]);
   const handleOpenCreatorSearch = useCallback(() => setIsCreatorSearchOpen(true), []);
   const handleOpenAuthLogin = useCallback(() => {
     setAuthMode('login');
@@ -1377,14 +1537,16 @@ export default function App() {
   // Add comment (real username + ISO timestamp + persistent DB/local sync + activity log)
   const handleAddComment = (text: string) => {
     if (!commentsVideo) return;
+    const cleanText = sanitizeText(text, 500);
+    if (!cleanText) return;
     const actor = getActiveActor();
     const nowIso = new Date().toISOString();
 
     const newComment: CommentItem = {
       id: `comm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       user: {
-        name: actor.actorName,
-        username: actor.actorUsername,
+        name: sanitizeText(actor.actorName, 60) || actor.actorUsername,
+        username: sanitizeUsername(actor.actorUsername) || actor.actorUsername,
         avatar: actor.actorAvatar,
         isCreator:
           currentUser?.role === 'creator' ||
@@ -1392,7 +1554,7 @@ export default function App() {
           commentsVideo.creator.username === actor.actorUsername,
         isVerified: currentUser?.role === 'admin' || currentUser?.role === 'creator',
       },
-      text,
+      text: cleanText,
       timestamp: 'Just now',
       createdAt: nowIso,
       likes: 0,
@@ -1427,7 +1589,7 @@ export default function App() {
       nextCommentsList,
       isSupabasePost: commentsVideo.isSupabasePost,
     });
-    logActivity(commentsVideo, 'comment', text);
+    logActivity(commentsVideo, 'comment', cleanText);
   };
 
   // Like comment
@@ -1485,23 +1647,69 @@ export default function App() {
     }, 100);
   };
 
+  // Reconcile optimistic instant upload with final Supabase cloud post silently in background
+  const handleUploadCloudSynced = useCallback(
+    (tempId: string, syncedPost: VideoPost) => {
+      if (expectedVideoIdRef.current === tempId) {
+        expectedVideoIdRef.current = syncedPost.id;
+      }
+      setVideos((prev) => {
+        const withoutDupes = prev.filter((v) => v.id !== syncedPost.id || v.id === tempId);
+        return withoutDupes.map((v) =>
+          v.id === tempId
+            ? {
+                ...syncedPost,
+                // Keep instant local blob URL during active playback to prevent frame jump
+                videoUrl: v.videoUrl.startsWith('blob:') ? v.videoUrl : syncedPost.videoUrl,
+                posterUrl: v.posterUrl || syncedPost.posterUrl,
+              }
+            : v
+        );
+      });
+    },
+    []
+  );
+
   // Quick Mobile Upload Handler (Gallery selection opens UploadModal with Song/Naat editor; Live Capture posts fast)
   const handleQuickGalleryUpload = useCallback(
     async (file: File, source?: 'live' | 'gallery') => {
+      const check = validateSafeMediaFile(file);
+      if (!check.valid) {
+        showToast(
+          check.reason || 'Security Alert: Only .mp4, .webm, .jpg, .png, .webp allowed.'
+        );
+        return;
+      }
       if (source === 'gallery') {
         setPreselectedUploadFile(file);
         setIsUploadOpen(true);
         return;
       }
+      const rateStatus = checkRateLimit('upload');
+      if (!rateStatus.allowed) {
+        showToast(
+          `Anti-spam limit: Max 5 uploads per minute. Wait ${rateStatus.retryAfterSeconds}s.`
+        );
+        return;
+      }
+      recordRateLimitEvent('upload');
       try {
-        const isImage = file.type.startsWith('image/');
+        const isImage = check.mediaType === 'image' || file.type.startsWith('image/');
         const mediaType: 'video' | 'image' = isImage ? 'image' : 'video';
         const localPreviewUrl = URL.createObjectURL(file);
         const isLive = source === 'live';
-        const rawName = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') : isImage ? 'Photo' : 'Video';
+        const rawName = file.name
+          ? sanitizeText(file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '), 80)
+          : isImage
+          ? 'Photo'
+          : 'Video';
         const cleanTitle = isLive
           ? `Live Video (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`
-          : rawName.charAt(0).toUpperCase() + rawName.slice(1);
+          : rawName
+          ? rawName.charAt(0).toUpperCase() + rawName.slice(1)
+          : isImage
+          ? 'Photo'
+          : 'Video';
 
         const captionText = isLive
           ? `${cleanTitle} 🎥 Recorded fresh with live mobile camera #liverecord #jattswag #vibereels`
@@ -1666,6 +1874,7 @@ export default function App() {
   };
 
   const handleLoginSuccess = (user: UserAccount) => {
+    touchSessionActivity();
     updateCurrentUser(user);
     void handleSyncProfileByUsername(user.username).then((synced) => {
       if (!synced) {
@@ -1683,6 +1892,9 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    clearSessionActivity();
+    setIsAdminPanelOpen(false);
+    setIsAdminUnlocked(false);
     updateCurrentUser(null);
     showToast('You have logged out');
   };
@@ -1890,12 +2102,16 @@ export default function App() {
               setSelectedTag(null);
               setCurrentTab(tab);
               setActiveIndex(0);
+              setIsMobileBottomNavOpen(false);
               if (tab === 'activity') {
                 handleMarkActivityRead();
               }
             }}
             onOpenUpload={handleOpenUpload}
-            onOpenTrends={handleOpenTrends}
+            onOpenTrends={() => {
+              setIsMobileBottomNavOpen(false);
+              handleOpenTrends();
+            }}
             onOpenCreatorSearch={handleOpenCreatorSearch}
             videos={videos}
             ownProfile={creatorProfile}
@@ -1914,6 +2130,9 @@ export default function App() {
             onOpenRegister={handleOpenAuthRegister}
             onOpenAdmin={handleOpenAdminPanel}
             onLogout={handleLogout}
+            onShowToast={showToast}
+            isBottomNavOpen={isMobileBottomNavOpen}
+            onToggleBottomNav={() => setIsMobileBottomNavOpen((prev) => !prev)}
           />
 
 
@@ -1942,6 +2161,18 @@ export default function App() {
                 onShowToast={showToast}
                 isMuted={isMuted}
                 onToggleMute={handleToggleMute}
+              />
+            </Suspense>
+          ) : currentTab === 'templates' ? (
+            /* CAPCUT-STYLE INTERACTIVE VIDEO & PHOTO TEMPLATES STUDIO */
+            <Suspense fallback={<LazyTabFallback />}>
+              <TemplatesStudioView
+                currentUser={currentUser}
+                creatorProfile={creatorProfile}
+                onPostSuccess={handleUploadSuccess}
+                onPostSynced={handleUploadCloudSynced}
+                onBackToFeed={handleBackToFeed}
+                onShowToast={showToast}
               />
             </Suspense>
           ) : currentTab === 'profile' ? (
@@ -2265,21 +2496,34 @@ export default function App() {
               updateUsers([newUser, ...users]);
               showToast(`Registered successfully as @${newUser.username}!`);
             }}
+            onUpgradeUserPassword={(userId, passwordHash) => {
+              const upgraded = users.map((u) =>
+                u.id === userId ? { ...u, passwordHash } : u
+              );
+              updateUsers(upgraded);
+            }}
           />
         </Suspense>
       )}
 
-      {isAdminPanelOpen && (
+      {isAdminPanelOpen && isMainAdminAccount(currentUser) && (
         <Suspense fallback={null}>
           <AdminPanel
             isOpen={isAdminPanelOpen}
-            onClose={() => setIsAdminPanelOpen(false)}
-            users={users}
+            onClose={() => {
+              setIsAdminPanelOpen(false);
+              setIsAdminUnlocked(false);
+            }}
+            users={isAdminUnlocked ? users : []}
             currentUser={currentUser}
+            isAdminUnlocked={isAdminUnlocked}
+            onUnlockAdmin={() => setIsAdminUnlocked(true)}
+            onLockAdmin={() => setIsAdminUnlocked(false)}
             onUpdateUserRole={handleUpdateUserRole}
             onToggleUserStatus={handleToggleUserStatus}
             onDeleteUser={handleDeleteUser}
             onAddNewUser={handleAddNewUser}
+            onRefreshLiveUsers={refreshLiveUsers}
             onShowToast={showToast}
           />
         </Suspense>
@@ -2323,6 +2567,7 @@ export default function App() {
             creatorProfile={creatorProfile}
             preselectedFile={preselectedUploadFile}
             onUploadSuccess={handleUploadSuccess}
+            onUploadCloudSynced={handleUploadCloudSynced}
             onShowToast={showToast}
           />
         </Suspense>
@@ -2361,6 +2606,7 @@ export default function App() {
               setActiveIndex(0);
               setTimeout(() => scrollToIndex(0), 60);
             }}
+            onRecordSynced={handleUploadCloudSynced}
             onSwitchToUploadFile={() => setIsUploadOpen(true)}
             onShowToast={showToast}
           />

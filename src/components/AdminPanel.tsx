@@ -1,30 +1,54 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Shield,
   Users,
-  UserCheck,
   UserX,
   Search,
   Plus,
   Trash2,
-  CheckCircle,
-  AlertTriangle,
   Video,
-  ArrowUpDown,
-  Filter,
+  RefreshCw,
+  Clock,
+  Mail,
+  Phone,
+  Lock,
+  KeyRound,
+  AlertTriangle,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { UserAccount, UserRole, UserStatus } from '../types';
+import {
+  formatAccountCreatedDateTime,
+  isMainAdminAccount,
+  isUserOnlineNow,
+} from '../data/mockUsers';
+import {
+  sanitizeInputLive,
+  sanitizeText,
+  sanitizeUsername,
+  verifyAdminPinAsync,
+  getLockoutStatus,
+  recordFailedAttempt,
+  resetLockout,
+  formatLockoutCountdown,
+  LockoutStatus,
+} from '../utils/security';
 
 interface AdminPanelProps {
   isOpen: boolean;
   onClose: () => void;
   users: UserAccount[];
   currentUser: UserAccount | null;
+  isAdminUnlocked: boolean;
+  onUnlockAdmin: () => void;
+  onLockAdmin: () => void;
   onUpdateUserRole: (userId: string, newRole: UserRole) => void;
   onToggleUserStatus: (userId: string) => void;
   onDeleteUser: (userId: string) => void;
   onAddNewUser: (user: UserAccount) => void;
+  onRefreshLiveUsers?: () => void;
   onShowToast: (msg: string) => void;
 }
 
@@ -33,57 +57,302 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onClose,
   users,
   currentUser,
+  isAdminUnlocked,
+  onUnlockAdmin,
+  onLockAdmin,
   onUpdateUserRole,
   onToggleUserStatus,
   onDeleteUser,
   onAddNewUser,
+  onRefreshLiveUsers,
   onShowToast,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | UserRole>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | UserStatus>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | UserStatus | 'online'>('all');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+
+  // Secret Admin PIN Lock Gate states
+  const [pinInput, setPinInput] = useState('');
+  const [showPin, setShowPin] = useState(false);
+  const [pinError, setPinError] = useState('');
+  const [verifyingPin, setVerifyingPin] = useState(false);
+  const [pinLockout, setPinLockout] = useState<LockoutStatus>(() =>
+    getLockoutStatus('admin_pin')
+  );
 
   // New user form state
   const [newUserName, setNewUserName] = useState('');
   const [newUserUsername, setNewUserUsername] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPhone, setNewUserPhone] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole>('user');
+
+  // Tick brute-force lockout countdown every 1s when PIN gate is locked
+  useEffect(() => {
+    if (!isOpen) return;
+    setPinLockout(getLockoutStatus('admin_pin'));
+    const timer = window.setInterval(() => {
+      setPinLockout(getLockoutStatus('admin_pin'));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isOpen, isAdminUnlocked]);
+
+  // Auto-refresh live clock & live users list every 10s ONLY when Admin Panel is open & unlocked
+  useEffect(() => {
+    if (!isOpen || !isAdminUnlocked || !isMainAdminAccount(currentUser)) return;
+    onRefreshLiveUsers?.();
+    const timer = window.setInterval(() => {
+      setNowTick(Date.now());
+      onRefreshLiveUsers?.();
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [isOpen, isAdminUnlocked, currentUser, onRefreshLiveUsers]);
 
   if (!isOpen) return null;
 
+  // Strict security gate: ONLY Main Admin Account may view the dashboard
+  if (!isMainAdminAccount(currentUser)) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4"
+        onClick={onClose}
+      >
+        <div
+          className="w-full max-w-sm bg-neutral-950 border border-rose-500/40 rounded-3xl p-6 text-center space-y-4 shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-400 flex items-center justify-center mx-auto">
+            <Lock className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-base font-black text-white">Admin Access Restricted</h3>
+            <p className="text-xs text-neutral-400 leading-relaxed">
+              This Live Users Dashboard is private and accessible only to the main Jatt VibeReels Administrator account.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Gate 2: Secret Admin PIN screen + 3-attempt -> 5-minute brute-force lockout
+  if (!isAdminUnlocked) {
+    const handleVerifyAdminPin = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setPinError('');
+
+      const currentLock = getLockoutStatus('admin_pin');
+      setPinLockout(currentLock);
+      if (currentLock.isLocked) {
+        setPinError(
+          `Admin access locked for ${formatLockoutCountdown(
+            currentLock.remainingSeconds
+          )} due to failed attempts.`
+        );
+        return;
+      }
+
+      setVerifyingPin(true);
+      try {
+        const isOk = await verifyAdminPinAsync(pinInput);
+        if (!isOk) {
+          const nextLock = recordFailedAttempt('admin_pin');
+          setPinLockout(nextLock);
+          setPinInput('');
+          setPinError(
+            nextLock.isLocked
+              ? `3 failed PIN attempts. Admin Panel locked for ${formatLockoutCountdown(
+                  nextLock.remainingSeconds
+                )}.`
+              : `Invalid Admin Security PIN. (${nextLock.attemptsLeft} attempt${
+                  nextLock.attemptsLeft === 1 ? '' : 's'
+                } left before 5m lockout)`
+          );
+          return;
+        }
+
+        resetLockout('admin_pin');
+        setPinLockout(getLockoutStatus('admin_pin'));
+        setPinInput('');
+        setPinError('');
+        onUnlockAdmin();
+        onShowToast('Admin Panel unlocked');
+      } finally {
+        setVerifyingPin(false);
+      }
+    };
+
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4"
+        onClick={onClose}
+      >
+        <div
+          className="w-full max-w-sm bg-neutral-950 border border-pink-500/40 rounded-3xl p-6 space-y-4 shadow-[0_0_50px_rgba(236,72,153,0.2)]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-pink-600 to-rose-600 text-white flex items-center justify-center shadow-lg shadow-pink-600/25">
+                <Shield className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">Admin Vault Locked</h3>
+                <p className="text-[11px] text-neutral-400">Secret Admin PIN Verification</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 text-neutral-400 hover:text-white rounded-full hover:bg-neutral-800"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {pinLockout.isLocked && (
+            <div className="p-3.5 rounded-xl bg-rose-950/75 border border-rose-500/50 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 text-rose-200">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <div>
+                  <p className="font-black text-rose-300">Locked for 5 Minutes</p>
+                  <p className="text-[10px] text-rose-200/80">Brute-force protection active</p>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 rounded-lg bg-black/60 border border-rose-500/40 font-mono font-black text-rose-300 flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5" />
+                {formatLockoutCountdown(pinLockout.remainingSeconds)}
+              </span>
+            </div>
+          )}
+
+          {pinError && (
+            <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{pinError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleVerifyAdminPin} className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-neutral-300 mb-1.5">
+                Enter Admin Security PIN
+              </label>
+              <div className="relative">
+                <input
+                  type={showPin ? 'text' : 'password'}
+                  required
+                  autoFocus
+                  disabled={pinLockout.isLocked}
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value)}
+                  placeholder="Secret PIN"
+                  className="w-full bg-neutral-900 border border-neutral-800 focus:border-pink-500 rounded-xl pl-9 pr-10 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-hidden disabled:opacity-50"
+                />
+                <KeyRound className="w-4 h-4 text-pink-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <button
+                  type="button"
+                  onClick={() => setShowPin((p) => !p)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                >
+                  {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={verifyingPin || pinLockout.isLocked}
+              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black flex items-center justify-center gap-2 shadow-lg shadow-pink-600/25 cursor-pointer"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>
+                {pinLockout.isLocked
+                  ? `Locked (${formatLockoutCountdown(pinLockout.remainingSeconds)})`
+                  : verifyingPin
+                  ? 'Verifying PIN...'
+                  : 'Unlock Admin Panel'}
+              </span>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // Sort newest registrations first
+  const sortedUsers = [...users].sort((a, b) => {
+    const tA = a.createdAtIso ? new Date(a.createdAtIso).getTime() : 0;
+    const tB = b.createdAtIso ? new Date(b.createdAtIso).getTime() : 0;
+    return tB - tA;
+  });
+
   // Filtered users list
-  const filteredUsers = users.filter((u) => {
+  const filteredUsers = sortedUsers.filter((u) => {
+    const q = sanitizeText(searchTerm, 120).toLowerCase();
     const matchesSearch =
-      u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      u.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchTerm.toLowerCase());
+      !q ||
+      u.name.toLowerCase().includes(q) ||
+      u.username.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      (u.phone && u.phone.toLowerCase().includes(q));
     const matchesRole = roleFilter === 'all' || u.role === roleFilter;
-    const matchesStatus = statusFilter === 'all' || u.status === statusFilter;
+    const isOnline = isUserOnlineNow(u, nowTick);
+    const matchesStatus =
+      statusFilter === 'all'
+        ? true
+        : statusFilter === 'online'
+        ? isOnline
+        : u.status === statusFilter;
     return matchesSearch && matchesRole && matchesStatus;
   });
 
-  // Analytics counts
+  // Live analytics counts
   const totalUsers = users.length;
+  const totalOnlineNow = users.filter((u) => isUserOnlineNow(u, nowTick)).length;
   const totalCreators = users.filter((u) => u.role === 'creator').length;
-  const totalAdmins = users.filter((u) => u.role === 'admin').length;
   const totalSuspended = users.filter((u) => u.status === 'suspended').length;
 
   const handleCreateUserSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUserName.trim() || !newUserUsername.trim() || !newUserEmail.trim()) {
+    const cleanName = sanitizeText(newUserName, 80);
+    const cleanHandle = sanitizeUsername(newUserUsername, 40);
+    const cleanEmail = sanitizeText(newUserEmail, 120).toLowerCase();
+    const cleanPhone = sanitizeText(newUserPhone, 32);
+
+    if (!cleanName || !cleanHandle || (!cleanEmail && !cleanPhone)) {
+      onShowToast('Please provide valid sanitized Name, @Username, and Email/Phone.');
       return;
     }
 
+    const nowIso = new Date().toISOString();
+    const safeRole: UserRole = newUserRole === 'creator' ? 'creator' : 'user';
     const created: UserAccount = {
       id: `usr-admin-${Date.now()}`,
-      name: newUserName.trim(),
-      username: newUserUsername.trim().toLowerCase().replace(/^@/, ''),
-      email: newUserEmail.trim().toLowerCase(),
-      avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${newUserUsername}&backgroundColor=${newUserRole === 'admin' ? 'ec4899' : '6366f1'}`,
-      role: newUserRole,
+      name: cleanName,
+      username: cleanHandle,
+      email: cleanEmail || `${cleanHandle}@vibereels.app`,
+      phone: cleanPhone || undefined,
+      avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(
+        cleanHandle
+      )}&backgroundColor=6366f1`,
+      role: safeRole,
       status: 'active',
-      joinedAt: 'Nov 2026',
+      joinedAt: new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+      createdAtIso: nowIso,
+      lastActiveAt: nowIso,
+      isOnline: true,
       videosCount: 0,
       bio: 'Added via Admin Console',
     };
@@ -93,92 +362,124 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setNewUserName('');
     setNewUserUsername('');
     setNewUserEmail('');
+    setNewUserPhone('');
     onShowToast(`User @${created.username} created successfully`);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3 sm:p-6 overflow-y-auto">
-      <div className="w-full max-w-5xl bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="w-full max-w-6xl bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         {/* Top Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800/80 bg-neutral-950/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-pink-600 to-rose-600 text-white flex items-center justify-center shadow-md shadow-pink-600/20">
+        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-neutral-800/80 bg-neutral-950/70 gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-pink-600 to-rose-600 text-white flex items-center justify-center shadow-md shadow-pink-600/20 shrink-0">
               <Shield className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-white tracking-tight">Jatt VibeReels · Admin Console</h2>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-pink-400 bg-pink-500/10 px-2 py-0.5 rounded-full border border-pink-500/20">
-                  User Management
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-black text-white tracking-tight truncate">
+                  Admin Live Users Dashboard
+                </h2>
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/15 px-2.5 py-0.5 rounded-full border border-emerald-500/35">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  <span>LIVE · {totalUsers} Users</span>
                 </span>
               </div>
-              <p className="text-xs text-neutral-400">
-                Logged in as <span className="text-neutral-200 font-semibold">{currentUser?.name || 'Administrator'}</span> ({currentUser?.email || 'admin'})
+              <p className="text-xs text-neutral-400 truncate">
+                Admin Owner: <span className="text-neutral-200 font-semibold">{currentUser?.email}</span>
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 text-neutral-400 hover:text-white rounded-full hover:bg-neutral-800 transition-colors"
-            aria-label="Close admin panel"
-          >
-            <X className="w-5 h-5" />
-          </button>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                onLockAdmin();
+                onShowToast('Admin Panel locked');
+              }}
+              className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-xs font-bold flex items-center gap-1.5 border border-rose-500/35 cursor-pointer"
+              title="Lock Admin Panel immediately"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Lock</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNowTick(Date.now());
+                onRefreshLiveUsers?.();
+                onShowToast('Refreshed live user registrations');
+              }}
+              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-cyan-300 text-xs font-bold flex items-center gap-1.5 border border-neutral-700 cursor-pointer"
+              title="Refresh live user registrations"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Live Sync</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 text-neutral-400 hover:text-white rounded-full hover:bg-neutral-800 transition-colors cursor-pointer"
+              aria-label="Close admin panel"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        {/* Metric Cards Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-6 bg-neutral-950/30 border-b border-neutral-800/60">
-          <div className="p-3.5 bg-neutral-900/80 rounded-2xl border border-neutral-800 flex items-center gap-3">
+        {/* Live Metric Cards Row */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-5 sm:p-6 bg-neutral-950/35 border-b border-neutral-800/60">
+          <div className="p-3.5 bg-neutral-900/90 rounded-2xl border border-neutral-800 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-500/15 text-blue-400 flex items-center justify-center shrink-0">
               <Users className="w-5 h-5" />
             </div>
             <div>
               <p className="text-[11px] font-semibold text-neutral-400">Total Users</p>
-              <p className="text-xl font-bold text-white tabular-nums">{totalUsers}</p>
+              <p className="text-xl font-black text-white tabular-nums">{totalUsers}</p>
             </div>
           </div>
 
-          <div className="p-3.5 bg-neutral-900/80 rounded-2xl border border-neutral-800 flex items-center gap-3">
+          <div className="p-3.5 bg-neutral-900/90 rounded-2xl border border-emerald-500/25 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0">
+              <span className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold text-neutral-400">Online / Active</p>
+              <p className="text-xl font-black text-emerald-400 tabular-nums">{totalOnlineNow}</p>
+            </div>
+          </div>
+
+          <div className="p-3.5 bg-neutral-900/90 rounded-2xl border border-neutral-800 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-pink-500/15 text-pink-400 flex items-center justify-center shrink-0">
               <Video className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-[11px] font-semibold text-neutral-400">Active Creators</p>
-              <p className="text-xl font-bold text-white tabular-nums">{totalCreators}</p>
+              <p className="text-[11px] font-semibold text-neutral-400">Creators</p>
+              <p className="text-xl font-black text-white tabular-nums">{totalCreators}</p>
             </div>
           </div>
 
-          <div className="p-3.5 bg-neutral-900/80 rounded-2xl border border-neutral-800 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center shrink-0">
-              <Shield className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-[11px] font-semibold text-neutral-400">Administrators</p>
-              <p className="text-xl font-bold text-white tabular-nums">{totalAdmins}</p>
-            </div>
-          </div>
-
-          <div className="p-3.5 bg-neutral-900/80 rounded-2xl border border-neutral-800 flex items-center gap-3">
+          <div className="p-3.5 bg-neutral-900/90 rounded-2xl border border-neutral-800 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-rose-500/15 text-rose-400 flex items-center justify-center shrink-0">
               <UserX className="w-5 h-5" />
             </div>
             <div>
               <p className="text-[11px] font-semibold text-neutral-400">Suspended</p>
-              <p className="text-xl font-bold text-white tabular-nums">{totalSuspended}</p>
+              <p className="text-xl font-black text-white tabular-nums">{totalSuspended}</p>
             </div>
           </div>
         </div>
 
         {/* Search & Filter Toolbar */}
-        <div className="px-6 py-3.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-neutral-800/60 bg-neutral-900">
+        <div className="px-5 sm:px-6 py-3.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-neutral-800/60 bg-neutral-900">
           <div className="flex-1 flex items-center gap-2 max-w-md">
             <div className="relative w-full">
               <input
                 type="text"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search by name, @username, or email..."
+                onChange={(e) => setSearchTerm(sanitizeInputLive(e.target.value, 120))}
+                placeholder="Search by name, @username, email or phone..."
                 className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-pink-500"
               />
               <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -186,34 +487,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-            {/* Role Filter */}
             <select
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value as 'all' | UserRole)}
               className="bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-neutral-300 font-medium focus:outline-hidden"
             >
               <option value="all">All Roles</option>
-              <option value="admin">Admins</option>
               <option value="creator">Creators</option>
               <option value="user">Users</option>
+              <option value="admin">Admin</option>
             </select>
 
-            {/* Status Filter */}
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as 'all' | UserStatus)}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | UserStatus | 'online')}
               className="bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-neutral-300 font-medium focus:outline-hidden"
             >
               <option value="all">All Status</option>
-              <option value="active">Active Only</option>
+              <option value="online">Online Now</option>
+              <option value="active">Active</option>
               <option value="suspended">Suspended Only</option>
             </select>
 
-            {/* Add User Button */}
             <button
               type="button"
               onClick={() => setShowAddModal(true)}
-              className="px-3.5 py-2 bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md shadow-pink-600/20 active:scale-95 transition-all shrink-0"
+              className="px-3.5 py-2 bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md shadow-pink-600/20 active:scale-95 transition-all shrink-0 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
               <span>Add User</span>
@@ -221,8 +520,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
         </div>
 
-        {/* Users Table */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 no-scrollbar">
+        {/* Live Users Table */}
+        <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 no-scrollbar">
           {filteredUsers.length === 0 ? (
             <div className="py-16 text-center text-neutral-500">
               <Users className="w-10 h-10 mx-auto mb-2 text-neutral-600" />
@@ -234,67 +533,91 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-neutral-800 text-neutral-400 font-semibold uppercase tracking-wider text-[10px]">
-                    <th className="pb-3 pl-2">User</th>
+                    <th className="pb-3 pl-2">Name &amp; @Username</th>
+                    <th className="pb-3 px-3">Email / Phone</th>
+                    <th className="pb-3 px-3">Account Created (Date &amp; Time)</th>
+                    <th className="pb-3 px-3">Online / Status</th>
                     <th className="pb-3 px-3">Role</th>
-                    <th className="pb-3 px-3">Status</th>
-                    <th className="pb-3 px-3 text-right">Reels</th>
-                    <th className="pb-3 px-3">Joined</th>
                     <th className="pb-3 pr-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800/60">
                   {filteredUsers.map((u) => {
-                    const isSelf = currentUser?.id === u.id;
+                    const isSelf = currentUser?.id === u.id || isMainAdminAccount(u);
+                    const isOnline = isUserOnlineNow(u, nowTick);
+                    const createdDt = formatAccountCreatedDateTime(u);
+
                     return (
                       <tr key={u.id} className="hover:bg-neutral-800/40 transition-colors group">
-                        {/* User Identity */}
+                        {/* Name & @Username */}
                         <td className="py-3 pl-2">
                           <div className="flex items-center gap-3">
-                            <img
-                              src={u.avatar}
-                              alt={u.name}
-                              className="w-9 h-9 rounded-full object-cover bg-neutral-800 border border-neutral-700/60 shrink-0"
-                              referrerPolicy="no-referrer"
-                            />
+                            <div className="relative shrink-0">
+                              <img
+                                src={u.avatar}
+                                alt={u.name}
+                                className="w-9 h-9 rounded-full object-cover bg-neutral-800 border border-neutral-700/60"
+                                referrerPolicy="no-referrer"
+                              />
+                              <span
+                                className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-neutral-900 ${
+                                  u.status === 'suspended'
+                                    ? 'bg-rose-500'
+                                    : isOnline
+                                    ? 'bg-emerald-400'
+                                    : 'bg-neutral-500'
+                                }`}
+                                title={isOnline ? 'Online / Active' : 'Offline'}
+                              />
+                            </div>
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <span className="font-bold text-white truncate">{u.name}</span>
                                 {isSelf && (
-                                  <span className="text-[9px] bg-pink-500/20 text-pink-400 px-1.5 py-0.2 rounded-xs font-semibold">
-                                    You
+                                  <span className="text-[9px] bg-pink-500/20 text-pink-400 px-1.5 py-0.2 rounded-xs font-black">
+                                    Main Admin
                                   </span>
                                 )}
                               </div>
-                              <p className="text-[11px] text-neutral-400 truncate">@{u.username}</p>
-                              <p className="text-[10px] text-neutral-500 truncate">{u.email}</p>
+                              <p className="text-[11px] text-cyan-400 font-semibold truncate">
+                                @{u.username}
+                              </p>
                             </div>
                           </div>
                         </td>
 
-                        {/* Role Selector */}
+                        {/* Email / Phone */}
                         <td className="py-3 px-3">
-                          <select
-                            value={u.role}
-                            disabled={isSelf}
-                            onChange={(e) => {
-                              onUpdateUserRole(u.id, e.target.value as UserRole);
-                              onShowToast(`Updated @${u.username} role to ${e.target.value}`);
-                            }}
-                            className={`bg-neutral-950 border text-[11px] font-semibold rounded-lg px-2.5 py-1 focus:outline-hidden ${
-                              u.role === 'admin'
-                                ? 'text-pink-400 border-pink-500/40 bg-pink-500/10'
-                                : u.role === 'creator'
-                                ? 'text-indigo-400 border-indigo-500/40 bg-indigo-500/10'
-                                : 'text-neutral-300 border-neutral-700'
-                            }`}
-                          >
-                            <option value="user">User</option>
-                            <option value="creator">Creator</option>
-                            <option value="admin">Admin</option>
-                          </select>
+                          <div className="space-y-0.5 max-w-[200px]">
+                            <p className="text-[11px] text-neutral-200 flex items-center gap-1 truncate">
+                              <Mail className="w-3 h-3 text-pink-400 shrink-0" />
+                              <span className="truncate">{u.email}</span>
+                            </p>
+                            {u.phone && (
+                              <p className="text-[10px] text-neutral-400 flex items-center gap-1 truncate">
+                                <Phone className="w-3 h-3 text-cyan-400 shrink-0" />
+                                <span className="truncate">{u.phone}</span>
+                              </p>
+                            )}
+                          </div>
                         </td>
 
-                        {/* Status Badge & Toggle */}
+                        {/* Account Creation Date & Time */}
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-1.5 text-neutral-300">
+                            <Clock className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+                            <div>
+                              <p className="text-[11px] font-semibold text-white whitespace-nowrap">
+                                {createdDt.dateLabel}
+                              </p>
+                              <p className="text-[10px] text-neutral-400 tabular-nums whitespace-nowrap">
+                                {createdDt.timeLabel}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Live Online / Active Status */}
                         <td className="py-3 px-3">
                           <button
                             type="button"
@@ -307,50 +630,94 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   : `Reactivated account @${u.username}`
                               );
                             }}
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
-                              u.status === 'active'
-                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20'
-                                : 'bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20'
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
+                              u.status === 'suspended'
+                                ? 'bg-rose-500/15 text-rose-400 border border-rose-500/35'
+                                : isOnline
+                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40'
+                                : 'bg-neutral-800 text-neutral-300 border border-neutral-700'
                             }`}
-                            title={isSelf ? 'Cannot change own status' : 'Click to toggle status'}
+                            title={isSelf ? 'Main Admin status locked' : 'Click to toggle Active / Suspended'}
                           >
                             <span
                               className={`w-1.5 h-1.5 rounded-full ${
-                                u.status === 'active' ? 'bg-emerald-400' : 'bg-rose-400'
+                                u.status === 'suspended'
+                                  ? 'bg-rose-400'
+                                  : isOnline
+                                  ? 'bg-emerald-400 animate-pulse'
+                                  : 'bg-neutral-400'
                               }`}
                             />
-                            <span>{u.status === 'active' ? 'Active' : 'Suspended'}</span>
+                            <span>
+                              {u.status === 'suspended'
+                                ? 'Suspended'
+                                : isOnline
+                                ? 'Online · Active'
+                                : 'Active (Offline)'}
+                            </span>
                           </button>
                         </td>
 
-                        {/* Video count */}
-                        <td className="py-3 px-3 text-right tabular-nums font-semibold text-neutral-300">
-                          {u.videosCount}
+                        {/* Role Selector */}
+                        <td className="py-3 px-3">
+                          <select
+                            value={u.role}
+                            disabled={isSelf}
+                            onChange={(e) => {
+                              const nextRole = e.target.value as UserRole;
+                              if (nextRole === 'admin') return;
+                              onUpdateUserRole(u.id, nextRole);
+                              onShowToast(`Updated @${u.username} role to ${nextRole}`);
+                            }}
+                            className={`bg-neutral-950 border text-[11px] font-semibold rounded-lg px-2.5 py-1 focus:outline-hidden ${
+                              u.role === 'admin'
+                                ? 'text-pink-400 border-pink-500/40 bg-pink-500/10'
+                                : u.role === 'creator'
+                                ? 'text-indigo-400 border-indigo-500/40 bg-indigo-500/10'
+                                : 'text-neutral-300 border-neutral-700'
+                            }`}
+                          >
+                            <option value="user">User</option>
+                            <option value="creator">Creator</option>
+                            {u.role === 'admin' && <option value="admin">Main Admin</option>}
+                          </select>
                         </td>
 
-                        {/* Joined Date */}
-                        <td className="py-3 px-3 text-neutral-400 text-[11px]">
-                          {u.joinedAt}
-                        </td>
-
-                        {/* Actions */}
+                        {/* In-App Delete Confirmation Actions */}
                         <td className="py-3 pr-2 text-right">
                           <div className="flex items-center justify-end gap-1">
-                            {!isSelf && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (confirm(`Are you sure you want to delete user @${u.username}?`)) {
-                                    onDeleteUser(u.id);
-                                    onShowToast(`Deleted user @${u.username}`);
-                                  }
-                                }}
-                                className="p-1.5 text-neutral-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-                                title="Delete user"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
+                            {!isSelf &&
+                              (confirmDeleteUserId === u.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onDeleteUser(u.id);
+                                      setConfirmDeleteUserId(null);
+                                      onShowToast(`Removed user @${u.username}`);
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-black cursor-pointer"
+                                  >
+                                    Confirm
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteUserId(null)}
+                                    className="px-2 py-1 rounded-lg bg-neutral-800 text-neutral-300 text-[10px] font-bold cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteUserId(u.id)}
+                                  className="p-1.5 text-neutral-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                                  title="Delete user"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              ))}
                           </div>
                         </td>
                       </tr>
@@ -373,7 +740,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
-                <h3 className="text-sm font-bold text-white">Create New User</h3>
+                <h3 className="text-sm font-bold text-white">Add New User</h3>
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
@@ -392,7 +759,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     type="text"
                     required
                     value={newUserName}
-                    onChange={(e) => setNewUserName(e.target.value)}
+                    onChange={(e) => setNewUserName(sanitizeInputLive(e.target.value, 80))}
                     placeholder="e.g. Jordan Smith"
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
                   />
@@ -400,13 +767,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-semibold text-neutral-400 mb-1">
-                    Username
+                    @Username
                   </label>
                   <input
                     type="text"
                     required
                     value={newUserUsername}
-                    onChange={(e) => setNewUserUsername(e.target.value)}
+                    onChange={(e) =>
+                      setNewUserUsername(
+                        sanitizeInputLive(e.target.value, 40)
+                          .toLowerCase()
+                          .replace(/[^a-z0-9_.-]/g, '')
+                      )
+                    }
                     placeholder="jordansmith"
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
                   />
@@ -418,10 +791,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </label>
                   <input
                     type="email"
-                    required
                     value={newUserEmail}
-                    onChange={(e) => setNewUserEmail(e.target.value)}
+                    onChange={(e) => setNewUserEmail(sanitizeInputLive(e.target.value, 120))}
                     placeholder="jordan@example.com"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-400 mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="tel"
+                    value={newUserPhone}
+                    onChange={(e) => setNewUserPhone(sanitizeInputLive(e.target.value, 32))}
+                    placeholder="+92 300 1234567"
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500"
                   />
                 </div>
@@ -437,7 +822,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   >
                     <option value="user">User (Viewer)</option>
                     <option value="creator">Creator</option>
-                    <option value="admin">Administrator</option>
                   </select>
                 </div>
 
@@ -451,7 +835,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold rounded-xl shadow-md transition-colors"
+                    className="px-4 py-2 bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold rounded-xl shadow-md transition-colors cursor-pointer"
                   >
                     Create User
                   </button>

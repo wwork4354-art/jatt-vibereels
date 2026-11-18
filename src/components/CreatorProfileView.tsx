@@ -51,6 +51,12 @@ import {
 } from '../lib/offlineMediaStore';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { soundEngine } from '../utils/soundEngine';
+import {
+  sanitizeInputLive,
+  sanitizeText,
+  sanitizeSafeUrl,
+  validateSafeMediaFile,
+} from '../utils/security';
 
 interface CreatorProfileViewProps {
   profile: CreatorProfileData;
@@ -330,6 +336,15 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const check = validateSafeMediaFile(file, { allowedKind: 'image' });
+    if (!check.valid) {
+      onShowToast(
+        check.reason || 'Blocked unsafe avatar image. Only .jpg, .png, and .webp are allowed.'
+      );
+      e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== 'string') return;
@@ -395,7 +410,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
 
       const cleanUsername = check.normalized || 'jatt_official';
 
-      let finalAvatarUrl = editAvatar.trim() || NEON_AVATAR_PRESETS[0];
+      let finalAvatarUrl =
+        sanitizeSafeUrl(editAvatar) || NEON_AVATAR_PRESETS[0];
       if (pendingAvatarBlob) {
         const uploadedUrl = await uploadMediaToReelsBucket(
           pendingAvatarBlob,
@@ -403,15 +419,15 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
           `${cleanUsername || 'avatar'}.jpg`
         );
         if (uploadedUrl) {
-          finalAvatarUrl = uploadedUrl;
+          finalAvatarUrl = sanitizeSafeUrl(uploadedUrl) || finalAvatarUrl;
         }
       }
 
       const updated: CreatorProfileData = {
         ...profile,
-        name: editName.trim() || 'Jatt Creator',
+        name: sanitizeText(editName, 80) || 'Jatt Creator',
         username: cleanUsername,
-        bio: editBio.trim(),
+        bio: sanitizeText(editBio, 240),
         avatar: finalAvatarUrl,
         profileViews: profileViewsCount,
       };
@@ -1136,7 +1152,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                   type="text"
                   required
                   value={syncUsernameInput}
-                  onChange={(e) => setSyncUsernameInput(e.target.value)}
+                  onChange={(e) => setSyncUsernameInput(sanitizeInputLive(e.target.value, 40))}
                   placeholder="jatt_official"
                   className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-8 pr-3.5 py-2.5 text-sm text-white focus:outline-hidden focus:border-cyan-400"
                 />
@@ -1212,7 +1228,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <input
                   ref={avatarFileInputRef}
                   type="file"
-                  accept="image/*"
+                  accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
                   className="hidden"
                   onChange={handleAvatarFileChange}
                 />
@@ -1248,7 +1264,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <input
                   type="text"
                   value={editAvatar}
-                  onChange={(e) => setEditAvatar(e.target.value)}
+                  onChange={(e) => setEditAvatar(sanitizeInputLive(e.target.value, 500))}
                   placeholder="https://example.com/photo.jpg"
                   className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-hidden focus:border-cyan-400"
                 />
@@ -1259,14 +1275,14 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-neutral-300">Display Name</label>
                   <span className="text-[10px] text-neutral-400">
-                    Spaces, emojis &amp; any characters allowed
+                    Spaces &amp; emojis allowed · HTML stripped
                   </span>
                 </div>
                 <input
                   type="text"
                   required
                   value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
+                  onChange={(e) => setEditName(sanitizeInputLive(e.target.value, 80))}
                   placeholder="Enter any custom display name..."
                   className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-hidden focus:border-pink-500"
                 />
@@ -1296,7 +1312,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                     type="text"
                     required
                     value={editUsername}
-                    onChange={(e) => setEditUsername(e.target.value)}
+                    onChange={(e) => setEditUsername(sanitizeInputLive(e.target.value, 40))}
                     placeholder="unique_handle"
                     className={`w-full bg-neutral-900 border rounded-xl pl-8 pr-3.5 py-2.5 text-sm text-white focus:outline-hidden ${
                       usernameStatus.available
@@ -1316,7 +1332,7 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <textarea
                   rows={3}
                   value={editBio}
-                  onChange={(e) => setEditBio(e.target.value)}
+                  onChange={(e) => setEditBio(sanitizeInputLive(e.target.value, 240))}
                   placeholder="Tell viewers about your reels..."
                   className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-hidden focus:border-pink-500 resize-none"
                 />
