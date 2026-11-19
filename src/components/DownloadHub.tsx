@@ -32,12 +32,22 @@ import {
   WifiOff,
   ArrowRight,
   AlertTriangle,
+  Settings,
+  Zap,
+  RefreshCw,
 } from 'lucide-react';
 import Hls from 'hls.js';
 import { DownloadItem, DownloadCategory } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
 import { soundEngine } from '../utils/soundEngine';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import {
+  LiteYouTubePlayer,
+  LiteYouTubeThumb,
+  YOUTUBE_QUALITY_OPTIONS,
+  getQualityOption,
+  YouTubeQualityId,
+} from './LiteYouTubePlayer';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import {
   getFullscreenElement,
@@ -57,7 +67,13 @@ import {
 const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
 
 interface GlobalHubTab {
-  id: 'all' | 'punjabi_songs' | 'full_movies' | 'dramas' | 'live_trending';
+  id:
+    | 'all'
+    | 'world_movies'
+    | 'punjabi_hindi_songs'
+    | 'dramas'
+    | 'cartoons_anime'
+    | 'music_videos_4k';
   label: string;
   query: string;
 }
@@ -65,37 +81,196 @@ interface GlobalHubTab {
 const GLOBAL_HUB_TABS: GlobalHubTab[] = [
   { id: 'all', label: 'All', query: '' },
   {
-    id: 'punjabi_songs',
-    label: 'Punjabi Songs',
-    query: 'Sidhu Moose Wala Karan Aujla Diljit Dosanjh Punjabi official songs HD',
+    id: 'world_movies',
+    label: 'World Movies',
+    query: 'full movies Hollywood Hindi dubbed Punjabi Korean action adventure HD',
   },
   {
-    id: 'full_movies',
-    label: 'Full Movies',
-    query: 'Hollywood Hindi dubbed Punjabi full movies HD',
+    id: 'punjabi_hindi_songs',
+    label: 'Punjabi & Hindi Songs',
+    query: 'Punjabi Hindi latest songs Sidhu Moose Wala Karan Aujla Diljit Arijit official',
   },
   {
     id: 'dramas',
     label: 'Dramas',
-    query: 'Pakistani Indian Turkish full dramas episodes HD',
+    query: 'Pakistani Indian Turkish Korean full dramas episodes HD',
   },
   {
-    id: 'live_trending',
-    label: 'Live TV/Trending',
-    query: 'live TV news sports music viral trending HD',
+    id: 'cartoons_anime',
+    label: 'Cartoons & Anime',
+    query: 'full cartoons anime episodes animated adventure movies kids HD',
+  },
+  {
+    id: 'music_videos_4k',
+    label: '4K Music Videos',
+    query: '4K music video official 2160p ultra HD global hits',
   },
 ];
 
 const QUICK_MOVIEBOX_CHIPS = [
-  'Punjabi Songs',
-  'Full Movies',
+  'World Movies',
+  'Punjabi & Hindi Songs',
+  'Dramas',
+  'Cartoons & Anime',
+  '4K Music Videos',
   'Pakistani Dramas',
   'Turkish Dramas',
   'Hollywood & English',
-  'Live TV/Trending',
 ];
 
 const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
+  'World Movies': [
+    {
+      id: 'yt-R6MlUcmOul8',
+      title: 'Tears of Steel - Sci-Fi Action Feature Film 4K',
+      subtitle: 'Blender Foundation Cinema',
+      category: 'movies',
+      categoryLabel: 'World Movies',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 180000000,
+      durationOrVersion: 'Movie 4K',
+      qualityBadge: '4K Stream',
+      thumbnailUrl: 'https://i.ytimg.com/vi/R6MlUcmOul8/hqdefault.jpg',
+      fallbackGradient: 'from-cyan-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['World Movies', 'Sci-Fi', '4K'],
+      description: 'Clean sci-fi action film in 4K UHD.',
+      youtubeId: 'R6MlUcmOul8',
+    },
+    {
+      id: 'yt-eRsGyueVLvQ',
+      title: 'Sintel - Global Fantasy Adventure Movie HD',
+      subtitle: 'Cinema Fantasy Studio',
+      category: 'movies',
+      categoryLabel: 'World Movies',
+      fileSize: 'Streaming HD',
+      sizeBytes: 125000000,
+      durationOrVersion: 'Movie HD',
+      qualityBadge: '1080p Stream',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['World Movies', 'Fantasy', 'HD'],
+      description: 'Award-winning dramatic fantasy adventure feature.',
+      youtubeId: 'eRsGyueVLvQ',
+    },
+  ],
+  'Punjabi & Hindi Songs': [
+    {
+      id: 'yt-6MgsHSAcI9k',
+      title: 'Top Punjabi & Hindi Bass Mix Hits',
+      subtitle: 'Punjabi & Desi Music Global',
+      category: 'songs',
+      categoryLabel: 'Punjabi & Hindi Songs',
+      fileSize: 'Streaming HD',
+      sizeBytes: 12000000,
+      durationOrVersion: 'Music HD',
+      qualityBadge: 'YouTube HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/6MgsHSAcI9k/hqdefault.jpg',
+      fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Punjabi Songs', 'Hindi Songs'],
+      description: 'Non-stop Punjabi & Hindi hit music stream.',
+      youtubeId: '6MgsHSAcI9k',
+    },
+    {
+      id: 'yt-jfKfPfyJRdk',
+      title: '24/7 Chill Beats & Late Night Study Radio',
+      subtitle: 'Global Music Radio Live',
+      category: 'songs',
+      categoryLabel: 'Punjabi & Hindi Songs',
+      fileSize: 'Live Stream',
+      sizeBytes: 45000000,
+      durationOrVersion: 'LIVE 24/7',
+      qualityBadge: 'Live Audio HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
+      fallbackGradient: 'from-rose-950 via-purple-950 to-black',
+      downloadsCount: 'Live',
+      rating: 4.95,
+      tags: ['Music', 'Live Radio'],
+      description: 'Continuous 24/7 music broadcast.',
+      youtubeId: 'jfKfPfyJRdk',
+    },
+  ],
+  'Cartoons & Anime': [
+    {
+      id: 'yt-YE7VzlLtp-4',
+      title: 'Big Buck Bunny - Full Animated Adventure 4K 60fps',
+      subtitle: 'Blender Animation Studio',
+      category: 'cartoons',
+      categoryLabel: 'Cartoons & Anime',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 150000000,
+      durationOrVersion: '4K 60FPS',
+      qualityBadge: '4K Animated',
+      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/hqdefault.jpg',
+      fallbackGradient: 'from-amber-950 via-purple-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.95,
+      tags: ['Cartoons', 'Animation', '4K'],
+      description: 'Full family animated comedy adventure in 4K 60fps.',
+      youtubeId: 'YE7VzlLtp-4',
+    },
+    {
+      id: 'yt-aqz-KE-bpKQ',
+      title: 'Cosmos & 3D Animated Showcase 4K 60FPS',
+      subtitle: 'Open Animation Central',
+      category: 'cartoons',
+      categoryLabel: 'Cartoons & Anime',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 140000000,
+      durationOrVersion: '4K 60FPS',
+      qualityBadge: '4K Animated',
+      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
+      fallbackGradient: 'from-cyan-950 via-indigo-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Cartoons', 'Anime', '4K'],
+      description: 'Ultra-crisp 60fps animated feature.',
+      youtubeId: 'aqz-KE-bpKQ',
+    },
+  ],
+  '4K Music Videos': [
+    {
+      id: 'yt-aqz-KE-bpKQ',
+      title: '4K 60FPS Visualizers & Global Bass Showcase',
+      subtitle: '4K Ultra Visuals Hub',
+      category: 'songs',
+      categoryLabel: '4K Music Videos',
+      fileSize: 'Streaming 4K',
+      sizeBytes: 95000000,
+      durationOrVersion: '4K 2160p',
+      qualityBadge: '4K ULTRA HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
+      fallbackGradient: 'from-emerald-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['4K Music Videos', '2160p'],
+      description: 'Clean 4K 60FPS music & visual showcase.',
+      youtubeId: 'aqz-KE-bpKQ',
+    },
+    {
+      id: 'yt-jfKfPfyJRdk',
+      title: '24/7 Live Lo-Fi Chill & Global Study Radio',
+      subtitle: 'Lofi Girl Live Stream',
+      category: 'songs',
+      categoryLabel: '4K Music Videos',
+      fileSize: 'Live Stream',
+      sizeBytes: 45000000,
+      durationOrVersion: 'LIVE 24/7',
+      qualityBadge: 'Live HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
+      fallbackGradient: 'from-rose-950 via-purple-950 to-black',
+      downloadsCount: 'Live',
+      rating: 4.95,
+      tags: ['Music Videos', 'Live'],
+      description: 'Continuous 24/7 live music stream.',
+      youtubeId: 'jfKfPfyJRdk',
+    },
+  ],
   'Hollywood & English': [
     {
       id: 'yt-R6MlUcmOul8',
@@ -489,33 +664,31 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
   const [orientationLockBlocked, setOrientationLockBlocked] = useState<boolean>(false);
   const [viewportPortrait, setViewportPortrait] = useState<boolean>(() => isPortraitViewport());
   const cinemaViewportRef = React.useRef<HTMLDivElement | null>(null);
-  const playerIframeRef = React.useRef<HTMLIFrameElement | null>(null);
   const directVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const didEnterCinemaFullscreenRef = React.useRef<boolean>(false);
 
+  // Resolution Selector (360p to 4K Ultra HD) & Fast Server / Reload State
+  const [selectedQuality, setSelectedQuality] = useState<YouTubeQualityId>('hd1080');
+  const [isQualityMenuOpen, setIsQualityMenuOpen] = useState<boolean>(false);
+  const [serverIndex, setServerIndex] = useState<number>(0);
+  const [reloadNonce, setReloadNonce] = useState<number>(0);
+
+  const activeQualityOption = getQualityOption(selectedQuality);
   const cssLandscapeActive = isCinemaMode && orientationLockBlocked && viewportPortrait;
 
-  const buildYouTube1080Url = (youtubeId: string) =>
-    `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&rel=0&playsinline=1&fs=1&vq=hd1080&hd=1&modestbranding=1&iv_load_policy=3&enablejsapi=1`;
-
-  const enforceYouTube1080p = (iframe: HTMLIFrameElement | null, youtubeId?: string) => {
-    if (!iframe?.contentWindow) return;
-    try {
-      iframe.contentWindow.postMessage(
-        JSON.stringify({ event: 'listening', id: youtubeId || 'yt-player', channel: 'widget' }),
-        '*'
+  const handleFastServerReload = () => {
+    setPlayerError(null);
+    setIsQualityMenuOpen(false);
+    setServerIndex((prev) => {
+      const next = (prev + 1) % 2;
+      onShowToast(
+        next === 1
+          ? 'Switched to Fast Mirror Server & reloaded player!'
+          : 'Switched to Privacy Fast Server & reloaded player!'
       );
-      iframe.contentWindow.postMessage(
-        JSON.stringify({ event: 'command', func: 'setPlaybackQuality', args: ['hd1080'] }),
-        '*'
-      );
-      iframe.contentWindow.postMessage(
-        JSON.stringify({ event: 'command', func: 'setPlaybackQualityRange', args: ['hd1080', 'hd1080'] }),
-        '*'
-      );
-    } catch {
-      // ignore cross-origin postMessage restrictions
-    }
+      return next;
+    });
+    setReloadNonce((n) => n + 1);
   };
 
   // Detect YouTube IFrame embedding restrictions (errors 100, 101, 150, 2, 5) so screen is NEVER blank
@@ -1041,10 +1214,10 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     try {
       let mappedResults: DownloadItem[] = [];
 
-      // Tier 1: Official YouTube Data API v3 (safeSearch=strict for clean, family-friendly global results)
+      // Tier 1: Official YouTube Data API v3 (safeSearch=strict & videoEmbeddable=true for clean worldwide results)
       if (effectiveKey) {
         try {
-          const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=18&type=video&safeSearch=strict&q=${encodeURIComponent(
+          const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=18&type=video&safeSearch=strict&videoEmbeddable=true&q=${encodeURIComponent(
             query
           )}&key=${encodeURIComponent(effectiveKey)}`;
           const res = await fetchWithTimeout(endpoint, 6000);
@@ -1512,447 +1685,559 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
 
       {activeTab === 'marketplace' ? (
         /* ========================================================================= */
-        /* MARKETPLACE VIEW: TOP VIDEO PLAYER + GLOBAL HUB TABS + VIDEO GRID          */
+        /* MARKETPLACE VIEW: SCROLLABLE CONTAINER WITH AUTO-UNMOUNTING VIDEO PLAYER   */
         /* ========================================================================= */
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* ========================================================================= */}
-          {/* PINNED RESPONSIVE YOUTUBE VIDEO PLAYER AT THE TOP OF THE SCREEN           */}
-          {/* ========================================================================= */}
-          {previewItem && (
-            <div
-              className={
-                isCinemaMode
-                  ? 'shrink-0 bg-neutral-950 border-b border-pink-500/40 px-3 sm:px-6 py-3 shadow-2xl z-[70]'
-                  : 'shrink-0 bg-neutral-950 border-b border-pink-500/40 px-3 sm:px-6 py-3 shadow-2xl z-20'
-              }
-            >
-              <div className="max-w-5xl mx-auto space-y-2.5">
-                {!isCinemaMode && (
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="p-1.5 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 shrink-0">
-                        <Youtube className="w-4 h-4 fill-red-500" />
-                      </span>
-                      <div className="min-w-0">
-                        <h2 className="text-xs sm:text-sm font-black text-white truncate">
-                          {previewItem.title}
-                        </h2>
-                        <p className="text-[11px] text-neutral-400 truncate">
-                          {previewItem.subtitle}
-                        </p>
+          <div
+            ref={scrollContainerRef}
+            className="flex-1 overflow-y-auto no-scrollbar pb-24 lg:pb-8"
+          >
+            {/* ===================================================================== */}
+            {/* LITE-YOUTUBE & UNIVERSAL WIDESCREEN PLAYER (Auto-Unmounts Off-Screen) */}
+            {/* ===================================================================== */}
+            {previewItem && (
+              <div
+                className={
+                  isCinemaMode
+                    ? 'bg-neutral-950 border-b border-pink-500/40 px-3 sm:px-6 py-3 shadow-2xl z-[70]'
+                    : 'bg-neutral-950 border-b border-pink-500/40 px-3 sm:px-6 py-3 shadow-2xl relative z-20'
+                }
+              >
+                <div className="max-w-5xl mx-auto space-y-2.5">
+                  {!isCinemaMode && (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <span className="p-1.5 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 shrink-0">
+                          <Youtube className="w-4 h-4 fill-red-500" />
+                        </span>
+                        <div className="min-w-0">
+                          <h2 className="text-xs sm:text-sm font-black text-white truncate">
+                            {previewItem.title}
+                          </h2>
+                          <p className="text-[11px] text-neutral-400 truncate">
+                            {previewItem.subtitle}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0 relative">
+                        {/* One-Tap Fast Server / Reload Fallback */}
+                        {previewItem.youtubeId && (
+                          <button
+                            type="button"
+                            onClick={handleFastServerReload}
+                            className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                            title="Switch Server or Reload if buffering slowly"
+                          >
+                            <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="hidden sm:inline">Fast Server / Reload</span>
+                            <span className="sm:hidden">Reload</span>
+                          </button>
+                        )}
+
+                        {/* Gear / Resolution Selector (Auto, 360p to 4K 2160p) */}
+                        {previewItem.youtubeId && (
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setIsQualityMenuOpen((o) => !o)}
+                              className={`px-2.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 border cursor-pointer transition-colors ${
+                                activeQualityOption.isUltraHd
+                                  ? 'bg-amber-500/25 border-amber-400 text-amber-200'
+                                  : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-cyan-300'
+                              }`}
+                              title="Select Video Resolution (360p to 4K Ultra HD)"
+                            >
+                              <Settings className="w-3.5 h-3.5" />
+                              <span>{activeQualityOption.shortBadge}</span>
+                            </button>
+
+                            {isQualityMenuOpen && (
+                              <div className="absolute right-0 mt-1.5 w-48 rounded-2xl bg-neutral-900 border border-neutral-700 shadow-2xl p-1.5 z-50">
+                                <p className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-neutral-400">
+                                  Video Resolution
+                                </p>
+                                {YOUTUBE_QUALITY_OPTIONS.map((opt) => {
+                                  const active = selectedQuality === opt.id;
+                                  return (
+                                    <button
+                                      key={opt.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedQuality(opt.id);
+                                        setIsQualityMenuOpen(false);
+                                        onShowToast(`Resolution set to ${opt.label}`);
+                                      }}
+                                      className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-bold flex items-center justify-between cursor-pointer transition-colors ${
+                                        active
+                                          ? 'bg-pink-600/25 text-white border border-pink-500/40'
+                                          : 'text-neutral-300 hover:bg-neutral-800'
+                                      }`}
+                                    >
+                                      <span>{opt.label}</span>
+                                      {opt.isUltraHd && (
+                                        <span className="px-1.5 py-0.5 rounded bg-amber-500 text-black text-[9px] font-black">
+                                          4K
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleWatchlist(previewItem)}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer transition-colors ${
+                            offlineWatchlist.some((w) => w.id === previewItem.id)
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                              : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-200'
+                          }`}
+                        >
+                          <Bookmark
+                            className={`w-3.5 h-3.5 ${
+                              offlineWatchlist.some((w) => w.id === previewItem.id)
+                                ? 'fill-amber-400 text-amber-400'
+                                : ''
+                            }`}
+                          />
+                          <span className="hidden md:inline">
+                            {offlineWatchlist.some((w) => w.id === previewItem.id)
+                              ? 'Saved'
+                              : 'Watchlist'}
+                          </span>
+                        </button>
+
+                        {(previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) && (
+                          <a
+                            href={
+                              previewItem.youtubeId
+                                ? `https://www.youtube.com/watch?v=${previewItem.youtubeId}`
+                                : previewItem.directVideoUrl || previewItem.embedUrl
+                            }
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/35 text-rose-200 border border-red-500/40 text-xs font-bold flex items-center gap-1.5"
+                            title="Open source directly in YouTube / Browser"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span className="hidden lg:inline">
+                              {previewItem.youtubeId ? 'Watch on YouTube' : 'Open Source'}
+                            </span>
+                          </a>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlayerScaleMode((prev) => (prev === 'fill' ? 'fit' : 'fill'))
+                          }
+                          className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                            playerScaleMode === 'fill'
+                              ? 'bg-pink-600/25 border-pink-400 text-pink-200'
+                              : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-300'
+                          }`}
+                          title="Toggle Stretch Fill vs 16:9 Fit"
+                        >
+                          <Maximize2 className="w-3.5 h-3.5" />
+                          <span className="hidden lg:inline">
+                            {playerScaleMode === 'fill' ? 'Stretch Fill' : 'Fit 16:9'}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => void enterFullscreenAndLandscape('fit')}
+                          className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600/35 to-pink-600/35 hover:from-cyan-600/50 hover:to-pink-600/50 text-white border border-cyan-400/50 text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                          title="Enter 16:9 Widescreen Landscape Fullscreen"
+                        >
+                          <RectangleHorizontal className="w-3.5 h-3.5 text-cyan-300" />
+                          <span>Full Screen</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void exitFullscreenAndRestorePortrait();
+                            setIsQualityMenuOpen(false);
+                            setPreviewItem(null);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <X className="w-4 h-4" />
+                          <span className="hidden xs:inline">Close</span>
+                        </button>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleWatchlist(previewItem)}
-                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer transition-colors ${
-                          offlineWatchlist.some((w) => w.id === previewItem.id)
-                            ? 'bg-amber-500/20 border-amber-400 text-amber-300'
-                            : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-200'
-                        }`}
-                      >
-                        <Bookmark
-                          className={`w-3.5 h-3.5 ${
-                            offlineWatchlist.some((w) => w.id === previewItem.id)
-                              ? 'fill-amber-400 text-amber-400'
-                              : ''
-                          }`}
-                        />
-                        <span className="hidden sm:inline">
-                          {offlineWatchlist.some((w) => w.id === previewItem.id)
-                            ? 'Saved'
-                            : 'Offline Watchlist'}
-                        </span>
-                      </button>
+                  )}
 
-                      {(previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) && (
-                        <a
-                          href={
-                            previewItem.youtubeId
-                              ? `https://www.youtube.com/watch?v=${previewItem.youtubeId}`
-                              : previewItem.directVideoUrl || previewItem.embedUrl
-                          }
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-2.5 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/35 text-rose-200 border border-red-500/40 text-xs font-bold flex items-center gap-1.5"
-                          title="Open source directly in YouTube / Browser"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">
-                            {previewItem.youtubeId ? 'Watch on YouTube' : 'Open Source'}
-                          </span>
-                        </a>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPlayerScaleMode((prev) => (prev === 'fill' ? 'fit' : 'fill'))
-                        }
-                        className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                          playerScaleMode === 'fill'
-                            ? 'bg-pink-600/25 border-pink-400 text-pink-200'
-                            : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-300'
-                        }`}
-                        title="Toggle Playit-style Stretch Fill vs 16:9 Fit"
-                      >
-                        <Maximize2 className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">
-                          {playerScaleMode === 'fill' ? 'Stretch Fill' : 'Fit 16:9'}
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => void enterFullscreenAndLandscape('fit')}
-                        className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/40 text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                        title="Enter 16:9 Widescreen Landscape Fullscreen"
-                      >
-                        <RectangleHorizontal className="w-3.5 h-3.5" />
-                        <span>16:9 Widescreen</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => void enterFullscreenAndLandscape('fill')}
-                        className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600/35 to-pink-600/35 hover:from-cyan-600/50 hover:to-pink-600/50 text-white border border-cyan-400/50 text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                        title="Enter Full-Screen Landscape Player"
-                      >
-                        <Maximize2 className="w-3.5 h-3.5 text-cyan-300" />
-                        <span>Full Screen</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void exitFullscreenAndRestorePortrait();
-                          setPreviewItem(null);
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <X className="w-4 h-4" />
-                        <span className="hidden xs:inline">Close</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Unified Persistent Player Viewport (switches cleanly between Inline and True Fullscreen Landscape without reloading iframe) */}
-                <div
-                  ref={cinemaViewportRef}
-                  onClick={
-                    isCinemaMode
-                      ? () => void exitFullscreenAndRestorePortrait()
-                      : undefined
-                  }
-                  className={
-                    isCinemaMode
-                      ? 'fixed inset-0 z-[70] bg-black flex items-center justify-center overflow-hidden'
-                      : `relative mx-auto overflow-hidden bg-black border border-neutral-800 shadow-2xl transition-all ${
-                          playerScaleMode === 'fill'
-                            ? 'w-full h-[38vh] sm:h-[44vh] rounded-xl sm:rounded-2xl'
-                            : 'w-[min(100%,calc(38vh*16/9))] sm:w-[min(100%,calc(44vh*16/9))] max-w-4xl aspect-video rounded-xl sm:rounded-2xl'
-                        }`
-                  }
-                >
-                  {/* Landscape inner stage: applies 90deg CSS rotation fallback if browser/WebView blocked screen.orientation.lock('landscape') on a portrait screen */}
+                  {/* Unified Persistent Player Viewport */}
                   <div
-                    onClick={(e) => e.stopPropagation()}
-                    style={
-                      cssLandscapeActive
-                        ? {
-                            position: 'fixed',
-                            top: '50%',
-                            left: '50%',
-                            width: '100dvh',
-                            height: '100vw',
-                            transform: 'translate3d(-50%, -50%, 0) rotate(90deg)',
-                            transformOrigin: 'center center',
-                          }
+                    ref={cinemaViewportRef}
+                    onClick={
+                      isCinemaMode
+                        ? () => void exitFullscreenAndRestorePortrait()
                         : undefined
                     }
                     className={
-                      cssLandscapeActive
-                        ? 'bg-black flex flex-col items-center justify-center overflow-hidden'
-                        : isCinemaMode
-                        ? `w-full h-full flex flex-col items-center justify-center relative overflow-hidden ${
-                            playerScaleMode === 'fill' ? 'p-0' : 'p-3 sm:p-6'
+                      isCinemaMode
+                        ? 'fixed inset-0 z-[70] bg-black flex items-center justify-center overflow-hidden'
+                        : `relative mx-auto overflow-hidden bg-black border border-neutral-800 shadow-2xl transition-all ${
+                            playerScaleMode === 'fill'
+                              ? 'w-full h-[38vh] sm:h-[44vh] rounded-xl sm:rounded-2xl'
+                              : 'w-[min(100%,calc(38vh*16/9))] sm:w-[min(100%,calc(44vh*16/9))] max-w-4xl aspect-video rounded-xl sm:rounded-2xl'
                           }`
-                        : 'relative w-full h-full flex items-center justify-center overflow-hidden'
                     }
                   >
-                    {!isCinemaMode && (
-                      <>
-                        <span className="absolute top-2.5 left-2.5 z-20 px-2 py-0.5 rounded-full bg-black/80 border border-cyan-400/50 text-cyan-300 text-[10px] font-black tracking-wide pointer-events-none">
-                          1080p FHD · {playerScaleMode === 'fill' ? 'STRETCH FILL' : '16:9 FIT'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void enterFullscreenAndLandscape('fit');
-                          }}
-                          className="absolute top-2.5 right-2.5 z-20 p-2 rounded-xl bg-black/80 hover:bg-cyan-600/80 text-white border border-cyan-400/50 shadow-lg backdrop-blur-sm transition-all active:scale-95 cursor-pointer"
-                          title="Enter Full Screen & Lock Landscape"
-                          aria-label="Enter Full Screen Landscape"
-                        >
-                          <Maximize2 className="w-4 h-4 text-cyan-300" />
-                        </button>
-                      </>
-                    )}
-
-                    {/* Floating Cinema / Fullscreen Controls Header */}
-                    {isCinemaMode && (
-                      <div
-                        className={`z-30 flex items-center justify-between gap-2 transition-all ${
-                          playerScaleMode === 'fill' || cssLandscapeActive
-                            ? 'absolute top-2.5 left-3 right-3 px-3 py-1.5 rounded-2xl bg-black/70 backdrop-blur-md border border-white/15'
-                            : 'w-[min(95vw,calc(80vh*16/9))] max-w-6xl mb-3 px-1'
-                        }`}
-                      >
-                        <div className="min-w-0 flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 text-[10px] font-black shrink-0">
-                            1080p FHD{cssLandscapeActive ? ' · LANDSCAPE' : ''}
-                          </span>
-                          <div className="min-w-0">
-                            <h2 className="text-xs sm:text-sm font-black text-white truncate">
-                              {previewItem.title}
-                            </h2>
-                            <p className="text-[11px] text-neutral-400 truncate hidden sm:block">
-                              {previewItem.subtitle}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPlayerScaleMode((prev) => (prev === 'fill' ? 'fit' : 'fill'))
-                            }
-                            className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
-                              playerScaleMode === 'fill'
-                                ? 'bg-pink-600 text-white border-pink-400'
-                                : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-neutral-700'
-                            }`}
-                            title="Switch between Playit Stretch Fill and 16:9 Fit"
-                          >
-                            <RectangleHorizontal className="w-3.5 h-3.5" />
-                            <span>{playerScaleMode === 'fill' ? 'Fill Screen' : '16:9 Fit'}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleToggleFullscreenApi}
-                            className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                            title="Toggle Fullscreen & Landscape"
-                          >
-                            <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
-                            <span className="hidden xs:inline">FS</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void exitFullscreenAndRestorePortrait()}
-                            className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                            title="Exit Fullscreen & Unlock Portrait"
-                          >
-                            <Minimize2 className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Exit FS</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void exitFullscreenAndRestorePortrait();
-                              setPreviewItem(null);
-                            }}
-                            className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
-                          >
-                            <X className="w-4 h-4" />
-                            <span className="hidden sm:inline">Close</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Inner Media Box */}
                     <div
+                      onClick={(e) => e.stopPropagation()}
+                      style={
+                        cssLandscapeActive
+                          ? {
+                              position: 'fixed',
+                              top: '50%',
+                              left: '50%',
+                              width: '100dvh',
+                              height: '100vw',
+                              transform: 'translate3d(-50%, -50%, 0) rotate(90deg)',
+                              transformOrigin: 'center center',
+                            }
+                          : undefined
+                      }
                       className={
-                        isCinemaMode
-                          ? cssLandscapeActive
-                            ? playerScaleMode === 'fill'
-                              ? 'relative w-full h-full overflow-hidden bg-black'
-                              : 'relative h-full aspect-video max-w-full mx-auto overflow-hidden bg-black'
-                            : playerScaleMode === 'fill'
-                            ? 'relative w-screen h-[100dvh] overflow-hidden bg-black'
-                            : 'relative w-[min(95vw,calc(80vh*16/9))] max-w-6xl aspect-video rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl'
-                          : 'relative w-full h-full overflow-hidden bg-black'
+                        cssLandscapeActive
+                          ? 'bg-black flex flex-col items-center justify-center overflow-hidden'
+                          : isCinemaMode
+                          ? `w-full h-full flex flex-col items-center justify-center relative overflow-hidden ${
+                              playerScaleMode === 'fill' ? 'p-0' : 'p-3 sm:p-6'
+                            }`
+                          : 'relative w-full h-full flex items-center justify-center overflow-hidden'
                       }
                     >
-                      {!isOnline && (previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) ? (
-                        <div className="w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950/95 space-y-3">
-                          <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center">
-                            <WifiOff className="w-6 h-6" />
+                      {!isCinemaMode && (
+                        <>
+                          <span
+                            className={`absolute top-2.5 left-2.5 z-20 px-2.5 py-0.5 rounded-full backdrop-blur-md text-[10px] font-black tracking-wide pointer-events-none border ${
+                              activeQualityOption.isUltraHd
+                                ? 'bg-amber-500/90 border-amber-300 text-black shadow-lg'
+                                : 'bg-black/80 border-cyan-400/50 text-cyan-300'
+                            }`}
+                          >
+                            {activeQualityOption.shortBadge} ·{' '}
+                            {playerScaleMode === 'fill' ? 'STRETCH FILL' : '16:9 FIT'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void enterFullscreenAndLandscape('fit');
+                            }}
+                            className="absolute top-2.5 right-2.5 z-20 p-2 rounded-xl bg-black/80 hover:bg-cyan-600/80 text-white border border-cyan-400/50 shadow-lg backdrop-blur-sm transition-all active:scale-95 cursor-pointer"
+                            title="Enter Full Screen & Lock Landscape"
+                            aria-label="Enter Full Screen Landscape"
+                          >
+                            <Maximize2 className="w-4 h-4 text-cyan-300" />
+                          </button>
+                        </>
+                      )}
+
+                      {/* Floating Cinema / Fullscreen Controls Header */}
+                      {isCinemaMode && (
+                        <div
+                          className={`z-30 flex items-center justify-between gap-2 transition-all ${
+                            playerScaleMode === 'fill' || cssLandscapeActive
+                              ? 'absolute top-2.5 left-3 right-3 px-3 py-1.5 rounded-2xl bg-black/75 backdrop-blur-md border border-white/15'
+                              : 'w-[min(95vw,calc(80vh*16/9))] max-w-6xl mb-3 px-1'
+                          }`}
+                        >
+                          <div className="min-w-0 flex items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 border ${
+                                activeQualityOption.isUltraHd
+                                  ? 'bg-amber-500 text-black border-amber-300'
+                                  : 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300'
+                              }`}
+                            >
+                              {activeQualityOption.shortBadge}
+                              {cssLandscapeActive ? ' · LANDSCAPE' : ''}
+                            </span>
+                            <div className="min-w-0">
+                              <h2 className="text-xs sm:text-sm font-black text-white truncate">
+                                {previewItem.title}
+                              </h2>
+                              <p className="text-[11px] text-neutral-400 truncate hidden sm:block">
+                                {previewItem.subtitle}
+                              </p>
+                            </div>
                           </div>
-                          <div className="space-y-1 max-w-md">
-                            <h3 className="text-sm sm:text-base font-black text-white">
-                              You&apos;re in Offline Mode
-                            </h3>
-                            <p className="text-xs text-neutral-300 leading-relaxed">
-                              Online streaming needs an internet connection. Your saved reels, photos, songs, and naats are ready in <strong>Saved / Downloads</strong>!
-                            </p>
-                          </div>
-                          {onOpenSavedOffline && (
+                          <div className="flex items-center gap-1.5 shrink-0 relative">
+                            {previewItem.youtubeId && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={handleFastServerReload}
+                                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                                  title="Fast Server / Reload"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">Fast Server</span>
+                                </button>
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsQualityMenuOpen((o) => !o)}
+                                    className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                                    title="Select Video Resolution"
+                                  >
+                                    <Settings className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">{activeQualityOption.label}</span>
+                                  </button>
+                                  {isQualityMenuOpen && (
+                                    <div className="absolute right-0 mt-1.5 w-48 rounded-2xl bg-neutral-900 border border-neutral-700 shadow-2xl p-1.5 z-50">
+                                      {YOUTUBE_QUALITY_OPTIONS.map((opt) => (
+                                        <button
+                                          key={opt.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedQuality(opt.id);
+                                            setIsQualityMenuOpen(false);
+                                            onShowToast(`Resolution set to ${opt.label}`);
+                                          }}
+                                          className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-bold flex items-center justify-between cursor-pointer ${
+                                            selectedQuality === opt.id
+                                              ? 'bg-pink-600/25 text-white border border-pink-500/40'
+                                              : 'text-neutral-300 hover:bg-neutral-800'
+                                          }`}
+                                        >
+                                          <span>{opt.label}</span>
+                                          {opt.isUltraHd && (
+                                            <span className="px-1.5 py-0.5 rounded bg-amber-500 text-black text-[9px] font-black">
+                                              4K
+                                            </span>
+                                          )}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPlayerScaleMode((prev) => (prev === 'fill' ? 'fit' : 'fill'))
+                              }
+                              className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
+                                playerScaleMode === 'fill'
+                                  ? 'bg-pink-600 text-white border-pink-400'
+                                  : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-neutral-700'
+                              }`}
+                              title="Switch between Stretch Fill and 16:9 Fit"
+                            >
+                              <RectangleHorizontal className="w-3.5 h-3.5" />
+                              <span className="hidden xs:inline">
+                                {playerScaleMode === 'fill' ? 'Fill' : '16:9'}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleToggleFullscreenApi}
+                              className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                              title="Toggle Fullscreen & Landscape"
+                            >
+                              <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void exitFullscreenAndRestorePortrait()}
+                              className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                              title="Exit Fullscreen & Unlock Portrait"
+                            >
+                              <Minimize2 className="w-3.5 h-3.5" />
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
                                 void exitFullscreenAndRestorePortrait();
-                                onOpenSavedOffline();
+                                setIsQualityMenuOpen(false);
+                                setPreviewItem(null);
                               }}
-                              className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-lg"
+                              className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
                             >
-                              <HardDrive className="w-3.5 h-3.5" />
-                              <span>Open Saved / Downloads</span>
-                              <ArrowRight className="w-3.5 h-3.5" />
+                              <X className="w-4 h-4" />
                             </button>
-                          )}
-                        </div>
-                      ) : playerError ? (
-                        <div className="relative w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950 space-y-3">
-                          {previewItem.thumbnailUrl && (
-                            <img
-                              src={previewItem.thumbnailUrl}
-                              alt={previewItem.title}
-                              loading="lazy"
-                              decoding="async"
-                              className="absolute inset-0 w-full h-full object-cover opacity-25 pointer-events-none"
-                            />
-                          )}
-                          <div className="relative z-10 flex flex-col items-center gap-2.5 max-w-md">
-                            <div className="w-11 h-11 rounded-2xl bg-red-500/20 border border-red-500/45 text-red-400 flex items-center justify-center">
-                              <AlertTriangle className="w-5 h-5" />
-                            </div>
-                            <h3 className="text-sm sm:text-base font-black text-white line-clamp-1">
-                              {previewItem.title}
-                            </h3>
-                            <p className="text-xs text-neutral-300 leading-relaxed">
-                              {playerError}
-                            </p>
-                            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                              <a
-                                href={
-                                  previewItem.youtubeId
-                                    ? `https://www.youtube.com/watch?v=${previewItem.youtubeId}`
-                                    : previewItem.directVideoUrl || previewItem.embedUrl || '#'
-                                }
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-red-600/35"
-                              >
-                                <Youtube className="w-4 h-4 fill-white" />
-                                <span>
-                                  {previewItem.youtubeId
-                                    ? 'Open & Watch on YouTube'
-                                    : 'Open Video Source'}
-                                </span>
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => setPlayerError(null)}
-                                className="px-3.5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-bold cursor-pointer"
-                              >
-                                Retry Embed
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ) : previewItem.directVideoUrl ? (
-                        <video
-                          ref={directVideoRef}
-                          key={previewItem.directVideoUrl}
-                          controls
-                          autoPlay
-                          playsInline
-                          onError={() =>
-                            setPlayerError(
-                              'This direct video URL could not play in-app. Open source link directly.'
-                            )
-                          }
-                          className={`w-full h-full bg-black ${
-                            playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
-                          }`}
-                        />
-                      ) : previewItem.embedUrl ? (
-                        <iframe
-                          key={previewItem.embedUrl}
-                          src={sanitizeSafeUrl(previewItem.embedUrl, {
-                            allowBlob: false,
-                            allowDataImageAudio: false,
-                          })}
-                          title={previewItem.title}
-                          onError={() =>
-                            setPlayerError('Remote embed blocked playback inside frame.')
-                          }
-                          className="w-full h-full border-0 bg-black"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                          allowFullScreen
-                        />
-                      ) : previewItem.youtubeId ? (
-                        <iframe
-                          ref={playerIframeRef}
-                          key={previewItem.youtubeId}
-                          src={buildYouTube1080Url(previewItem.youtubeId)}
-                          title={previewItem.title}
-                          onLoad={() =>
-                            enforceYouTube1080p(playerIframeRef.current, previewItem.youtubeId)
-                          }
-                          onError={() =>
-                            setPlayerError(
-                              'Unable to embed this YouTube video in-app. Tap below to open and watch on YouTube.'
-                            )
-                          }
-                          className={
-                            isCinemaMode
-                              ? cssLandscapeActive || playerScaleMode === 'fit'
-                                ? 'w-full h-full border-0'
-                                : 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100vw,calc(100dvh*16/9))] h-[max(100dvh,calc(100vw*9/16))] border-0'
-                              : playerScaleMode === 'fill'
-                              ? 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100%,calc(44vh*16/9))] h-[max(100%,calc(100vw*9/16))] border-0'
-                              : 'w-full h-full border-0'
-                          }
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                          allowFullScreen
-                        />
-                      ) : (
-                        <div className="w-full h-full relative flex flex-col items-center justify-center p-4 text-center">
-                          {previewItem.thumbnailUrl && (
-                            <img
-                              src={previewItem.thumbnailUrl}
-                              alt={previewItem.title}
-                              loading="lazy"
-                              decoding="async"
-                              className={`absolute inset-0 w-full h-full opacity-55 ${
-                                playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
-                              }`}
-                            />
-                          )}
-                          <div className="relative z-10 flex flex-col items-center gap-2">
-                            <Film className="w-10 h-10 text-cyan-400" />
-                            <p className="text-sm text-white font-bold">{previewItem.title}</p>
                           </div>
                         </div>
                       )}
+
+                      {/* Inner Media Box */}
+                      <div
+                        className={
+                          isCinemaMode
+                            ? cssLandscapeActive
+                              ? playerScaleMode === 'fill'
+                                ? 'relative w-full h-full overflow-hidden bg-black'
+                                : 'relative h-full aspect-video max-w-full mx-auto overflow-hidden bg-black'
+                              : playerScaleMode === 'fill'
+                              ? 'relative w-screen h-[100dvh] overflow-hidden bg-black'
+                              : 'relative w-[min(95vw,calc(80vh*16/9))] max-w-6xl aspect-video rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl'
+                            : 'relative w-full h-full overflow-hidden bg-black'
+                        }
+                      >
+                        {!isOnline && (previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950/95 space-y-3">
+                            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center">
+                              <WifiOff className="w-6 h-6" />
+                            </div>
+                            <div className="space-y-1 max-w-md">
+                              <h3 className="text-sm sm:text-base font-black text-white">
+                                You&apos;re in Offline Mode
+                              </h3>
+                              <p className="text-xs text-neutral-300 leading-relaxed">
+                                Online streaming needs an internet connection. Your saved reels, photos, songs, and naats are ready in <strong>Saved / Downloads</strong>!
+                              </p>
+                            </div>
+                            {onOpenSavedOffline && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void exitFullscreenAndRestorePortrait();
+                                  onOpenSavedOffline();
+                                }}
+                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-lg"
+                              >
+                                <HardDrive className="w-3.5 h-3.5" />
+                                <span>Open Saved / Downloads</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ) : playerError ? (
+                          <div className="relative w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950 space-y-3">
+                            {previewItem.thumbnailUrl && (
+                              <img
+                                src={previewItem.thumbnailUrl}
+                                alt={previewItem.title}
+                                loading="lazy"
+                                decoding="async"
+                                className="absolute inset-0 w-full h-full object-cover opacity-25 pointer-events-none"
+                              />
+                            )}
+                            <div className="relative z-10 flex flex-col items-center gap-2.5 max-w-md">
+                              <div className="w-11 h-11 rounded-2xl bg-red-500/20 border border-red-500/45 text-red-400 flex items-center justify-center">
+                                <AlertTriangle className="w-5 h-5" />
+                              </div>
+                              <h3 className="text-sm sm:text-base font-black text-white line-clamp-1">
+                                {previewItem.title}
+                              </h3>
+                              <p className="text-xs text-neutral-300 leading-relaxed">
+                                {playerError}
+                              </p>
+                              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={handleFastServerReload}
+                                  className="px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-lg"
+                                >
+                                  <Zap className="w-3.5 h-3.5" />
+                                  <span>Fast Server / Reload</span>
+                                </button>
+                                <a
+                                  href={
+                                    previewItem.youtubeId
+                                      ? `https://www.youtube.com/watch?v=${previewItem.youtubeId}`
+                                      : previewItem.directVideoUrl || previewItem.embedUrl || '#'
+                                  }
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-red-600/35"
+                                >
+                                  <Youtube className="w-4 h-4 fill-white" />
+                                  <span>
+                                    {previewItem.youtubeId
+                                      ? 'Open & Watch on YouTube'
+                                      : 'Open Video Source'}
+                                  </span>
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+                        ) : previewItem.directVideoUrl ? (
+                          <video
+                            ref={directVideoRef}
+                            key={previewItem.directVideoUrl}
+                            controls
+                            autoPlay
+                            playsInline
+                            onError={() =>
+                              setPlayerError(
+                                'This direct video URL could not play in-app. Open source link directly.'
+                              )
+                            }
+                            className={`w-full h-full bg-black ${
+                              playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
+                            }`}
+                          />
+                        ) : previewItem.embedUrl ? (
+                          <iframe
+                            key={previewItem.embedUrl}
+                            src={sanitizeSafeUrl(previewItem.embedUrl, {
+                              allowBlob: false,
+                              allowDataImageAudio: false,
+                            })}
+                            title={previewItem.title}
+                            onError={() =>
+                              setPlayerError('Remote embed blocked playback inside frame.')
+                            }
+                            className="w-full h-full border-0 bg-black"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                            allowFullScreen
+                          />
+                        ) : previewItem.youtubeId ? (
+                          <LiteYouTubePlayer
+                            youtubeId={previewItem.youtubeId}
+                            title={previewItem.title}
+                            thumbnailUrl={previewItem.thumbnailUrl}
+                            autoActivate={true}
+                            isCinemaMode={isCinemaMode}
+                            playerScaleMode={playerScaleMode}
+                            cssLandscapeActive={cssLandscapeActive}
+                            selectedQuality={selectedQuality}
+                            serverIndex={serverIndex}
+                            reloadNonce={reloadNonce}
+                            onPlayerError={(msg) => setPlayerError(msg)}
+                          />
+                        ) : (
+                          <div className="w-full h-full relative flex flex-col items-center justify-center p-4 text-center">
+                            {previewItem.thumbnailUrl && (
+                              <img
+                                src={previewItem.thumbnailUrl}
+                                alt={previewItem.title}
+                                loading="lazy"
+                                decoding="async"
+                                className={`absolute inset-0 w-full h-full opacity-55 ${
+                                  playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
+                                }`}
+                              />
+                            )}
+                            <div className="relative z-10 flex flex-col items-center gap-2">
+                              <Film className="w-10 h-10 text-cyan-400" />
+                              <p className="text-sm text-white font-bold">{previewItem.title}</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Scrollable Search & Video Cards Area */}
-          <div
-            ref={scrollContainerRef}
-            className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 space-y-4 pb-24 lg:pb-8"
-          >
+            {/* Main Hub Controls & Video Cards Area */}
+            <div className="p-4 sm:p-6 space-y-4">
             {/* Friendly Offline Notice inside Movie Box when internet is disconnected */}
             {!isOnline && (
               <div className="max-w-6xl mx-auto p-3.5 rounded-2xl bg-amber-950/35 border border-amber-500/45 flex flex-wrap items-center justify-between gap-3">
@@ -2288,13 +2573,22 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                           {isYouTubeCard ? (
                             <div className="space-y-2.5">
                               <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-neutral-800 group-hover:border-red-500/60 transition-colors">
-                                <img
-                                  src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
-                                  alt={item.title}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                  loading="lazy"
-                                  decoding="async"
-                                />
+                                {item.youtubeId ? (
+                                  <LiteYouTubeThumb
+                                    videoId={item.youtubeId}
+                                    alt={item.title}
+                                    fallbackUrl={item.thumbnailUrl}
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                  />
+                                ) : (
+                                  <img
+                                    src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
+                                    alt={item.title}
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                    loading="lazy"
+                                    decoding="async"
+                                  />
+                                )}
                                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent pointer-events-none" />
                                 <div className="absolute inset-0 flex items-center justify-center">
                                   <div className="w-12 h-12 rounded-full bg-red-600/95 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
@@ -2303,7 +2597,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                 </div>
                                 <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-red-600/90 text-[10px] font-black text-white uppercase flex items-center gap-1">
                                   <Youtube className="w-3 h-3 fill-white" />
-                                  <span>{isCurrentlyPlaying ? 'Playing' : 'YouTube'}</span>
+                                  <span>{isCurrentlyPlaying ? 'Playing' : 'Lite HD'}</span>
                                 </span>
                               </div>
 
@@ -2321,13 +2615,22 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                             <div className="flex gap-3.5">
                               {/* Thumbnail with quality badge & Hover Play Overlay */}
                               <div className="relative w-22 h-22 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-neutral-800 shrink-0 border border-neutral-700/80 shadow-md group-hover:scale-102 transition-transform">
-                                <img
-                                  src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
-                                  alt={item.title}
-                                  className="w-full h-full object-cover"
-                                  loading="lazy"
-                                  decoding="async"
-                                />
+                                {item.youtubeId ? (
+                                  <LiteYouTubeThumb
+                                    videoId={item.youtubeId}
+                                    alt={item.title}
+                                    fallbackUrl={item.thumbnailUrl}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <img
+                                    src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
+                                    alt={item.title}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                    decoding="async"
+                                  />
+                                )}
                                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
 
                                 {/* Category Icon Badge */}
@@ -2599,11 +2902,10 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                 })}
               </div>
             )}
+              </div>
+            </div>
           </div>
-
-          {/* Duplicate quick paste bar removed (now elevated cleanly near the top search bar) */}
         </div>
-      </div>
       ) : (
         /* ========================================================================= */
         /* "MY DOWNLOADS" SESSION MANAGER VIEW                                       */
