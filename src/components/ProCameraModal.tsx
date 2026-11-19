@@ -1310,7 +1310,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               <img
                 src={recordedClipUrl}
                 alt="Captured Preview"
-                className="w-full h-full object-cover bg-black"
+                loading="lazy"
+                decoding="async"
+                className="w-full h-full object-cover bg-black gpu-accelerated"
               />
             ) : (
               <video
@@ -1650,6 +1652,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                                 <img
                                   src={optimizeThumbnailUrl(friend.avatar, 'grid')}
                                   alt={friend.name}
+                                  loading="lazy"
+                                  decoding="async"
                                   className="w-9 h-9 rounded-full object-cover border border-pink-500/40 shrink-0"
                                   referrerPolicy="no-referrer"
                                 />

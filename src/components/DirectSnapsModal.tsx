@@ -273,6 +273,8 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
                           <img
                             src={optimizeThumbnailUrl(conv.partner.avatar, 'grid')}
                             alt={conv.partner.name}
+                            loading="lazy"
+                            decoding="async"
                             className="w-10 h-10 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
                             referrerPolicy="no-referrer"
                           />
@@ -350,6 +352,8 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
                           <img
                             src={optimizeThumbnailUrl(friend.avatar, 'grid')}
                             alt={friend.name}
+                            loading="lazy"
+                            decoding="async"
                             className="w-9 h-9 rounded-full object-cover bg-neutral-800 border border-neutral-700 shrink-0"
                             referrerPolicy="no-referrer"
                           />
@@ -400,6 +404,8 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
                     <img
                       src={optimizeThumbnailUrl(activeConversation.partner.avatar, 'grid')}
                       alt={activeConversation.partner.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-9 h-9 rounded-full object-cover border border-pink-500/40 shrink-0"
                       referrerPolicy="no-referrer"
                     />
@@ -566,6 +572,8 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
                 <img
                   src={activeViewerSnap.senderAvatar}
                   alt={activeViewerSnap.senderName}
+                  loading="lazy"
+                  decoding="async"
                   className="w-6 h-6 rounded-full object-cover"
                   referrerPolicy="no-referrer"
                 />
@@ -586,6 +594,8 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
               <img
                 src={activeViewerSnap.mediaUrl}
                 alt="Live Snap"
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover"
               />
             ) : (

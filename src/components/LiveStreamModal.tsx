@@ -347,6 +347,8 @@ export const LiveStreamModal: React.FC<LiveStreamModalProps> = ({
                       <img
                         src={hostAvatar}
                         alt={hostName}
+                        loading="lazy"
+                        decoding="async"
                         className="w-20 h-20 rounded-full object-cover border-2 border-pink-500 shadow-xl shadow-pink-500/25 ring-4 ring-pink-500/20"
                         referrerPolicy="no-referrer"
                       />
@@ -382,6 +384,8 @@ export const LiveStreamModal: React.FC<LiveStreamModalProps> = ({
                       <img
                         src="https://api.dicebear.com/7.x/bottts/svg?seed=AuroraGuest&backgroundColor=06b6d4"
                         alt="Guest Host"
+                        loading="lazy"
+                        decoding="async"
                         className="w-18 h-18 rounded-full object-cover border-2 border-cyan-400 shadow-xl shadow-cyan-500/25 ring-4 ring-cyan-500/20"
                         referrerPolicy="no-referrer"
                       />
@@ -445,6 +449,8 @@ export const LiveStreamModal: React.FC<LiveStreamModalProps> = ({
                   <img
                     src={hostAvatar}
                     alt={hostName}
+                    loading="lazy"
+                    decoding="async"
                     className="w-24 h-24 rounded-full object-cover border-4 border-pink-500 shadow-2xl shadow-pink-500/30 ring-8 ring-pink-500/10"
                     referrerPolicy="no-referrer"
                   />
@@ -469,6 +475,8 @@ export const LiveStreamModal: React.FC<LiveStreamModalProps> = ({
               <img
                 src={hostAvatar}
                 alt={hostName}
+                loading="lazy"
+                decoding="async"
                 className="w-8 h-8 rounded-full object-cover border border-pink-500 shrink-0"
                 referrerPolicy="no-referrer"
               />
@@ -568,6 +576,8 @@ export const LiveStreamModal: React.FC<LiveStreamModalProps> = ({
                   <img
                     src={msg.avatar}
                     alt={msg.user}
+                    loading="lazy"
+                    decoding="async"
                     className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5"
                     referrerPolicy="no-referrer"
                   />

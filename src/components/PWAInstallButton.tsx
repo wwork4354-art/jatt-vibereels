@@ -17,7 +17,7 @@ interface PWAInstallButtonProps {
 
 const BANNER_DISMISSED_KEY = 'jatt_pwa_banner_dismissed_v1';
 
-export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
+const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
   variant = 'topbar',
   onShowToast,
 }) => {
@@ -75,6 +75,8 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
               <img
                 src="/pwa-192x192.png"
                 alt="Jatt VibeReels"
+                loading="lazy"
+                decoding="async"
                 className="w-10 h-10 rounded-xl border border-pink-500/40 shrink-0"
               />
               <div className="min-w-0">
@@ -168,6 +170,8 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
                 <img
                   src="/pwa-192x192.png"
                   alt="Jatt VibeReels"
+                  loading="lazy"
+                  decoding="async"
                   className="w-8 h-8 rounded-lg border border-pink-500/40"
                 />
                 <div>
@@ -231,3 +235,5 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
     </>
   );
 };
+
+export const PWAInstallButton = React.memo(PWAInstallButtonComponent);

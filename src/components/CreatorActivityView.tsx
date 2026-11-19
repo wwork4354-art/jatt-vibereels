@@ -88,7 +88,7 @@ export const ActivityTypeBadge: React.FC<{ type: InteractionType }> = ({ type })
   }
 };
 
-export const CreatorActivityView: React.FC<CreatorActivityPanelProps> = ({
+const CreatorActivityViewComponent: React.FC<CreatorActivityPanelProps> = ({
   events,
   videos,
   profile,
@@ -570,6 +570,8 @@ export const PostInsightsModal: React.FC<{
               <img
                 src={post.mediaType === 'image' ? post.videoUrl : post.posterUrl}
                 alt={post.title}
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover"
               />
             ) : (
@@ -653,6 +655,8 @@ export const PostInsightsModal: React.FC<{
                   <img
                     src={ev.actorAvatar}
                     alt={ev.actorName}
+                    loading="lazy"
+                    decoding="async"
                     className="w-8 h-8 rounded-full object-cover shrink-0"
                     referrerPolicy="no-referrer"
                   />
@@ -678,3 +682,5 @@ export const PostInsightsModal: React.FC<{
     </div>
   );
 };
+
+export const CreatorActivityView = React.memo(CreatorActivityViewComponent);

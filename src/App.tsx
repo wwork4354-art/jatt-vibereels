@@ -1145,6 +1145,47 @@ export default function App() {
     }
   }, [activeIndex, displayedVideos]);
 
+  // Viewport IntersectionObserver on snap container to ensure only the visible reel plays
+  useEffect(() => {
+    const rootEl = containerRef.current;
+    if (!rootEl || typeof IntersectionObserver === 'undefined' || displayedVideos.length === 0) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        let bestIdx = -1;
+        let bestRatio = 0;
+
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const idxAttr = entry.target.getAttribute('data-reel-index');
+          const parsedIdx = idxAttr !== null ? Number(idxAttr) : -1;
+          if (!Number.isNaN(parsedIdx) && parsedIdx >= 0 && entry.intersectionRatio > bestRatio) {
+            bestRatio = entry.intersectionRatio;
+            bestIdx = parsedIdx;
+          }
+        }
+
+        if (bestIdx >= 0 && bestRatio >= 0.65 && bestIdx < displayedVideos.length) {
+          expectedVideoIdRef.current = displayedVideos[bestIdx]?.id || '';
+          setActiveIndex((prev) => (prev === bestIdx ? prev : bestIdx));
+        }
+      },
+      {
+        root: rootEl,
+        threshold: [0.25, 0.65, 0.9],
+      }
+    );
+
+    const cardNodes = rootEl.querySelectorAll('[data-reel-index]');
+    cardNodes.forEach((node) => observer.observe(node));
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [displayedVideos, currentTab]);
+
   // Smooth touch + desktop mouse/wheel swipe gestures for collapsible Live Stories Bar
   const beginStoriesSwipe = useCallback(
     (clientY: number, clientX: number) => {
@@ -1282,7 +1323,7 @@ export default function App() {
   // Like toggle (persists liked post IDs locally + updates likes_count globally in Supabase + logs activity)
   const handleLikeToggle = useCallback(
     (id: string) => {
-      const targetVideo = videos.find((v) => v.id === id);
+      const targetVideo = videosRef.current.find((v) => v.id === id);
       if (!targetVideo) return;
 
       const willLike = !targetVideo.isLiked;
@@ -1324,7 +1365,7 @@ export default function App() {
         logActivity(targetVideo, 'like');
       }
     },
-    [videos, logActivity]
+    [logActivity]
   );
 
   // Global Keyboard shortcuts
@@ -1372,7 +1413,7 @@ export default function App() {
   // Save/Bookmark toggle (persisted + logged)
   const handleSaveToggle = useCallback(
     (id: string) => {
-      const targetVideo = videos.find((v) => v.id === id);
+      const targetVideo = videosRef.current.find((v) => v.id === id);
       if (!targetVideo) return;
 
       const willSave = !targetVideo.isSaved;
@@ -1421,7 +1462,7 @@ export default function App() {
         );
       }
     },
-    [videos, showToast, logActivity, isOnline]
+    [showToast, logActivity, isOnline]
   );
 
   const handleOpenSavedDownloadsOffline = useCallback(() => {
@@ -1463,7 +1504,7 @@ export default function App() {
   // Track real-time downloads + log creator activity
   const handleDownloadTracked = useCallback(
     (id: string) => {
-      const targetVideo = videos.find((v) => v.id === id);
+      const targetVideo = videosRef.current.find((v) => v.id === id);
       if (!targetVideo) return;
       const nextDownloads = (targetVideo.stats.downloads || 0) + 1;
 
@@ -1488,7 +1529,7 @@ export default function App() {
       );
       logActivity(targetVideo, 'download');
     },
-    [videos, logActivity]
+    [logActivity]
   );
 
   // Follow / Unfollow / Follow Back toggle (persisted in directional social graph + creator follower delta)
@@ -2457,7 +2498,7 @@ export default function App() {
                     setIsStoriesBarOpen(true);
                   }
                 }}
-                className="relative w-full flex-1 min-h-0 max-w-5xl mx-auto bg-black flex flex-col overflow-hidden"
+                className="relative w-full flex-1 min-h-0 max-w-5xl mx-auto bg-black flex flex-col overflow-hidden gpu-accelerated"
               >
                 {(currentTab === 'foryou' || currentTab === 'following') && (
                   <LiveStoriesBar
@@ -2573,7 +2614,7 @@ export default function App() {
                   <div
                     ref={containerRef}
                     onScroll={handleScroll}
-                    className="flex-1 min-h-0 w-full snap-container overflow-y-scroll overflow-x-hidden overscroll-y-contain no-scrollbar [will-change:scroll-position]"
+                    className="flex-1 min-h-0 w-full snap-container gpu-accelerated overflow-y-scroll overflow-x-hidden overscroll-y-contain no-scrollbar [will-change:scroll-position]"
                   >
                     {displayedVideos.map((video, idx) => {
                       const rel = getFollowRelationship(
@@ -2584,6 +2625,7 @@ export default function App() {
                       return (
                         <VideoCard
                           key={video.id}
+                          cardIndex={idx}
                           video={video}
                           isActive={idx === activeIndex}
                           isNext={idx === activeIndex + 1}

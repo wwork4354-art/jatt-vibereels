@@ -46,7 +46,7 @@ interface SidebarDesktopProps {
 }
 
 
-export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
+const SidebarDesktopComponent: React.FC<SidebarDesktopProps> = ({
   currentTab,
   onSelectTab,
   onOpenUpload,
@@ -71,6 +71,8 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
           <img
             src={BRAND_LOGO_SRC} /* <-- PLACEHOLDER: Linked from BRAND_LOGO_SRC in TopBar */
             alt="Jatt VibeReels Logo"
+            loading="lazy"
+            decoding="async"
             className="w-10 h-10 rounded-full object-cover shrink-0 border border-amber-500/40 shadow-lg shadow-amber-500/20"
           />
           <div>
@@ -358,6 +360,8 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
               <img
                 src={currentUser.avatar}
                 alt={currentUser.name}
+                loading="lazy"
+                decoding="async"
                 className="w-7 h-7 rounded-full object-cover bg-neutral-800 border border-neutral-700 shrink-0"
               />
               <div className="min-w-0">
@@ -434,3 +438,5 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
     </aside>
   );
 };
+
+export const SidebarDesktop = React.memo(SidebarDesktopComponent);

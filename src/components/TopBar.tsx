@@ -63,7 +63,7 @@ interface TopBarProps {
   currentTab?: string;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({
+const TopBarComponent: React.FC<TopBarProps> = ({
   currentUser,
   videos = [],
   ownProfile,
@@ -185,6 +185,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         <img
           src={BRAND_LOGO_SRC} /* <-- PLACEHOLDER: Link your logo here */
           alt="Jatt VibeReels"
+          loading="lazy"
+          decoding="async"
           className="h-8 sm:h-9 w-auto max-w-[165px] object-contain rounded-md shadow-sm"
         />
       </div>
@@ -266,6 +268,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                             <img
                               src={optimizeThumbnailUrl(channel.avatar, 'grid')}
                               alt={channel.name}
+                              loading="lazy"
+                              decoding="async"
                               className="w-8 h-8 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
                               referrerPolicy="no-referrer"
                             />
@@ -317,12 +321,16 @@ export const TopBar: React.FC<TopBarProps> = ({
                                 <img
                                   src={optimizeThumbnailUrl(post.videoUrl, 'grid')}
                                   alt={post.title}
+                                  loading="lazy"
+                                  decoding="async"
                                   className="w-full h-full object-cover"
                                 />
                               ) : (
                                 <img
                                   src={optimizeThumbnailUrl(post.posterUrl, 'grid')}
                                   alt={post.title}
+                                  loading="lazy"
+                                  decoding="async"
                                   className="w-full h-full object-cover"
                                 />
                               )}
@@ -588,6 +596,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <img
                   src={currentUser.avatar}
                   alt={currentUser.name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover bg-neutral-800 border border-pink-500/40"
                   referrerPolicy="no-referrer"
                 />
@@ -635,6 +645,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                   <img
                     src={currentUser.avatar}
                     alt={currentUser.name}
+                    loading="lazy"
+                    decoding="async"
                     className="w-11 h-11 rounded-xl object-cover bg-neutral-900 border border-neutral-700"
                   />
                   <div className="min-w-0 flex-1">
@@ -704,3 +716,5 @@ export const TopBar: React.FC<TopBarProps> = ({
     </header>
   );
 };
+
+export const TopBar = React.memo(TopBarComponent);

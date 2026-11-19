@@ -7,7 +7,7 @@ interface OfflineBannerProps {
   onOpenSavedOffline: () => void;
 }
 
-export const OfflineBanner: React.FC<OfflineBannerProps> = ({ onOpenSavedOffline }) => {
+const OfflineBannerComponent: React.FC<OfflineBannerProps> = ({ onOpenSavedOffline }) => {
   const isOnline = useOnlineStatus();
   const [cachedCount, setCachedCount] = useState<number>(0);
 
@@ -28,7 +28,7 @@ export const OfflineBanner: React.FC<OfflineBannerProps> = ({ onOpenSavedOffline
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-12.5 sm:top-13.5 left-0 right-0 z-45 px-3 sm:px-6 pointer-events-none"
+      className="fixed top-12.5 sm:top-13.5 left-0 right-0 z-45 px-3 sm:px-6 pointer-events-none gpu-accelerated"
     >
       <div className="max-w-3xl mx-auto pointer-events-auto rounded-2xl bg-neutral-950/95 border border-amber-500/50 shadow-2xl shadow-amber-500/15 px-3.5 py-2 flex items-center justify-between gap-2.5 animate-in fade-in slide-in-from-top-2 duration-200">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -62,3 +62,5 @@ export const OfflineBanner: React.FC<OfflineBannerProps> = ({ onOpenSavedOffline
     </div>
   );
 };
+
+export const OfflineBanner = React.memo(OfflineBannerComponent);

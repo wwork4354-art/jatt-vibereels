@@ -70,7 +70,7 @@ interface MobileNavigationProps {
   onToggleBottomNav: () => void;
 }
 
-export const MobileNavigation: React.FC<MobileNavigationProps> = ({
+const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
   currentTab,
   onSelectTab,
   onOpenUpload,
@@ -175,6 +175,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
             <img
               src={BRAND_LOGO_SRC}
               alt="Jatt VibeReels"
+              loading="lazy"
+              decoding="async"
               className="h-6 w-auto max-w-[98px] object-contain rounded-md"
             />
           </div>
@@ -258,6 +260,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                   <img
                     src={currentUser.avatar}
                     alt={currentUser.name}
+                    loading="lazy"
+                    decoding="async"
                     className="w-6 h-6 rounded-full object-cover bg-neutral-800"
                     referrerPolicy="no-referrer"
                   />
@@ -398,6 +402,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                           <img
                             src={optimizeThumbnailUrl(channel.avatar, 'grid')}
                             alt={channel.name}
+                            loading="lazy"
+                            decoding="async"
                             className="w-8 h-8 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
                             referrerPolicy="no-referrer"
                           />
@@ -457,6 +463,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                                 'grid'
                               )}
                               alt={post.title}
+                              loading="lazy"
+                              decoding="async"
                               className="w-full h-full object-cover"
                             />
                             <span className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/70 text-white">
@@ -551,7 +559,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
       {/* Collapsible Mobile Bottom Tab Bar */}
       <nav
         aria-hidden={!isBottomNavOpen}
-        className={`lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800/80 px-1 py-1.5 flex items-center justify-between gap-0.5 pb-safe transition-[transform,opacity] duration-200 ease-out [transform:translateZ(0)] ${
+        className={`lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800/80 px-1 py-1.5 flex items-center justify-between gap-0.5 pb-safe transition-[transform,opacity] duration-200 ease-out gpu-accelerated ${
           isBottomNavOpen
             ? 'translate-y-0 opacity-100 pointer-events-auto'
             : 'translate-y-full opacity-0 pointer-events-none'
@@ -668,6 +676,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
             <img
               src={currentUser?.avatar || creatorAvatar}
               alt="Profile"
+              loading="lazy"
+              decoding="async"
               className={`w-[18px] h-[18px] rounded-full object-cover border shrink-0 ${
                 currentTab === 'profile' ? 'border-pink-400 ring-2 ring-pink-500/30' : 'border-neutral-600'
               }`}
@@ -699,6 +709,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                 <img
                   src={currentUser.avatar}
                   alt={currentUser.name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-12 h-12 rounded-2xl object-cover bg-neutral-900 border-2 border-pink-500/50"
                 />
                 <div>
@@ -932,4 +944,6 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
     </>
   );
 };
+
+export const MobileNavigation = React.memo(MobileNavigationComponent);
 

@@ -123,9 +123,11 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
                   title={`Open @${comment.user.username} channel`}
                 >
                   <img
-                  src={comment.user.avatar}
-                  alt={comment.user.name}
-                  className="w-9 h-9 rounded-full object-cover shrink-0 bg-neutral-800 border border-neutral-700/60"
+                    src={comment.user.avatar}
+                    alt={comment.user.name}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-9 h-9 rounded-full object-cover shrink-0 bg-neutral-800 border border-neutral-700/60"
                     referrerPolicy="no-referrer"
                   />
                 </button>
@@ -206,6 +208,8 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
             <img
               src={activeAvatar}
               alt={activeUsername}
+              loading="lazy"
+              decoding="async"
               className="w-8 h-8 rounded-full object-cover border border-neutral-700 shrink-0"
               referrerPolicy="no-referrer"
             />

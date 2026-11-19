@@ -91,6 +91,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({
           <img
             src={video.creator.avatar}
             alt={video.creator.name}
+            loading="lazy"
+            decoding="async"
             className="w-9 h-9 rounded-full object-cover bg-neutral-700 shrink-0"
             referrerPolicy="no-referrer"
           />
@@ -154,6 +156,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({
               <img
                 src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(currentUrl)}`}
                 alt="QR Code"
+                loading="lazy"
+                decoding="async"
                 className="w-32 h-32"
                 referrerPolicy="no-referrer"
               />

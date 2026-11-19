@@ -556,6 +556,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               <img
                                 src={u.avatar}
                                 alt={u.name}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-9 h-9 rounded-full object-cover bg-neutral-800 border border-neutral-700/60"
                                 referrerPolicy="no-referrer"
                               />

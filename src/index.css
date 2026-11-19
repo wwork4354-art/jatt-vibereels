@@ -21,9 +21,9 @@
   scroll-snap-type: y mandatory;
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
-  will-change: scroll-position;
+  transform: translate3d(0, 0, 0);
+  -webkit-transform: translate3d(0, 0, 0);
+  will-change: transform, scroll-position;
 }
 
 .snap-item {
@@ -31,12 +31,13 @@
   scroll-snap-stop: always;
   transform: translate3d(0, 0, 0);
   -webkit-transform: translate3d(0, 0, 0);
+  will-change: transform;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   contain: layout style paint;
 }
 
-/* Fast hardware-accelerated class for interactive overlays & camera preview */
+/* Fast hardware-accelerated class for interactive overlays, swipe drawers & video containers */
 .gpu-accelerated {
   transform: translate3d(0, 0, 0);
   -webkit-transform: translate3d(0, 0, 0);

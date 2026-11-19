@@ -139,7 +139,7 @@ function formatCompactCount(num: number): string {
   return num.toLocaleString();
 }
 
-export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
+const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
   profile,
   onUpdateProfile,
   onSyncProfileByUsername,
@@ -654,6 +654,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               <img
                 src={profile.avatar}
                 alt={profile.name}
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full rounded-full object-cover bg-neutral-900 border-2 border-neutral-950"
                 referrerPolicy="no-referrer"
               />
@@ -1022,6 +1024,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                               <img
                                 src={optimizeThumbnailUrl(user.avatar, 'grid')}
                                 alt={user.name}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-10 h-10 rounded-full object-cover bg-neutral-800 border border-neutral-700 shrink-0"
                                 referrerPolicy="no-referrer"
                               />
@@ -1313,6 +1317,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                           <img
                             src={optimizeThumbnailUrl(member.avatar, 'grid')}
                             alt={member.name}
+                            loading="lazy"
+                            decoding="async"
                             className="w-11 h-11 rounded-full object-cover bg-neutral-800 border border-pink-500/40 shrink-0"
                             referrerPolicy="no-referrer"
                           />
@@ -1706,6 +1712,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                 <img
                   src={offlinePlayerPost.videoUrl}
                   alt={offlinePlayerPost.title}
+                  loading="lazy"
+                  decoding="async"
                   className={`w-full h-full ${offlinePlayerFill ? 'object-cover' : 'object-contain'}`}
                 />
               ) : (
@@ -1870,6 +1878,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                   <img
                     src={editAvatar || NEON_AVATAR_PRESETS[0]}
                     alt="Avatar Preview"
+                    loading="lazy"
+                    decoding="async"
                     className="w-20 h-20 rounded-full object-cover border-2 border-pink-500 bg-neutral-900"
                     referrerPolicy="no-referrer"
                   />
@@ -1907,6 +1917,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                       <img
                         src={presetUrl}
                         alt={`Preset ${idx + 1}`}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover"
                       />
                     </button>
@@ -2248,6 +2260,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
                             <img
                               src={optimizeThumbnailUrl(u.avatar, 'grid')}
                               alt={u.name}
+                              loading="lazy"
+                              decoding="async"
                               className="w-11 h-11 rounded-full object-cover bg-neutral-800 border border-neutral-700"
                               referrerPolicy="no-referrer"
                             />
@@ -2350,3 +2364,5 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
     </div>
   );
 };
+
+export const CreatorProfileView = React.memo(CreatorProfileViewComponent);

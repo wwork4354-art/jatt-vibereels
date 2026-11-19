@@ -52,7 +52,7 @@ function formatCompactCount(num: number): string {
   return num.toLocaleString();
 }
 
-export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> = ({
+const PublicCreatorProfileViewComponent: React.FC<PublicCreatorProfileViewProps> = ({
   username,
   videos,
   ownProfile,
@@ -240,6 +240,8 @@ export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> =
             <img
               src={optimizeThumbnailUrl(summary.avatar, 'grid')}
               alt={summary.name}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full rounded-full object-cover bg-neutral-900 border-2 border-neutral-950"
               referrerPolicy="no-referrer"
             />
@@ -497,3 +499,5 @@ export const PublicCreatorProfileView: React.FC<PublicCreatorProfileViewProps> =
     </div>
   );
 };
+
+export const PublicCreatorProfileView = React.memo(PublicCreatorProfileViewComponent);

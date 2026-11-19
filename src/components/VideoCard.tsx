@@ -31,6 +31,7 @@ import {
 
 interface VideoCardProps {
   video: VideoPost;
+  cardIndex?: number;
   isActive: boolean;
   isNext?: boolean;
   isNearViewport?: boolean;
@@ -63,6 +64,7 @@ interface FloatingHeart {
 
 const VideoCardComponent: React.FC<VideoCardProps> = ({
   video,
+  cardIndex,
   isActive,
   isNext = false,
   isNearViewport = true,
@@ -85,9 +87,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   onOpenCreatorProfile,
   onShowToast,
 }) => {
+  const cardRootRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const bgAudioRef = useRef<HTMLAudioElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const [isInViewport, setIsInViewport] = useState(isActive);
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [showPlayIcon, setShowPlayIcon] = useState(false);
@@ -131,6 +135,28 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     pendingResumeTimeRef.current = savedTime;
     setCurrentTime(savedTime);
   }, [video.id]);
+
+  // IntersectionObserver: strictly play only when card is >=55% visible inside viewport
+  useEffect(() => {
+    const rootEl = cardRootRef.current;
+    if (!rootEl || typeof IntersectionObserver === 'undefined') {
+      setIsInViewport(isActive);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const visible = entry.isIntersecting && entry.intersectionRatio >= 0.55;
+          setIsInViewport(visible);
+        }
+      },
+      { threshold: [0, 0.55, 0.9] }
+    );
+
+    observer.observe(rootEl);
+    return () => observer.disconnect();
+  }, [isActive, isNearViewport]);
 
   // Increment real-time post view count (+1) ONLY after 3 full seconds of genuine active watch time
   useEffect(() => {
@@ -234,22 +260,24 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     }
   };
 
-  // Strict Lazy-Loading & Virtualization:
-  // 1) Active reel: plays immediately at 60fps & restores exact saved second
-  // 2) Very next reel (isNext): strictly preload="metadata" to save RAM & bandwidth
-  // 3) All off-screen reels: pause & unload src/decoder immediately
+  // Strict IntersectionObserver + Virtualization Playback Control:
+  // 1) Active AND visible in viewport: plays smoothly with preload="auto"
+  // 2) Any off-screen video: paused and unloaded immediately (preload="none") to save RAM & bandwidth
   useEffect(() => {
+    const shouldBePlaying = isActive && isInViewport;
+
     if (video.mediaType === 'image') {
       if (isNext && video.videoUrl) {
         const prefetch = new Image();
         prefetch.decoding = 'async';
         prefetch.src = video.videoUrl;
       }
-      if (isActive) {
+      if (shouldBePlaying) {
         savePlaybackState({ videoId: video.id, isPlaying: true });
         setIsPlaying(true);
         syncBackgroundAudio(true);
       } else {
+        setIsPlaying(false);
         if (bgAudioRef.current) bgAudioRef.current.pause();
         soundEngine.stopTrack();
       }
@@ -259,7 +287,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     const el = videoRef.current;
     if (!el) return;
 
-    if (isActive) {
+    if (shouldBePlaying) {
       if (el.getAttribute('src') !== video.videoUrl) {
         el.setAttribute('src', video.videoUrl);
         pendingResumeTimeRef.current = getSavedVideoTimestamp(video.id);
@@ -284,27 +312,19 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             syncBackgroundAudio(false);
           });
       }
-    } else if (isNext) {
-      el.pause();
-      if (bgAudioRef.current) bgAudioRef.current.pause();
-      setIsPlaying(false);
-      el.muted = true;
-      el.preload = 'auto';
-      if (video.videoUrl && el.getAttribute('src') !== video.videoUrl) {
-        el.setAttribute('src', video.videoUrl);
-        try {
-          el.load();
-        } catch {
-          // ignore
-        }
-      }
     } else {
       el.pause();
-      if (bgAudioRef.current) bgAudioRef.current.pause();
+      if (bgAudioRef.current) {
+        bgAudioRef.current.pause();
+      }
+      if (!isActive) {
+        soundEngine.stopTrack();
+      }
       setIsPlaying(false);
+      el.muted = true;
+      el.preload = 'none';
       if (el.hasAttribute('src')) {
         el.removeAttribute('src');
-        el.preload = 'none';
         try {
           el.load();
         } catch {
@@ -315,6 +335,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isActive,
+    isInViewport,
     isNext,
     isMuted,
     video.id,
@@ -670,7 +691,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   if (!isNearViewport && !isActive && !isNext) {
     return (
       <div
-        className="relative w-full h-full snap-item bg-neutral-950 flex items-center justify-center overflow-hidden"
+        ref={cardRootRef}
+        data-reel-index={cardIndex}
+        className="relative w-full h-full snap-item gpu-accelerated bg-neutral-950 flex items-center justify-center overflow-hidden"
         style={{ contain: 'strict' }}
       >
         {video.posterUrl && (
@@ -686,25 +709,31 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     );
   }
 
+  const canPlayMediaNow = isActive && isInViewport;
+
   return (
-    <div className="relative w-full h-full snap-item flex items-center justify-center bg-black select-none overflow-hidden">
-      <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+    <div
+      ref={cardRootRef}
+      data-reel-index={cardIndex}
+      className="relative w-full h-full snap-item gpu-accelerated flex items-center justify-center bg-black select-none overflow-hidden"
+    >
+      <div className="relative w-full h-full gpu-accelerated flex items-center justify-center overflow-hidden">
       {/* Attached Custom Song / Naat Audio Player (when audioUrl exists) */}
       {hasExternalAudio && (
         <audio
           ref={bgAudioRef}
-          src={isActive || isNext ? video.sound.audioUrl : undefined}
+          src={canPlayMediaNow ? video.sound.audioUrl : undefined}
           loop
           playsInline
           crossOrigin="anonymous"
-          preload={isActive || isNext ? 'auto' : 'none'}
+          preload={canPlayMediaNow ? 'auto' : 'none'}
           className="hidden"
         />
       )}
 
       {/* Video / Procedural Viewport Area */}
       <div
-        className="relative w-full h-full flex items-center justify-center cursor-pointer"
+        className="relative w-full h-full gpu-accelerated flex items-center justify-center cursor-pointer"
         onClick={handleVideoAreaClick}
       >
         {/* Image Post OR HTML5 Video element (9:16 Vertical Reels or Natural Landscape) */}
@@ -712,14 +741,14 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           <div
             className={
               isLandscape
-                ? 'relative w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
-                : 'relative w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center'
+                ? 'relative w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center gpu-accelerated'
+                : 'relative w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center gpu-accelerated'
             }
           >
             <img
               src={video.videoUrl}
               alt={video.title}
-              loading={isActive || isNext ? 'eager' : 'lazy'}
+              loading="lazy"
               decoding="async"
               onLoad={(e) => {
                 const img = e.currentTarget;
@@ -727,7 +756,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   setIsLandscape(true);
                 }
               }}
-              className="w-full h-full object-contain [transform:translate3d(0,0,0)] will-change-transform"
+              className="w-full h-full object-contain gpu-accelerated"
             />
             {isPlaying && (
               <div className="absolute top-16 left-4 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none">
@@ -744,18 +773,18 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               <div
                 className={
                   isLandscape
-                    ? 'w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center'
-                    : 'w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center'
+                    ? 'w-full max-w-4xl aspect-video mx-auto rounded-none sm:rounded-2xl overflow-hidden bg-black shadow-2xl border border-neutral-800/60 flex items-center justify-center gpu-accelerated'
+                    : 'w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center gpu-accelerated'
                 }
               >
                 <video
                   ref={videoRef}
-                  src={isActive || isNext ? video.videoUrl : undefined}
+                  src={canPlayMediaNow ? video.videoUrl : undefined}
                   poster={video.posterUrl}
                   playsInline
                   loop
-                  muted={isMuted || !isActive}
-                  preload={isActive || isNext ? 'auto' : 'metadata'}
+                  muted={isMuted || !canPlayMediaNow}
+                  preload={canPlayMediaNow ? 'auto' : 'none'}
                   crossOrigin="anonymous"
                   onTimeUpdate={handleTimeUpdate}
                   onCanPlay={() => {

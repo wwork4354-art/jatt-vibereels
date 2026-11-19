@@ -633,7 +633,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         <img
                           src={previewUrl}
                           alt="Preview"
-                          className="w-28 h-44 object-cover rounded-xl shadow-lg mb-2 border border-neutral-700"
+                          loading="lazy"
+                          decoding="async"
+                          className="w-28 h-44 object-cover rounded-xl shadow-lg mb-2 border border-neutral-700 gpu-accelerated"
                         />
                       ) : (
                         <video

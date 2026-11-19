@@ -523,6 +523,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                     <img
                       src={currentChannel.guestAvatar}
                       alt={currentChannel.guestName}
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 rounded-full object-cover border-2 border-cyan-400 shadow-xl shadow-cyan-500/25 ring-4 ring-cyan-500/20"
                       referrerPolicy="no-referrer"
                     />
@@ -613,6 +615,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
             <img
               src={currentChannel.hostAvatar}
               alt={currentChannel.hostName}
+              loading="lazy"
+              decoding="async"
               className="w-9 h-9 rounded-full object-cover border-2 border-pink-500 shrink-0"
               referrerPolicy="no-referrer"
             />
@@ -763,6 +767,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                       <img
                         src={msg.avatar}
                         alt={msg.user}
+                        loading="lazy"
+                        decoding="async"
                         className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5"
                         referrerPolicy="no-referrer"
                       />

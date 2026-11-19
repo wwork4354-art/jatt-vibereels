@@ -443,7 +443,7 @@ interface DownloadProgressState {
   downloadedBytes: number;
 }
 
-export const DownloadHub: React.FC<DownloadHubProps> = ({
+const DownloadHubComponent: React.FC<DownloadHubProps> = ({
   onBackToFeed,
   onOpenSavedOffline,
   onShowToast,
@@ -1821,6 +1821,8 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             <img
                               src={previewItem.thumbnailUrl}
                               alt={previewItem.title}
+                              loading="lazy"
+                              decoding="async"
                               className="absolute inset-0 w-full h-full object-cover opacity-25 pointer-events-none"
                             />
                           )}
@@ -1926,6 +1928,8 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
                             <img
                               src={previewItem.thumbnailUrl}
                               alt={previewItem.title}
+                              loading="lazy"
+                              decoding="async"
                               className={`absolute inset-0 w-full h-full opacity-55 ${
                                 playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
                               }`}
@@ -2772,3 +2776,5 @@ export const DownloadHub: React.FC<DownloadHubProps> = ({
     </div>
   );
 };
+
+export const DownloadHub = React.memo(DownloadHubComponent);

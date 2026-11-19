@@ -12,7 +12,7 @@ interface DeveloperCreditBadgeProps {
   showDetails?: boolean;
 }
 
-export const DeveloperCreditBadge: React.FC<DeveloperCreditBadgeProps> = ({
+const DeveloperCreditBadgeComponent: React.FC<DeveloperCreditBadgeProps> = ({
   variant = 'modal',
   className = '',
   showDetails = true,
@@ -51,6 +51,8 @@ export const DeveloperCreditBadge: React.FC<DeveloperCreditBadgeProps> = ({
               <img
                 src={JATT_DEVELOPER_IMAGE_SRC}
                 alt="Jatt Developer"
+                loading="lazy"
+                decoding="async"
                 referrerPolicy="no-referrer"
                 onError={() => setImgError(true)}
                 className="w-full h-full object-cover rounded-[10px] transition-transform duration-300 group-hover:scale-105"
@@ -111,3 +113,5 @@ export const DeveloperCreditBadge: React.FC<DeveloperCreditBadgeProps> = ({
     </div>
   );
 };
+
+export const DeveloperCreditBadge = React.memo(DeveloperCreditBadgeComponent);

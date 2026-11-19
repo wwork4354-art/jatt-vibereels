@@ -67,7 +67,7 @@ function formatHoursLeft(expiresAt: string): string {
   return `${hrs}h left`;
 }
 
-export const LiveStoriesBar: React.FC<LiveStoriesBarProps> = ({
+const LiveStoriesBarComponent: React.FC<LiveStoriesBarProps> = ({
   stories,
   currentUserId,
   currentUsername,
@@ -465,7 +465,7 @@ export const LiveStoriesBar: React.FC<LiveStoriesBarProps> = ({
             : 'transform 340ms cubic-bezier(0.22, 1.15, 0.36, 1)',
         }}
         aria-hidden={!isExpanded && !isActivelyDragging}
-        className={`absolute top-0 inset-x-0 z-30 bg-neutral-950/92 backdrop-blur-xl border-b border-neutral-800/90 shadow-2xl shadow-black/70 will-change-transform ${
+        className={`absolute top-0 inset-x-0 z-30 bg-neutral-950/92 backdrop-blur-xl border-b border-neutral-800/90 shadow-2xl shadow-black/70 gpu-accelerated ${
           isExpanded || isActivelyDragging ? 'pointer-events-auto' : 'pointer-events-none'
         }`}
       >
@@ -481,6 +481,8 @@ export const LiveStoriesBar: React.FC<LiveStoriesBarProps> = ({
               <img
                 src={optimizeThumbnailUrl(currentAvatar, 'grid')}
                 alt="Add Story"
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full rounded-full object-cover bg-neutral-900 border-2 border-neutral-950"
                 referrerPolicy="no-referrer"
               />
@@ -544,6 +546,8 @@ export const LiveStoriesBar: React.FC<LiveStoriesBarProps> = ({
                   <img
                     src={optimizeThumbnailUrl(group.avatarUrl, 'grid')}
                     alt={group.displayName}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full rounded-full object-cover bg-neutral-900 border-2 border-neutral-950"
                     referrerPolicy="no-referrer"
                   />
@@ -624,6 +628,8 @@ export const LiveStoriesBar: React.FC<LiveStoriesBarProps> = ({
                 <img
                   src={activeGroup.avatarUrl}
                   alt={activeGroup.displayName}
+                  loading="lazy"
+                  decoding="async"
                   className="w-9 h-9 rounded-full object-cover border border-pink-400 shrink-0"
                   referrerPolicy="no-referrer"
                 />
@@ -700,6 +706,8 @@ export const LiveStoriesBar: React.FC<LiveStoriesBarProps> = ({
                 <img
                   src={activeStory.mediaUrl}
                   alt={activeStory.caption || 'Live Story'}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover"
                 />
               ) : (
@@ -786,3 +794,5 @@ export const LiveStoriesBar: React.FC<LiveStoriesBarProps> = ({
     </>
   );
 };
+
+export const LiveStoriesBar = React.memo(LiveStoriesBarComponent);
