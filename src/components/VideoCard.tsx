@@ -289,9 +289,14 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       if (bgAudioRef.current) bgAudioRef.current.pause();
       setIsPlaying(false);
       el.muted = true;
-      el.preload = 'metadata';
+      el.preload = 'auto';
       if (video.videoUrl && el.getAttribute('src') !== video.videoUrl) {
         el.setAttribute('src', video.videoUrl);
+        try {
+          el.load();
+        } catch {
+          // ignore
+        }
       }
     } else {
       el.pause();
@@ -692,7 +697,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           loop
           playsInline
           crossOrigin="anonymous"
-          preload={isActive ? 'auto' : isNext ? 'metadata' : 'none'}
+          preload={isActive || isNext ? 'auto' : 'none'}
           className="hidden"
         />
       )}

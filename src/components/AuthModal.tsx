@@ -320,7 +320,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         lastActiveAt: nowIso,
         isOnline: true,
         videosCount: 0,
-        bio: safeRole === 'creator' ? 'Video Creator' : 'VibeReels Member',
+        bio: safeRole === 'creator' ? 'Video Creator' : 'Jatt VibeReels Member',
         passwordHash,
       };
 

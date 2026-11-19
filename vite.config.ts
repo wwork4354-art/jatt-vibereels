@@ -22,7 +22,7 @@ export default defineConfig(() => {
         manifest: {
           id: '/',
           name: 'Jatt VibeReels',
-          short_name: 'VibeReels',
+          short_name: 'Jatt VibeReels',
           description:
             'Watch and upload short reels, trending movies, Pakistani dramas, and Punjabi songs — even offline.',
           theme_color: '#000000',

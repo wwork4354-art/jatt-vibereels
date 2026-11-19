@@ -23,6 +23,7 @@ import {
   Wand2,
   ArrowUpDown,
   Youtube,
+  Sliders,
 } from 'lucide-react';
 import {
   FeedTab,
@@ -52,6 +53,7 @@ interface MobileNavigationProps {
   onPlayVideo?: (videoId: string) => void;
   onOpenLive: () => void;
   onOpenProCamera: () => void;
+  onOpenEditor?: () => void;
   onQuickVideoUpload?: (file: File, source?: 'live' | 'gallery') => void;
   savedCount: number;
   unreadActivityCount?: number;
@@ -80,6 +82,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   onPlayVideo,
   onOpenLive,
   onOpenProCamera,
+  onOpenEditor,
   onQuickVideoUpload,
   savedCount,
   unreadActivityCount = 0,
@@ -803,46 +806,16 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
               </div>
             </div>
 
-            {/* Distinct Upload & Camera Action Buttons */}
+            {/* Distinct 3 Primary Create Options: Choose Gallery | Choose Camera | Edit */}
             <div className="space-y-2.5 pt-1">
-              {/* Option 1: Live 4K/1080p 60FPS Camera with Live Canvas Filters */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsUploadSheetOpen(false);
-                  onOpenProCamera();
-                }}
-                className="w-full p-4 rounded-2xl bg-gradient-to-r from-pink-600/20 via-rose-600/20 to-amber-500/20 hover:from-pink-600/30 hover:to-amber-500/30 border border-pink-500/45 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-pink-600/10"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-pink-600 to-amber-500 text-white flex items-center justify-center shadow-md shadow-pink-600/40 group-hover:scale-105 transition-transform">
-                    <Camera className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-black text-white group-hover:text-pink-300 transition-colors">
-                        Record Video & Live Filters
-                      </span>
-                      <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                    </div>
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      4K/1080p 60fps live camera with Noir, Neon & Glow filters
-                    </p>
-                  </div>
-                </div>
-                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/35">
-                  HD 60fps
-                </span>
-              </button>
-
-              {/* Option 2: Choose Video or Image from Gallery Button (WITHOUT capture attribute) */}
+              {/* Option 1: Choose Gallery */}
               <button
                 type="button"
                 onClick={() => {
                   setIsUploadSheetOpen(false);
                   galleryInputRef.current?.click();
                 }}
-                className="w-full p-4 rounded-2xl bg-gradient-to-r from-cyan-600/20 via-blue-600/20 to-purple-600/20 hover:from-cyan-600/30 hover:to-purple-600/30 border border-cyan-500/40 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-cyan-600/10"
+                className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-cyan-600/20 via-blue-600/20 to-purple-600/20 hover:from-cyan-600/30 hover:to-purple-600/30 border border-cyan-500/45 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-cyan-600/10 cursor-pointer"
               >
                 <div className="flex items-center gap-3.5">
                   <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 text-white flex items-center justify-center shadow-md shadow-cyan-600/40 group-hover:scale-105 transition-transform">
@@ -850,10 +823,10 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                   </div>
                   <div>
                     <span className="text-sm font-black text-white group-hover:text-cyan-300 transition-colors">
-                      Choose Video or Image
+                      Choose Gallery
                     </span>
                     <p className="text-xs text-neutral-400 mt-0.5">
-                      Pick a video or photo from phone gallery to post globally
+                      Pick photo or video + add TikTok-style music
                     </p>
                   </div>
                 </div>
@@ -862,31 +835,87 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
                 </span>
               </button>
 
-              {/* Option 3: Upload with Custom Caption Modal */}
+              {/* Option 2: Choose Camera (4K/1080p 60FPS Live Camera) */}
               <button
                 type="button"
                 onClick={() => {
                   setIsUploadSheetOpen(false);
-                  onOpenUpload();
+                  onOpenProCamera();
                 }}
-                className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-pink-300 hover:text-white border border-pink-500/30 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-pink-600/20 via-rose-600/20 to-amber-500/20 hover:from-pink-600/30 hover:to-amber-500/30 border border-pink-500/45 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-pink-600/10 cursor-pointer"
               >
-                <Plus className="w-3.5 h-3.5 text-pink-400" />
-                <span>Post Video / Image with Custom Caption</span>
+                <div className="flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-pink-600 to-amber-500 text-white flex items-center justify-center shadow-md shadow-pink-600/40 group-hover:scale-105 transition-transform">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-black text-white group-hover:text-pink-300 transition-colors">
+                      Choose Camera
+                    </span>
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      Launch instant 4K/60fps Pro Camera with filters
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/35">
+                  4K 60fps
+                </span>
               </button>
 
-              {/* Option 4: Direct Native Phone Camera Capture (fallback for APK WebViews) */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsUploadSheetOpen(false);
-                  liveRecordInputRef.current?.click();
-                }}
-                className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Quick Record via Phone Native Camera</span>
-              </button>
+              {/* Option 3: Edit (Built-in Photo & Video Editor) */}
+              {onOpenEditor && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUploadSheetOpen(false);
+                    onOpenEditor();
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-purple-600/20 via-pink-600/20 to-amber-500/20 hover:from-purple-600/30 hover:to-amber-500/30 border border-purple-500/45 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-purple-600/10 cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-purple-600 to-pink-500 text-white flex items-center justify-center shadow-md shadow-purple-600/40 group-hover:scale-105 transition-transform">
+                      <Sliders className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-black text-white group-hover:text-purple-300 transition-colors">
+                        Edit
+                      </span>
+                      <p className="text-xs text-neutral-400 mt-0.5">
+                        Trim video, apply filters, text, stickers &amp; music
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/35">
+                    Studio
+                  </span>
+                </button>
+              )}
+
+              {/* Optional secondary links */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUploadSheetOpen(false);
+                    onOpenUpload();
+                  }}
+                  className="py-2.5 px-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-pink-300 hover:text-white border border-pink-500/30 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-pink-400" />
+                  <span>Paste URL / Post</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUploadSheetOpen(false);
+                    liveRecordInputRef.current?.click();
+                  }}
+                  className="py-2.5 px-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Phone Camera</span>
+                </button>
+              </div>
             </div>
 
             {/* Cancel Button */}

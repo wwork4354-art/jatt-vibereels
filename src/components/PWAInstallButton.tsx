@@ -116,7 +116,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
           title="Install Jatt VibeReels app to home screen"
         >
           <Smartphone className="w-4 h-4 text-emerald-400" />
-          <span>Install App</span>
+          <span>Install Jatt VibeReels</span>
         </button>
       ) : variant === 'menu' ? (
         <button
@@ -125,15 +125,15 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
           className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500/20 via-cyan-500/15 to-pink-500/20 hover:from-emerald-500/30 hover:to-pink-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-black flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer"
         >
           <Download className="w-4 h-4 text-emerald-400" />
-          <span>Install Jatt VibeReels App</span>
+          <span>Install Jatt VibeReels</span>
         </button>
       ) : variant === 'mobile-header' ? (
         <button
           type="button"
           onClick={handleClick}
           className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/45 text-emerald-300 text-[10px] font-black shrink-0 active:scale-95 cursor-pointer"
-          title="Install App to Home Screen"
-          aria-label="Install App"
+          title="Install Jatt VibeReels App"
+          aria-label="Install Jatt VibeReels"
         >
           <Download className="w-3 h-3 text-emerald-400" />
           <span>Install</span>
@@ -150,7 +150,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
           title="Install Jatt VibeReels App to Home Screen"
         >
           <Download className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="hidden md:inline">Install App</span>
+          <span className="hidden md:inline">Install Jatt VibeReels</span>
         </button>
       )}
 

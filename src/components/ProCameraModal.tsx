@@ -897,7 +897,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       creatorProfile?.avatar ||
       'https://i.ibb.co/4RL7mmcB/Cinematic-Urban-Fashion-Poster.png';
     const authorBio = sanitizeText(
-      currentUser?.bio || creatorProfile?.bio || 'VibeReels Pro Creator',
+      currentUser?.bio || creatorProfile?.bio || 'Jatt VibeReels Pro Creator',
       220
     );
 

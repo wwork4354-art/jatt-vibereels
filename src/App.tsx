@@ -128,6 +128,9 @@ const DirectSnapsModal = lazy(() =>
 const TemplatesStudioView = lazy(() =>
   import('./components/TemplatesStudioView').then((m) => ({ default: m.TemplatesStudioView }))
 );
+const PhotoVideoEditorModal = lazy(() =>
+  import('./components/PhotoVideoEditorModal').then((m) => ({ default: m.PhotoVideoEditorModal }))
+);
 
 const LazyTabFallback = () => (
   <div className="w-full h-full bg-neutral-950 p-4 sm:p-6 flex flex-col gap-4 overflow-hidden">
@@ -429,6 +432,7 @@ export default function App() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [preselectedUploadFile, setPreselectedUploadFile] = useState<File | null>(null);
   const [isProCameraOpen, setIsProCameraOpen] = useState(false);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isTrendsOpen, setIsTrendsOpen] = useState(false);
   const [isLiveOpen, setIsLiveOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -933,6 +937,56 @@ export default function App() {
           u.id === currentUser.id ? updatedCurrentUser : u
         );
         updateUsers(updatedUsers);
+        void syncRegisteredUserToCloud(updatedCurrentUser);
+      } else {
+        const normalizedHandle = sanitizedProfile.username.toLowerCase();
+        const existingIdx = users.findIndex(
+          (u) =>
+            u.id === sanitizedProfile.id ||
+            u.username.toLowerCase() === normalizedHandle
+        );
+        const nowIso = new Date().toISOString();
+        const joinedLabel = new Date(nowIso).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+
+        if (existingIdx >= 0) {
+          const updatedUsers = users.map((u, idx) =>
+            idx === existingIdx
+              ? {
+                  ...u,
+                  name: sanitizedProfile.name,
+                  username: sanitizedProfile.username,
+                  bio: sanitizedProfile.bio,
+                  avatar: sanitizedProfile.avatar,
+                  lastActiveAt: nowIso,
+                  isOnline: true,
+                }
+              : u
+          );
+          updateUsers(updatedUsers);
+          void syncRegisteredUserToCloud(updatedUsers[existingIdx]);
+        } else {
+          const createdProfileUser: UserAccount = {
+            id: sanitizedProfile.id,
+            name: sanitizedProfile.name,
+            username: sanitizedProfile.username,
+            email: `${normalizedHandle}@jattvibereels.app`,
+            avatar: sanitizedProfile.avatar,
+            role: 'creator',
+            status: 'active',
+            joinedAt: joinedLabel,
+            createdAtIso: nowIso,
+            lastActiveAt: nowIso,
+            isOnline: true,
+            videosCount: 0,
+            bio: sanitizedProfile.bio || 'Creator on Jatt VibeReels',
+          };
+          updateUsers([...users, createdProfileUser]);
+          void syncRegisteredUserToCloud(createdProfileUser);
+        }
       }
 
       setVideos((prev) =>
@@ -1797,99 +1851,72 @@ export default function App() {
           ? `${cleanTitle} 📸 Shared on Jatt VibeReels #photo #jattswag #vibereels`
           : `${cleanTitle} 🎬✨ Picked from device gallery #mobilegallery #jattswag #vibereels`;
 
-        if (isSupabaseConfigured) {
-          showToast(`Uploading ${isImage ? 'image' : 'video'} to global feed...`);
-        }
-
-        const uploadFile = isImage ? await compressImageFile(file, 1080, 0.8) : file;
-        const uploadedUrl = await uploadMediaToReelsBucket(uploadFile, 'posts', uploadFile.name);
-        let finalMediaUrl = uploadedUrl || localPreviewUrl;
-        if (!uploadedUrl) {
-          const persistentDataUrl = await fileToPersistentDataUrl(uploadFile);
-          if (persistentDataUrl) {
-            finalMediaUrl = persistentDataUrl;
-          }
-        }
-
         const authorName = currentUser?.name || creatorProfile.name;
         const authorUsername = currentUser?.username || creatorProfile.username;
         const authorAvatar = currentUser?.avatar || creatorProfile.avatar;
+        const tempPostId = `reel-${isLive ? 'live' : 'gallery'}-${Date.now()}`;
 
-        const supabasePost = await createGlobalPostInSupabase({
+        const optimisticPost: VideoPost = {
+          id: tempPostId,
+          title: cleanTitle,
+          description: captionText,
+          hashtags: isLive
+            ? ['liverecord', 'camera', 'vibereels', 'jattstyle']
+            : isImage
+            ? ['photo', 'vibereels', 'jattstyle', 'trending']
+            : ['mobilegallery', 'vibereels', 'jattstyle', 'trending'],
+          videoUrl: localPreviewUrl,
+          posterUrl: isImage
+            ? localPreviewUrl
+            : 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=600&q=80',
+          fallbackGradient: isLive
+            ? 'from-rose-900/50 via-pink-900/40 to-black'
+            : 'from-pink-900/40 via-purple-900/30 to-black',
+          category: 'trending',
           userId: creatorProfile.id,
-          username: authorUsername,
-          displayName: authorName,
-          avatarUrl: authorAvatar,
-          mediaUrl: finalMediaUrl,
           mediaType,
-          caption: captionText,
-        });
-
-        const finalPost: VideoPost =
-          supabasePost || {
-            id: `reel-${isLive ? 'live' : 'gallery'}-${Date.now()}`,
-            title: cleanTitle,
-            description: captionText,
-            hashtags: isLive
-              ? ['liverecord', 'camera', 'vibereels', 'jattstyle']
+          isUserUploaded: true,
+          createdAt: new Date().toISOString(),
+          creator: {
+            name: authorName,
+            username: authorUsername,
+            avatar: authorAvatar,
+            isVerified: currentUser?.role === 'admin',
+            isFollowing: false,
+            bio: currentUser?.bio || creatorProfile.bio,
+          },
+          sound: {
+            title: isLive
+              ? `Live Mic Audio - ${cleanTitle.slice(0, 24)}`
               : isImage
-              ? ['photo', 'vibereels', 'jattstyle', 'trending']
-              : ['mobilegallery', 'vibereels', 'jattstyle', 'trending'],
-            videoUrl: finalMediaUrl,
-            posterUrl: isImage
-              ? finalMediaUrl
-              : 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=600&q=80',
-            fallbackGradient: isLive
-              ? 'from-rose-900/50 via-pink-900/40 to-black'
-              : 'from-pink-900/40 via-purple-900/30 to-black',
-            category: 'trending',
-            userId: creatorProfile.id,
-            mediaType,
-            isUserUploaded: true,
-            createdAt: new Date().toISOString(),
-            creator: {
-              name: authorName,
-              username: authorUsername,
-              avatar: authorAvatar,
-              isVerified: currentUser?.role === 'admin',
-              isFollowing: false,
-              bio: currentUser?.bio || creatorProfile.bio,
-            },
-            sound: {
-              title: isLive
-                ? `Live Mic Audio - ${cleanTitle.slice(0, 24)}`
-                : isImage
-                ? `Photo Vibe - ${cleanTitle.slice(0, 24)}`
-                : `Gallery Sound - ${cleanTitle.slice(0, 24)}`,
-              artist: authorName,
-              trackType: 'tokyo_drift',
-            },
-            stats: {
-              views: 0,
-              likes: 0,
-              comments: 0,
-              shares: 0,
-              saves: 0,
-              downloads: 0,
-            },
-            isLiked: false,
-            isSaved: false,
-            commentsList: [],
-          };
+              ? `Photo Vibe - ${cleanTitle.slice(0, 24)}`
+              : `Gallery Sound - ${cleanTitle.slice(0, 24)}`,
+            artist: authorName,
+            trackType: 'tokyo_drift',
+          },
+          stats: {
+            views: 0,
+            likes: 0,
+            comments: 0,
+            shares: 0,
+            saves: 0,
+            downloads: 0,
+          },
+          isLiked: false,
+          isSaved: false,
+          commentsList: [],
+        };
 
-        saveLocalPostRecord(finalPost);
-        // 1. Prepend this new post to the top of the main feed array (deduping realtime)
-        expectedVideoIdRef.current = finalPost.id;
-        setVideos((prev) => [finalPost, ...prev.filter((v) => v.id !== finalPost.id)]);
-
-        // 2. Switch to main vertical feed mode & reset tag filters
+        // 1. Instant local playback & feed publish (zero lag)
+        saveLocalPostRecord(optimisticPost);
+        expectedVideoIdRef.current = tempPostId;
+        setVideos((prev) => [optimisticPost, ...prev.filter((v) => v.id !== tempPostId)]);
         setSelectedTag(null);
         setCurrentTab('foryou');
         setActiveIndex(0);
         setIsMuted(false);
         soundEngine.setMuted(false);
 
-        // 3. Increment video count for current logged-in user
         if (currentUser) {
           const updatedUsers = users.map((u) =>
             u.id === currentUser.id ? { ...u, videosCount: u.videosCount + 1 } : u
@@ -1898,7 +1925,6 @@ export default function App() {
           updateCurrentUser({ ...currentUser, videosCount: currentUser.videosCount + 1 });
         }
 
-        // 4. Automatically scroll to top so activeIndex 0 immediately auto-plays full-screen
         setTimeout(() => {
           if (containerRef.current) {
             containerRef.current.scrollTo({
@@ -1906,21 +1932,70 @@ export default function App() {
               behavior: 'smooth',
             });
           }
-        }, 50);
+        }, 40);
 
         showToast(
-          supabasePost
-            ? `Published ${isImage ? 'photo' : 'video'} to global feed!`
-            : isLive
-            ? 'Recorded live video! Playing now in For You feed'
-            : `Selected ${isImage ? 'photo' : 'video'}! Playing now in For You feed`
+          isLive
+            ? 'Playing instant live recording!'
+            : `Playing instant ${isImage ? 'photo' : 'video'} in For You feed!`
         );
+
+        // 2. Background upload & cloud sync (does not block UI or playback)
+        void (async () => {
+          try {
+            const uploadFile = isImage ? await compressImageFile(file, 1080, 0.8) : file;
+            const uploadedUrl = isSupabaseConfigured
+              ? await uploadMediaToReelsBucket(uploadFile, 'posts', uploadFile.name)
+              : null;
+            let finalMediaUrl = uploadedUrl || localPreviewUrl;
+            if (!uploadedUrl) {
+              const persistentDataUrl = await fileToPersistentDataUrl(uploadFile);
+              if (persistentDataUrl) {
+                finalMediaUrl = persistentDataUrl;
+              }
+            }
+
+            const supabasePost = await createGlobalPostInSupabase({
+              userId: creatorProfile.id,
+              username: authorUsername,
+              displayName: authorName,
+              avatarUrl: authorAvatar,
+              mediaUrl: finalMediaUrl,
+              mediaType,
+              caption: captionText,
+            });
+
+            const finalSyncedPost: VideoPost = supabasePost || {
+              ...optimisticPost,
+              videoUrl: finalMediaUrl,
+              posterUrl: isImage ? finalMediaUrl : optimisticPost.posterUrl,
+            };
+
+            saveLocalPostRecord(finalSyncedPost);
+            await savePostForOffline(finalSyncedPost, {
+              mediaBlob: uploadFile,
+              sourceType: 'uploaded',
+              skipRemoteFetch: true,
+            });
+            handleUploadCloudSynced(tempPostId, finalSyncedPost);
+          } catch (syncErr) {
+            console.warn('Background quick upload sync warning:', syncErr);
+          }
+        })();
       } catch (err) {
         console.error('Failed to process uploaded media:', err);
         showToast('Could not upload the selected media file.');
       }
     },
-    [currentUser, creatorProfile, users, updateUsers, updateCurrentUser, showToast]
+    [
+      currentUser,
+      creatorProfile,
+      users,
+      updateUsers,
+      updateCurrentUser,
+      showToast,
+      handleUploadCloudSynced,
+    ]
   );
 
   // User Management Handlers (Admin Panel)
@@ -2128,6 +2203,7 @@ export default function App() {
         onOpenLive={handleOpenLive}
         onOpenDownloads={handleOpenDownloads}
         onOpenProCamera={handleOpenProCamera}
+        onOpenEditor={() => setIsEditorOpen(true)}
         onOpenAdmin={handleOpenAdminPanel}
         onOpenProfile={handleOpenProfileTab}
         onOpenCreatorSearch={handleOpenCreatorSearch}
@@ -2170,6 +2246,7 @@ export default function App() {
           onOpenCreatorSearch={handleOpenCreatorSearch}
           onOpenLive={handleOpenLive}
           onOpenProCamera={handleOpenProCamera}
+          onOpenEditor={() => setIsEditorOpen(true)}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
           savedCount={savedCount}
@@ -2206,6 +2283,7 @@ export default function App() {
             onPlayVideo={handlePlayVideoFromProfile}
             onOpenLive={handleOpenLive}
             onOpenProCamera={handleOpenProCamera}
+            onOpenEditor={() => setIsEditorOpen(true)}
             onQuickVideoUpload={handleQuickGalleryUpload}
             savedCount={savedCount}
             unreadActivityCount={unreadActivityCount}
@@ -2459,7 +2537,15 @@ export default function App() {
                         className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
                       >
                         <Upload className="w-4 h-4 text-cyan-400" />
-                        <span>Upload Video / Photo</span>
+                        <span>Choose Gallery</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditorOpen(true)}
+                        className="px-4 py-2.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-200 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Sparkles className="w-4 h-4 text-purple-400" />
+                        <span>Edit</span>
                       </button>
                       <button
                         type="button"
@@ -2674,6 +2760,20 @@ export default function App() {
             currentUser={currentUser}
             creatorProfile={creatorProfile}
             preselectedFile={preselectedUploadFile}
+            onUploadSuccess={handleUploadSuccess}
+            onUploadCloudSynced={handleUploadCloudSynced}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
+
+      {isEditorOpen && (
+        <Suspense fallback={null}>
+          <PhotoVideoEditorModal
+            isOpen={isEditorOpen}
+            onClose={() => setIsEditorOpen(false)}
+            currentUser={currentUser}
+            creatorProfile={creatorProfile}
             onUploadSuccess={handleUploadSuccess}
             onUploadCloudSynced={handleUploadCloudSynced}
             onShowToast={showToast}

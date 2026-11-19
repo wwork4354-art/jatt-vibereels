@@ -18,6 +18,7 @@ import {
   Bell,
   Search,
   Wand2,
+  Sliders,
 } from 'lucide-react';
 import { FeedTab, UserAccount } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
@@ -34,6 +35,7 @@ interface SidebarDesktopProps {
   onOpenCreatorSearch?: () => void;
   onOpenLive: () => void;
   onOpenProCamera?: () => void;
+  onOpenEditor?: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
   savedCount: number;
@@ -52,6 +54,7 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
   onOpenCreatorSearch,
   onOpenLive,
   onOpenProCamera,
+  onOpenEditor,
   isMuted,
   onToggleMute,
   savedCount,
@@ -274,28 +277,39 @@ export const SidebarDesktop: React.FC<SidebarDesktopProps> = ({
           )}
         </nav>
 
-        {/* Action CTAs: Pro Camera & File Upload */}
+        {/* Action CTAs: Choose Camera, Choose Gallery & Edit */}
         <div className="pt-2 space-y-2">
           {onOpenProCamera && (
             <button
               type="button"
               onClick={onOpenProCamera}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-pink-600 via-rose-600 to-amber-500 hover:from-pink-500 hover:to-amber-400 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-pink-600/30 active:scale-98 transition-all border border-pink-400/30"
-              title="Launch Heavy Pro 4K Camera"
+              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-pink-600 via-rose-600 to-amber-500 hover:from-pink-500 hover:to-amber-400 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-pink-600/30 active:scale-98 transition-all border border-pink-400/30 cursor-pointer"
+              title="Choose Camera (Pro 4K 60fps)"
             >
-              <Camera className="w-4 h-4 animate-pulse" />
-              <span>Pro 4K Camera</span>
+              <Camera className="w-4 h-4" />
+              <span>Choose Camera</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={onOpenUpload}
-            className="w-full py-2.5 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white font-semibold text-xs flex items-center justify-center gap-2 border border-neutral-800 active:scale-98 transition-all"
+            className="w-full py-2.5 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white font-semibold text-xs flex items-center justify-center gap-2 border border-neutral-800 active:scale-98 transition-all cursor-pointer"
           >
-            <PlusSquare className="w-4 h-4 text-pink-400" />
-            <span>Upload From Device</span>
+            <PlusSquare className="w-4 h-4 text-cyan-400" />
+            <span>Choose Gallery</span>
           </button>
+
+          {onOpenEditor && (
+            <button
+              type="button"
+              onClick={onOpenEditor}
+              className="w-full py-2.5 px-4 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-200 hover:text-white font-semibold text-xs flex items-center justify-center gap-2 border border-purple-500/40 active:scale-98 transition-all cursor-pointer"
+            >
+              <Sliders className="w-4 h-4 text-purple-400" />
+              <span>Edit Photo &amp; Video</span>
+            </button>
+          )}
 
           <PWAInstallButton variant="sidebar" />
         </div>

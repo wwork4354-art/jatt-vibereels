@@ -174,6 +174,8 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   const [connectionsSearch, setConnectionsSearch] = useState('');
   const [isRegisteredUsersOpen, setIsRegisteredUsersOpen] = useState(false);
   const [regUsersSearch, setRegUsersSearch] = useState('');
+  const [trackerSortOrder, setTrackerSortOrder] = useState<'chronological' | 'newest'>('chronological');
+  const [trackerSearch, setTrackerSearch] = useState('');
   const [adminPinInput, setAdminPinInput] = useState('');
   const [showAdminPin, setShowAdminPin] = useState(false);
   const [adminPinError, setAdminPinError] = useState('');
@@ -220,13 +222,14 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
   }, [initialSubTab]);
 
   React.useEffect(() => {
-    if (!isRegisteredUsersOpen) return;
+    if (!isMainAdmin) return;
     setAdminPinLockout(getLockoutStatus('admin_pin'));
+    if (isAdminUnlocked) return;
     const timer = window.setInterval(() => {
       setAdminPinLockout(getLockoutStatus('admin_pin'));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [isRegisteredUsersOpen, isAdminUnlocked]);
+  }, [isMainAdmin, isRegisteredUsersOpen, isAdminUnlocked]);
 
   React.useEffect(() => {
     const loadOffline = () => {
@@ -812,6 +815,254 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
             <PWAInstallButton variant="topbar" onShowToast={onShowToast} />
           </div>
         </div>
+
+        {/* ===================================================== */}
+        {/* ADMIN-ONLY: JOINED USERS TRACKER (STEP-BY-STEP LIST)  */}
+        {/* Strictly visible only to verified Main Admin account  */}
+        {/* ===================================================== */}
+        {isMainAdmin && (
+          <section className="rounded-3xl bg-neutral-900/75 border border-amber-500/35 p-4 sm:p-5 space-y-3.5 shadow-lg shadow-amber-500/5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-pink-600 text-white flex items-center justify-center shrink-0">
+                  <Shield className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black text-white flex items-center gap-2 flex-wrap">
+                    <span>Joined Users Tracker</span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/45 text-amber-200 text-[10px] font-black">
+                      Admin Only
+                    </span>
+                    {isAdminUnlocked && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[10px] font-black tabular-nums">
+                        {allUsers.length} Joined
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-neutral-400">
+                    Chronological step-by-step log of every registered account and created profile
+                  </p>
+                </div>
+              </div>
+
+              {isAdminUnlocked && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setTrackerSortOrder((prev) =>
+                        prev === 'chronological' ? 'newest' : 'chronological'
+                      )
+                    }
+                    className="px-3 py-1.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-700 text-[11px] font-bold text-cyan-300 cursor-pointer"
+                  >
+                    {trackerSortOrder === 'chronological'
+                      ? 'Order: Step #1 -> Latest'
+                      : 'Order: Newest First'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onRefreshLiveUsers?.();
+                      onShowToast('Synced joined users list');
+                    }}
+                    className="p-2 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-700 text-amber-300 cursor-pointer"
+                    title="Sync latest joined users"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {!isAdminUnlocked ? (
+              <div className="rounded-2xl bg-neutral-950/90 border border-neutral-800 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-200">
+                  <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Enter Admin Security PIN to view Joined Users Tracker</span>
+                </div>
+
+                {adminPinLockout.isLocked && (
+                  <div className="p-2.5 rounded-xl bg-rose-950/75 border border-rose-500/50 flex items-center justify-between gap-2 text-xs">
+                    <span className="font-bold text-rose-200">Locked for 5 Minutes</span>
+                    <span className="font-mono font-black text-rose-300">
+                      {formatLockoutCountdown(adminPinLockout.remainingSeconds)}
+                    </span>
+                  </div>
+                )}
+
+                {adminPinError && (
+                  <p className="text-xs text-rose-300 font-semibold">{adminPinError}</p>
+                )}
+
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setAdminPinError('');
+                    const lock = getLockoutStatus('admin_pin');
+                    setAdminPinLockout(lock);
+                    if (lock.isLocked) {
+                      setAdminPinError(
+                        `Locked for ${formatLockoutCountdown(lock.remainingSeconds)}.`
+                      );
+                      return;
+                    }
+                    setVerifyingAdminPin(true);
+                    try {
+                      const ok = await verifyAdminPinAsync(adminPinInput);
+                      if (!ok) {
+                        const nextLock = recordFailedAttempt('admin_pin');
+                        setAdminPinLockout(nextLock);
+                        setAdminPinInput('');
+                        setAdminPinError(
+                          nextLock.isLocked
+                            ? `3 failed attempts. Locked for ${formatLockoutCountdown(nextLock.remainingSeconds)}.`
+                            : `Invalid PIN (${nextLock.attemptsLeft} attempt${
+                                nextLock.attemptsLeft === 1 ? '' : 's'
+                              } left).`
+                        );
+                        return;
+                      }
+                      resetLockout('admin_pin');
+                      setAdminPinLockout(getLockoutStatus('admin_pin'));
+                      setAdminPinInput('');
+                      setAdminPinError('');
+                      onAdminUnlockSuccess?.();
+                      onRefreshLiveUsers?.();
+                      onShowToast('Joined Users Tracker unlocked');
+                    } finally {
+                      setVerifyingAdminPin(false);
+                    }
+                  }}
+                  className="flex flex-col sm:flex-row gap-2"
+                >
+                  <div className="relative flex-1">
+                    <input
+                      type={showAdminPin ? 'text' : 'password'}
+                      required
+                      disabled={adminPinLockout.isLocked}
+                      value={adminPinInput}
+                      onChange={(e) => setAdminPinInput(e.target.value)}
+                      placeholder="Enter Admin Security PIN"
+                      className="w-full bg-neutral-900 border border-neutral-800 focus:border-pink-500 rounded-xl pl-9 pr-9 py-2 text-xs text-white placeholder-neutral-500 focus:outline-hidden disabled:opacity-50"
+                    />
+                    <KeyRound className="w-3.5 h-3.5 text-pink-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <button
+                      type="button"
+                      onClick={() => setShowAdminPin((p) => !p)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                    >
+                      {showAdminPin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={verifyingAdminPin || adminPinLockout.isLocked}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 hover:brightness-110 disabled:opacity-50 text-white text-xs font-black cursor-pointer shrink-0"
+                  >
+                    {verifyingAdminPin ? 'Verifying...' : 'Unlock Tracker'}
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={trackerSearch}
+                    onChange={(e) => setTrackerSearch(sanitizeInputLive(e.target.value, 80))}
+                    placeholder="Filter joined users by full name or @username..."
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-cyan-400"
+                  />
+                </div>
+
+                {(() => {
+                  const chronological = [...allUsers].sort((a, b) => {
+                    const tA = a.createdAtIso ? new Date(a.createdAtIso).getTime() : 0;
+                    const tB = b.createdAtIso ? new Date(b.createdAtIso).getTime() : 0;
+                    return tA - tB;
+                  });
+                  const numbered = chronological.map((user, idx) => ({
+                    stepNumber: idx + 1,
+                    user,
+                  }));
+                  const ordered =
+                    trackerSortOrder === 'newest' ? [...numbered].reverse() : numbered;
+                  const q = sanitizeText(trackerSearch, 80).toLowerCase();
+                  const visible = q
+                    ? ordered.filter(
+                        ({ user }) =>
+                          user.name.toLowerCase().includes(q) ||
+                          user.username.toLowerCase().includes(q)
+                      )
+                    : ordered;
+
+                  if (visible.length === 0) {
+                    return (
+                      <p className="text-xs text-neutral-400 text-center py-6">
+                        No joined users match &ldquo;{q}&rdquo;.
+                      </p>
+                    );
+                  }
+
+                  return (
+                    <div className="max-h-80 overflow-y-auto space-y-2 pr-0.5 no-scrollbar">
+                      {visible.map(({ stepNumber, user }) => {
+                        const joined = formatAccountCreatedDateTime(user);
+                        return (
+                          <div
+                            key={`tracker-${user.id}-${user.username}`}
+                            className="p-3 rounded-2xl bg-neutral-950/90 border border-neutral-800 hover:border-amber-500/40 flex items-center justify-between gap-3"
+                          >
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <span className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500/20 to-pink-500/20 border border-amber-400/40 text-amber-300 text-xs font-black flex items-center justify-center shrink-0 tabular-nums">
+                                #{stepNumber}
+                              </span>
+                              <img
+                                src={optimizeThumbnailUrl(user.avatar, 'grid')}
+                                alt={user.name}
+                                className="w-10 h-10 rounded-full object-cover bg-neutral-800 border border-neutral-700 shrink-0"
+                                referrerPolicy="no-referrer"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs sm:text-sm font-black text-white truncate">
+                                    {user.name}
+                                  </span>
+                                  <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-neutral-800 text-neutral-300">
+                                    {user.role}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] font-bold text-cyan-400 truncate">
+                                  @{user.username}
+                                </p>
+                                <p className="text-[10px] text-neutral-400 flex items-center gap-1 mt-0.5 truncate">
+                                  <Clock className="w-3 h-3 shrink-0" />
+                                  <span>
+                                    Joined {joined.dateLabel} · {joined.timeLabel}
+                                  </span>
+                                </p>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => onOpenCreatorProfile?.(user.username)}
+                              className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-700 text-[11px] font-bold shrink-0 cursor-pointer"
+                            >
+                              View Profile
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Sub-Tabs (Posts | Friends | Following | Followers | Saved | Liked | Insights) */}
         <div className="border-b border-neutral-800 flex items-center gap-1 overflow-x-auto no-scrollbar">

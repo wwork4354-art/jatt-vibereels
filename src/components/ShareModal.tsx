@@ -51,7 +51,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   };
 
   const shareToPlatform = (platform: 'whatsapp' | 'twitter' | 'reddit') => {
-    const text = encodeURIComponent(`Check out this reel on VibeReels: ${video.title}`);
+    const text = encodeURIComponent(`Check out this reel on Jatt VibeReels: ${video.title}`);
     const url = encodeURIComponent(currentUrl);
     let targetUrl = '';
 

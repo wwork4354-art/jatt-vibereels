@@ -94,6 +94,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement | null>(null);
   const customAudioPreviewRef = useRef<HTMLAudioElement | null>(null);
+  const audioSectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -404,7 +405,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         avatar: authorAvatar,
         isVerified: currentUser?.role === 'admin' || currentUser?.role === 'creator',
         isFollowing: false,
-        bio: currentUser?.bio || creatorProfile?.bio || 'Creator on VibeReels',
+        bio: currentUser?.bio || creatorProfile?.bio || 'Creator on Jatt VibeReels',
       },
       stats: {
         views: 0,
@@ -689,10 +690,47 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
 
+          {/* Prominent TikTok-Style "Add Sound / Select Song" CTA Button */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsAudioPanelOpen(true);
+                audioSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }}
+              className={`flex-1 py-2.5 px-4 rounded-xl border text-xs font-black flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer shadow-md ${
+                hasCustomAudioAttached
+                  ? 'bg-gradient-to-r from-emerald-600/25 via-cyan-600/20 to-pink-600/25 border-emerald-400/60 text-emerald-200'
+                  : 'bg-gradient-to-r from-pink-600 via-rose-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 border-pink-400/50 text-white shadow-pink-600/20'
+              }`}
+            >
+              <Music className="w-4 h-4 shrink-0" />
+              <span className="truncate">
+                {selectedAudioFile
+                  ? `Sound: ${selectedAudioFile.name}`
+                  : selectedLibraryTrack
+                  ? `Sound: ${selectedLibraryTrack.title}`
+                  : 'Add Sound / Select Song'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => audioFileInputRef.current?.click()}
+              className="py-2.5 px-3 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-cyan-500/40 text-cyan-300 text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+              title="Upload custom MP3 / M4A / WAV audio file"
+            >
+              <FileAudio className="w-4 h-4" />
+              <span className="hidden sm:inline">My Audio</span>
+            </button>
+          </div>
+
           {/* ===================================================== */}
           {/* ADD SONG / NAAT / AUDIO SECTION                        */}
           {/* ===================================================== */}
-          <div className="rounded-2xl bg-neutral-950/90 border border-neutral-800 p-3.5 space-y-3">
+          <div
+            ref={audioSectionRef}
+            className="rounded-2xl bg-neutral-950/90 border border-neutral-800 p-3.5 space-y-3"
+          >
             <div className="flex items-center justify-between gap-2">
               <button
                 type="button"

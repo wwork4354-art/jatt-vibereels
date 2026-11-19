@@ -21,6 +21,7 @@ import {
   Pause,
   Image as ImageIcon,
   Send,
+  Sliders,
 } from 'lucide-react';
 import { UserAccount, VideoPost, CreatorProfileData, AudioTrackOption } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
@@ -50,6 +51,7 @@ interface TopBarProps {
   onOpenLive: () => void;
   onOpenDownloads?: () => void;
   onOpenProCamera?: () => void;
+  onOpenEditor?: () => void;
   onOpenAdmin: () => void;
   onOpenProfile?: () => void;
   onOpenCreatorSearch?: () => void;
@@ -74,6 +76,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenLive,
   onOpenDownloads,
   onOpenProCamera,
+  onOpenEditor,
   onOpenAdmin,
   onOpenProfile,
   onOpenCreatorSearch,
@@ -458,30 +461,43 @@ export const TopBar: React.FC<TopBarProps> = ({
           </button>
         )}
 
-        {/* Pro Camera Button */}
+        {/* Choose Camera (Pro 4K Camera) Button */}
         {onOpenProCamera && (
           <button
             type="button"
             onClick={onOpenProCamera}
-            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-gradient-to-r from-pink-600/20 to-purple-600/20 hover:from-pink-600/30 hover:to-purple-600/30 text-pink-300 border border-pink-500/40 text-xs font-bold transition-all active:scale-95 shadow-sm"
-            title="Launch Heavy Pro Camera (4K/60FPS & Beauty Filters)"
+            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-gradient-to-r from-pink-600/20 to-purple-600/20 hover:from-pink-600/30 hover:to-purple-600/30 text-pink-300 border border-pink-500/40 text-xs font-bold transition-all active:scale-95 shadow-sm cursor-pointer"
+            title="Choose Camera (4K/60FPS & Live Filters)"
           >
             <Camera className="w-3.5 h-3.5 text-pink-400" />
-            <span className="hidden sm:inline">Pro Camera</span>
+            <span className="hidden sm:inline">Choose Camera</span>
           </button>
         )}
 
-        {/* Upload Video Button */}
+        {/* Choose Gallery / Upload Video Button */}
         <button
           type="button"
           onClick={onOpenUpload}
-          className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-700/80 text-xs font-bold transition-all active:scale-95 shadow-sm"
-          title="Upload short video from device"
+          className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-700/80 text-xs font-bold transition-all active:scale-95 shadow-sm cursor-pointer"
+          title="Choose Gallery or upload photo/video with song"
         >
-          <Upload className="w-3.5 h-3.5 text-pink-400" />
-          <span className="hidden sm:inline">Upload Video</span>
-          <span className="sm:hidden">Upload</span>
+          <Upload className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="hidden sm:inline">Choose Gallery</span>
+          <span className="sm:hidden">Gallery</span>
         </button>
+
+        {/* Edit Photo & Video Button */}
+        {onOpenEditor && (
+          <button
+            type="button"
+            onClick={onOpenEditor}
+            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-200 border border-purple-500/40 text-xs font-bold transition-all active:scale-95 shadow-sm cursor-pointer"
+            title="Edit Photo & Video (Trim, Filters, Text, Stickers, Music)"
+          >
+            <Sliders className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden sm:inline">Edit</span>
+          </button>
+        )}
 
         {/* Direct Chat / Live Snaps Inbox Button */}
         {onOpenDirectSnaps && (
