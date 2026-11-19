@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Radio,
   Users,
@@ -7,24 +7,53 @@ import {
   Gift,
   Volume2,
   VolumeX,
-  Sparkles,
-  Trophy,
-  Swords,
   ChevronLeft,
   ChevronRight,
-  Smile,
   CheckCircle,
-  Share2,
-  MessageCircle,
   Flame,
   Wand2,
-  Tv,
-  Layers,
   ArrowLeft,
   Camera,
+  CameraOff,
+  Mic,
+  MicOff,
+  RefreshCw,
+  UserPlus,
+  UserCheck,
+  UserMinus,
+  Power,
+  Sparkles,
+  Hand,
+  X,
+  Clock,
+  Eye,
+  Gem,
+  ShieldCheck,
+  Wifi,
 } from 'lucide-react';
 import { UserAccount, FeedTab } from '../types';
 import { soundEngine } from '../utils/soundEngine';
+import { sanitizeInputLive, sanitizeSafeUrl, sanitizeText, sanitizeUsername } from '../utils/security';
+import {
+  acquireLiveCameraStream,
+  CoHostDecisionEvent,
+  CoHostRequestEvent,
+  createEventId,
+  createLivePeerId,
+  getFilterPreset,
+  LIVE_FILTERS,
+  LiveBroadcastState,
+  LiveChatEvent,
+  LiveFilterId,
+  LiveGiftEvent,
+  LivePresenceMember,
+  LiveReactionEvent,
+  LiveReactionType,
+  LiveRoomRealtimeClient,
+  LiveTransportMode,
+  LiveWebRtcMesh,
+  stopMediaStream,
+} from '../utils/liveRealtimeClient';
 
 interface LiveStreamMainViewProps {
   currentUser: UserAccount | null;
@@ -34,122 +63,94 @@ interface LiveStreamMainViewProps {
   onToggleMute: () => void;
 }
 
-interface StreamChannel {
+interface FeaturedWatchChannel {
   id: string;
   hostName: string;
   hostHandle: string;
   hostAvatar: string;
   title: string;
   category: string;
-  viewers: number;
-  diamonds: number;
   videoUrl: string;
   gradientBg: string;
-  guestName?: string;
-  guestAvatar?: string;
 }
 
-interface LiveChatMessage {
+interface FloatingReactionItem {
   id: string;
-  user: string;
-  username: string;
-  avatar: string;
-  text: string;
-  isHost?: boolean;
-  isGift?: boolean;
-  isSystem?: boolean;
-  giftIcon?: string;
-  giftName?: string;
-  badge?: string;
-}
-
-interface FloatingHeartItem {
-  id: number;
+  emoji: string;
   x: number;
-  color: string;
   size: number;
+  color: string;
 }
 
 interface ActiveGiftBanner {
-  id: number;
+  id: string;
   sender: string;
   giftName: string;
   giftIcon: string;
   diamonds: number;
 }
 
-const LIVE_CHANNELS: StreamChannel[] = [
+interface LiveSummaryStats {
+  title: string;
+  durationSeconds: number;
+  peakViewers: number;
+  totalLikes: number;
+  totalGifts: number;
+  totalDiamonds: number;
+}
+
+const FEATURED_WATCH_ROOMS: FeaturedWatchChannel[] = [
   {
-    id: 'stream-1',
-    hostName: 'DJ Vibe Master',
-    hostHandle: 'dj_vibemaster',
+    id: 'room-jatt-main',
+    hostName: 'Jatt VibeReels Stage',
+    hostHandle: 'jatt_vibereels',
     hostAvatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=DJVibe&backgroundColor=ec4899',
-    title: '🔥 Live Neon Street Beats & Dhol Electro Set | Jatt VibeReels Official',
-    category: 'Music & DJ',
-    viewers: 19450,
-    diamonds: 42100,
+    title: 'Global Creator Stage · Tap "Go Live" to broadcast or join chat live!',
+    category: 'Creator Stage',
     videoUrl: 'https://upload.wikimedia.org/wikipedia/commons/a/a8/Berlin-KarnevalderKulturen2023-1-Asio.webm',
     gradientBg: 'from-pink-950 via-purple-950 to-neutral-950',
-    guestName: 'MC Aurora Beats',
-    guestAvatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=AuroraGuest&backgroundColor=06b6d4',
   },
   {
-    id: 'stream-2',
-    hostName: 'Dr. Stella Vance',
-    hostHandle: 'cosmic_explorer',
+    id: 'room-cosmic-lounge',
+    hostName: 'Cosmic Beats Lounge',
+    hostHandle: 'cosmic_stage',
     hostAvatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=StellaCosmic&backgroundColor=6366f1',
-    title: '🔭 Live Telescope Watch: Gamma Ray Pulsar & Galactic Nebula Rotation',
-    category: 'Science & Cosmos',
-    viewers: 12890,
-    diamonds: 28400,
-    videoUrl: 'https://upload.wikimedia.org/wikipedia/commons/4/47/Astrophysics_Holiday_Vertical_Video_%28SVS14800_-_Fermi_YuleLog_Rotate_Reel%29.webm',
+    title: 'Chill Late-Night Vibes & Live Q&A Room',
+    category: 'Music & Chill',
+    videoUrl:
+      'https://upload.wikimedia.org/wikipedia/commons/4/47/Astrophysics_Holiday_Vertical_Video_%28SVS14800_-_Fermi_YuleLog_Rotate_Reel%29.webm',
     gradientBg: 'from-blue-950 via-indigo-950 to-neutral-950',
-    guestName: 'Prof. Kenji Astro',
-    guestAvatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=KenjiAstro&backgroundColor=3b82f6',
   },
   {
-    id: 'stream-3',
-    hostName: 'Rainforest Sanctuaries',
-    hostHandle: 'wild_encounters',
+    id: 'room-nature-zen',
+    hostName: 'Nature Sanctuary Cam',
+    hostHandle: 'wild_sanctuary',
     hostAvatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=WildBird&backgroundColor=10b981',
-    title: '🦜 Live Canopy Feed: Intelligent Macaw Nut Cracking & Jungle Ambience',
-    category: 'Wildlife & Nature',
-    viewers: 8740,
-    diamonds: 15320,
+    title: 'Ambient Live Feed · Real-time Interactive Chat & Reactions',
+    category: 'Ambient Live',
     videoUrl: 'https://upload.wikimedia.org/wikipedia/commons/c/c5/Blue_and_yellow_macaw_eating_a_peanut.webm',
     gradientBg: 'from-emerald-950 via-teal-950 to-neutral-950',
   },
 ];
 
 const GIFTS_CATALOG = [
-  { id: 'g-rose', name: 'Rose', icon: '🌹', diamonds: 1, color: 'from-rose-500 to-pink-500' },
-  { id: 'g-heart', name: 'Neon Heart', icon: '💖', diamonds: 10, color: 'from-pink-500 to-purple-500' },
-  { id: 'g-rocket', name: 'Cosmic Rocket', icon: '🚀', diamonds: 100, color: 'from-cyan-500 to-blue-500' },
-  { id: 'g-galaxy', name: 'Galaxy Portal', icon: '🌌', diamonds: 500, color: 'from-purple-500 to-indigo-600' },
-  { id: 'g-crown', name: 'Jatt Royal Crown', icon: '👑', diamonds: 1000, color: 'from-amber-400 to-yellow-500' },
-  { id: 'g-lion', name: 'Golden Lion', icon: '🦁', diamonds: 5000, color: 'from-yellow-400 to-amber-600' },
+  { id: 'g-rose', name: 'Rose', icon: '🌹', diamonds: 1 },
+  { id: 'g-heart', name: 'Neon Heart', icon: '💖', diamonds: 10 },
+  { id: 'g-rocket', name: 'Cosmic Rocket', icon: '🚀', diamonds: 100 },
+  { id: 'g-galaxy', name: 'Galaxy Portal', icon: '🌌', diamonds: 500 },
+  { id: 'g-crown', name: 'Royal Crown', icon: '👑', diamonds: 1000 },
+  { id: 'g-lion', name: 'Golden Lion', icon: '🦁', diamonds: 5000 },
 ];
 
-const SIMULATED_STREAM_COMMENTS = [
-  { user: 'Vikram Dhillon', text: 'Chak de phatte!! Jatt VibeReels squad is lit 🔥🔥', badge: 'Top Fan' },
-  { user: 'Sarah Jenkins', text: 'Greetings from Vancouver 🇨🇦 the audio setup is incredible!', badge: 'VIP' },
-  { user: 'Maya Patel', text: 'That transition just blew my mind! 💥' },
-  { user: 'Kenji Takahashi', text: 'Bassline is pumping in Shibuya 🎧⚡', badge: 'Creator' },
-  { user: 'Elena Rostova', text: 'Sent you roses! Keep the energy flowing 🌹🌹' },
-  { user: 'Harman Singh', text: 'Royal vibe only! Best live stream on the app 👑' },
-  { user: 'Alex Rivera', text: 'Dropping diamonds for the PK battle win!! 💎' },
-  { user: 'Chloe Monet', text: 'The guest co-host is hilarious haha 😂' },
-  { user: 'Spike Neon', text: 'Let’s cross 25K viewers tonight! Let’s gooo 🚀' },
-  { user: 'Simran Kaur', text: 'Shoutout from Amritsar! Love the music mix 💖' },
-];
-
-const HOST_SIMULATED_SPEECHES = [
-  'Welcome to the live session everyone! Drop your city in the chat! 🌍',
-  'Shoutout to our top gifters! You guys are keeping the vibe alive! 💎✨',
-  'Wait for this next drop, turning up the equalizer now! 🎚️',
-  'Who wants to challenge in the PK battle next? Let me know in chat! ⚔️',
-  'Huge love to everyone sharing the stream right now! ❤️',
-];
+function formatDuration(totalSeconds: number): string {
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
 
 export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   currentUser,
@@ -158,540 +159,1303 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   isMuted,
   onToggleMute,
 }) => {
+  // Stable Peer ID for this session
+  const peerIdRef = useRef<string>(createLivePeerId());
+  const selfPeerId = peerIdRef.current;
+
+  // Watch room selector (when no creator broadcast is overriding, or switching stages)
   const [channelIndex, setChannelIndex] = useState(0);
-  const currentChannel = LIVE_CHANNELS[channelIndex];
+  const selectedWatchRoom = FEATURED_WATCH_ROOMS[channelIndex];
 
-  const [viewersCount, setViewersCount] = useState(currentChannel.viewers);
-  const [diamondsCount, setDiamondsCount] = useState(currentChannel.diamonds);
-  const [isFollowingHost, setIsFollowingHost] = useState(false);
-  const [isSplitScreen, setIsSplitScreen] = useState(true);
-  const [isPkBattle, setIsPkBattle] = useState(true);
-  const [pkScoreHost, setPkScoreHost] = useState(65);
-  const [pkScoreGuest, setPkScoreGuest] = useState(35);
+  // Real-time connection & room state
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
+  const [transportMode, setTransportMode] = useState<LiveTransportMode>('broadcast');
+  const [presenceMembers, setPresenceMembers] = useState<LivePresenceMember[]>([]);
 
-  const [activeHostAction, setActiveHostAction] = useState<string>('Host is live on camera 🎙️');
-  const [hostSpeechBubble, setHostSpeechBubble] = useState<string>(HOST_SIMULATED_SPEECHES[0]);
-  const [cameraFilter, setCameraFilter] = useState<'neon' | 'studio' | 'gold' | 'cyber'>('neon');
+  // Active Remote Broadcast State (when watching another host live in `live-room`)
+  const [activeBroadcast, setActiveBroadcast] = useState<LiveBroadcastState | null>(null);
 
-  const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>([
+  // Local Creator "Go Live" Setup & Broadcast State
+  const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
+  const [isRequestingCamera, setIsRequestingCamera] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [streamTitleInput, setStreamTitleInput] = useState('');
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [cameraEnabled, setCameraEnabled] = useState(true);
+  const [micEnabled, setMicEnabled] = useState(true);
+  const [selectedFilter, setSelectedFilter] = useState<LiveFilterId>('beauty');
+  const [resolutionLabel, setResolutionLabel] = useState('1080p HD');
+  const [showFilterStrip, setShowFilterStrip] = useState(false);
+
+  // Whether THIS user is currently live as Host or Co-Host
+  const [isHostingLive, setIsHostingLive] = useState(false);
+  const [isCoHostingLive, setIsCoHostingLive] = useState(false);
+  const [broadcastStartedAt, setBroadcastStartedAt] = useState<number>(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+
+  // Live Summary Modal (shown after clicking End Live)
+  const [liveSummary, setLiveSummary] = useState<LiveSummaryStats | null>(null);
+
+  // Co-Host Requests & Active Co-Host Tracking
+  const [coHostRequests, setCoHostRequests] = useState<CoHostRequestEvent[]>([]);
+  const [hasPendingCoHostRequest, setHasPendingCoHostRequest] = useState(false);
+
+  // Real-time Chat, Likes, Gifts, Reactions
+  const [chatMessages, setChatMessages] = useState<LiveChatEvent[]>([
     {
-      id: 'm-0',
-      user: 'System',
+      id: 'sys-welcome',
+      roomId: selectedWatchRoom.id,
+      senderId: 'system',
+      user: 'Jatt VibeReels Live',
       username: 'system',
-      avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=SystemAlert',
-      text: 'Welcome to Jatt VibeReels LIVE! Keep comments friendly and respectful.',
+      avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=JattLiveSys',
+      text: 'Welcome to real-time LIVE chat! Say hello or tap a reaction.',
+      timestamp: Date.now(),
       isSystem: true,
     },
-    {
-      id: 'm-1',
-      user: 'Amrit Singh',
-      username: 'amrit_s',
-      avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=Amrit&backgroundColor=ec4899',
-      text: 'Jatt VibeReels stream is lit tonight! 🔥🔥',
-      badge: 'VIP',
-    },
-    {
-      id: 'm-2',
-      user: 'Sarah Jenkins',
-      username: 'sarah_j',
-      avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=SarahJ',
-      text: 'Loving the dual guest audio feed from Toronto 🇨🇦',
-    },
   ]);
-
   const [inputText, setInputText] = useState('');
   const [isGiftTrayOpen, setIsGiftTrayOpen] = useState(false);
-  const [floatingHearts, setFloatingHearts] = useState<FloatingHeartItem[]>([]);
+  const [floatingReactions, setFloatingReactions] = useState<FloatingReactionItem[]>([]);
   const [activeGiftBanner, setActiveGiftBanner] = useState<ActiveGiftBanner | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Telemetry stats tracked accurately from real events
+  const [totalLikes, setTotalLikes] = useState(0);
+  const [totalGifts, setTotalGifts] = useState(0);
+  const [totalDiamonds, setTotalDiamonds] = useState(0);
+  const [peakViewers, setPeakViewers] = useState(1);
+  const [isFollowingHost, setIsFollowingHost] = useState(false);
+
+  // Media Streams & Video Refs
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const setupPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const hostVideoRef = useRef<HTMLVideoElement | null>(null);
+  const coHostVideoRef = useRef<HTMLVideoElement | null>(null);
+  const stageFallbackVideoRef = useRef<HTMLVideoElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Play fanfare when entering live view
-  useEffect(() => {
-    soundEngine.playLiveStartSound();
-  }, []);
+  const clientRef = useRef<LiveRoomRealtimeClient | null>(null);
+  const rtcMeshRef = useRef<LiveWebRtcMesh | null>(null);
 
-  // Update viewers count when channel changes
-  useEffect(() => {
-    setViewersCount(currentChannel.viewers);
-    setDiamondsCount(currentChannel.diamonds);
-  }, [currentChannel]);
+  // Refs synced for callbacks without stale closures
+  const isHostingRef = useRef(false);
+  const activeBroadcastRef = useRef<LiveBroadcastState | null>(null);
+  const coHostRequestsRef = useRef<CoHostRequestEvent[]>([]);
+  isHostingRef.current = isHostingLive;
+  activeBroadcastRef.current = activeBroadcast;
+  coHostRequestsRef.current = coHostRequests;
 
-  // Handle video element play
+  const selfName = useMemo(
+    () => sanitizeText(currentUser?.name || 'Jatt Creator', 60) || 'Jatt Creator',
+    [currentUser?.name]
+  );
+  const selfUsername = useMemo(
+    () => sanitizeUsername(currentUser?.username || 'jatt_creator', 40) || 'jatt_creator',
+    [currentUser?.username]
+  );
+  const selfAvatar = useMemo(
+    () =>
+      sanitizeSafeUrl(currentUser?.avatar || '') ||
+      `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(selfUsername)}&backgroundColor=ec4899`,
+    [currentUser?.avatar, selfUsername]
+  );
+
+  // Current room ID: if a real live broadcast is active, join/host that room ID, otherwise selected stage
+  const currentRoomId = activeBroadcast?.isLive ? activeBroadcast.roomId : selectedWatchRoom.id;
+
+  // Compute real connected viewer count from Presence
+  const activeViewerCount = useMemo(() => {
+    const unique = new Map<string, LivePresenceMember>();
+    presenceMembers.forEach((m) => unique.set(m.peerId, m));
+    return Math.max(1, unique.size);
+  }, [presenceMembers]);
+
+  // Update peak viewers whenever real presence count increases
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.muted = isMuted;
-      videoRef.current.play().catch(() => {
-        // Autoplay safe guard
-      });
+    if (activeViewerCount > peakViewers) {
+      setPeakViewers(activeViewerCount);
     }
-  }, [isMuted, channelIndex]);
+  }, [activeViewerCount, peakViewers]);
 
-  // Fluctuating viewers and stream stats
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setViewersCount((v) => Math.max(1000, v + Math.floor(Math.random() * 11) - 4));
-    }, 1200);
+  // Spawn visual floating reaction particle
+  const spawnFloatingReaction = useCallback((type: LiveReactionType) => {
+    const config: Record<LiveReactionType, { emoji: string; color: string }> = {
+      heart: { emoji: '❤️', color: '#f43f5e' },
+      fire: { emoji: '🔥', color: '#f97316' },
+      wave: { emoji: '👋', color: '#38bdf8' },
+    };
+    const chosen = config[type];
+    const item: FloatingReactionItem = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      emoji: chosen.emoji,
+      color: chosen.color,
+      x: Math.random() * 88 - 44,
+      size: Math.floor(Math.random() * 10) + 22,
+    };
 
-    return () => clearInterval(interval);
+    setFloatingReactions((prev) => [...prev.slice(-28), item]);
+    window.setTimeout(() => {
+      setFloatingReactions((prev) => prev.filter((r) => r.id !== item.id));
+    }, 2300);
   }, []);
 
-  // Simulated host actions cycle
+  // Build snapshot of our active broadcast state when hosting
+  const buildCurrentBroadcastState = useCallback(
+    (overrides?: Partial<LiveBroadcastState>): LiveBroadcastState => ({
+      roomId: activeBroadcastRef.current?.roomId || `live_${selfPeerId}`,
+      hostPeerId: selfPeerId,
+      hostName: selfName,
+      hostHandle: selfUsername,
+      hostAvatar: selfAvatar,
+      title:
+        sanitizeText(streamTitleInput, 120) ||
+        `${selfName} is LIVE on Jatt VibeReels!`,
+      isLive: true,
+      filter: selectedFilter,
+      resolutionLabel,
+      cameraEnabled,
+      micEnabled,
+      facingMode,
+      coHost: activeBroadcastRef.current?.coHost || null,
+      startedAt: broadcastStartedAt || Date.now(),
+      totalLikes,
+      totalDiamonds,
+      ...overrides,
+    }),
+    [
+      broadcastStartedAt,
+      cameraEnabled,
+      facingMode,
+      micEnabled,
+      resolutionLabel,
+      selectedFilter,
+      selfAvatar,
+      selfName,
+      selfPeerId,
+      selfUsername,
+      streamTitleInput,
+      totalDiamonds,
+      totalLikes,
+    ]
+  );
+
+  // Initialize LiveRoomRealtimeClient & WebRTC Mesh
   useEffect(() => {
-    const actions = [
-      'Host waved to the chat 👋',
-      'Host smiled and thanked top gifters ✨',
-      'Host dropped an acoustic dhol beat 🥁',
-      'Host checked the studio audio monitor 🎧',
-      'Host initiated a 30s PK battle rush ⚔️',
-      'Host drank some water 🥤',
-    ];
+    const client = new LiveRoomRealtimeClient({
+      peerId: selfPeerId,
+      roomId: selectedWatchRoom.id,
+      profile: {
+        name: selfName,
+        username: selfUsername,
+        avatar: selfAvatar,
+      },
+      handlers: {
+        onStatusChange: (status, mode) => {
+          setConnectionStatus(status);
+          setTransportMode(mode);
+        },
+        onPresenceChange: (members) => {
+          setPresenceMembers(members);
+        },
+        onChatMessage: (msg) => {
+          setChatMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) return prev;
+            return [...prev.slice(-80), msg];
+          });
+        },
+        onReaction: (reaction) => {
+          setTotalLikes((c) => c + 1);
+          spawnFloatingReaction(reaction.type);
+        },
+        onGift: (gift) => {
+          setTotalGifts((c) => c + 1);
+          setTotalDiamonds((d) => d + gift.diamonds);
+          setActiveGiftBanner({
+            id: gift.id,
+            sender: gift.senderName,
+            giftName: gift.giftName,
+            giftIcon: gift.giftIcon,
+            diamonds: gift.diamonds,
+          });
+          for (let i = 0; i < 6; i++) {
+            window.setTimeout(() => spawnFloatingReaction('heart'), i * 95);
+          }
+          window.setTimeout(() => {
+            setActiveGiftBanner((curr) => (curr?.id === gift.id ? null : curr));
+          }, 3400);
+        },
+        onBroadcastState: (state) => {
+          if (state.hostPeerId === selfPeerId) return;
+          setActiveBroadcast(state);
+          setTotalLikes((prev) => Math.max(prev, state.totalLikes || 0));
+          setTotalDiamonds((prev) => Math.max(prev, state.totalDiamonds || 0));
 
-    let actionIdx = 0;
-    const hostInterval = setInterval(() => {
-      actionIdx = (actionIdx + 1) % actions.length;
-      setActiveHostAction(actions[actionIdx]);
-      setHostSpeechBubble(HOST_SIMULATED_SPEECHES[actionIdx % HOST_SIMULATED_SPEECHES.length]);
-    }, 5000);
+          // Signal readiness to host via WebRTC if we aren't already receiving their stream
+          if (state.isLive) {
+            client.sendRtcSignal({
+              id: createEventId('ready'),
+              roomId: state.roomId,
+              fromPeerId: selfPeerId,
+              toPeerId: state.hostPeerId,
+              kind: 'ready',
+              role: 'viewer',
+            });
+            if (state.coHost && state.coHost.peerId !== selfPeerId) {
+              client.sendRtcSignal({
+                id: createEventId('ready'),
+                roomId: state.roomId,
+                fromPeerId: selfPeerId,
+                toPeerId: state.coHost.peerId,
+                kind: 'ready',
+                role: 'viewer',
+              });
+            }
+          }
+        },
+        onBroadcastEnded: (_roomId, hostPeerId) => {
+          setRemoteStreams((prev) => {
+            const next = { ...prev };
+            delete next[hostPeerId];
+            return next;
+          });
+          setActiveBroadcast((curr) => {
+            if (!curr || curr.hostPeerId !== hostPeerId) return curr;
+            return null;
+          });
+          setIsCoHostingLive((wasCoHost) => {
+            if (wasCoHost) {
+              stopMediaStream(localStreamRef.current);
+              localStreamRef.current = null;
+              setLocalStream(null);
+            }
+            return false;
+          });
+          onShowToast('The host ended this Live broadcast.');
+        },
+        onCoHostRequest: (req) => {
+          if (!isHostingRef.current) return;
+          setCoHostRequests((prev) => {
+            if (prev.some((r) => r.peerId === req.peerId)) return prev;
+            return [...prev, req];
+          });
+          soundEngine.playCommentSound();
+          onShowToast(`${req.name} requested to join as Co-Host!`);
+        },
+        onCoHostDecision: async (decision) => {
+          if (decision.targetPeerId !== selfPeerId) return;
+          setHasPendingCoHostRequest(false);
 
-    return () => clearInterval(hostInterval);
-  }, []);
+          if (!decision.accepted) {
+            onShowToast('Host declined your Co-Host request.');
+            return;
+          }
 
-  // Auto-streaming simulated viewer comments
+          // Accepted! Acquire viewer's own camera & mic and join split-screen via WebRTC
+          onShowToast('Co-Host request accepted! Starting your camera...');
+          try {
+            const acquired = await acquireLiveCameraStream({
+              facingMode: 'user',
+              audioEnabled: true,
+            });
+            stopMediaStream(localStreamRef.current);
+            localStreamRef.current = acquired.stream;
+            setLocalStream(acquired.stream);
+            setFacingMode('user');
+            setCameraEnabled(true);
+            setMicEnabled(acquired.hasAudio);
+            setIsCoHostingLive(true);
+            client.setRole('cohost');
+            rtcMeshRef.current?.setLocalStream(acquired.stream);
+
+            // Initiate WebRTC offer to host (and any ready viewers)
+            await rtcMeshRef.current?.initiateCall(decision.hostPeerId);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Camera permission needed to co-host.';
+            onShowToast(msg);
+          }
+        },
+        onCoHostLeave: (_roomId, coHostPeerId) => {
+          setRemoteStreams((prev) => {
+            const next = { ...prev };
+            delete next[coHostPeerId];
+            return next;
+          });
+          rtcMeshRef.current?.closePeer(coHostPeerId);
+
+          if (coHostPeerId === selfPeerId) {
+            stopMediaStream(localStreamRef.current);
+            localStreamRef.current = null;
+            setLocalStream(null);
+            setIsCoHostingLive(false);
+            client.setRole('viewer');
+            onShowToast('You left the Co-Host split screen.');
+          } else {
+            setActiveBroadcast((curr) => (curr ? { ...curr, coHost: null } : null));
+            onShowToast('Co-Host left the split screen.');
+          }
+        },
+        onRtcSignal: (signal) => {
+          rtcMeshRef.current?.handleSignal(signal);
+        },
+        onSyncRequested: (requesterPeerId) => {
+          if (isHostingRef.current && activeBroadcastRef.current) {
+            client.publishBroadcastState(activeBroadcastRef.current);
+            if (localStreamRef.current) {
+              rtcMeshRef.current?.initiateCall(requesterPeerId);
+            }
+          }
+        },
+      },
+    });
+
+    const rtcMesh = new LiveWebRtcMesh({
+      selfPeerId,
+      roomId: selectedWatchRoom.id,
+      sendSignal: (sig) => client.sendRtcSignal(sig),
+      onRemoteStream: (remotePeerId, stream) => {
+        setRemoteStreams((prev) => ({
+          ...prev,
+          [remotePeerId]: stream,
+        }));
+      },
+      onPeerClosed: (remotePeerId) => {
+        setRemoteStreams((prev) => {
+          if (!prev[remotePeerId]) return prev;
+          const next = { ...prev };
+          delete next[remotePeerId];
+          return next;
+        });
+      },
+    });
+
+    clientRef.current = client;
+    rtcMeshRef.current = rtcMesh;
+    client.connect();
+
+    return () => {
+      stopMediaStream(localStreamRef.current);
+      localStreamRef.current = null;
+      rtcMesh.closeAll();
+      client.disconnect();
+      clientRef.current = null;
+      rtcMeshRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selfPeerId]);
+
+  // Keep client room ID synced
   useEffect(() => {
-    const commentInterval = setInterval(() => {
-      const sample = SIMULATED_STREAM_COMMENTS[Math.floor(Math.random() * SIMULATED_STREAM_COMMENTS.length)];
-      const newMsg: LiveChatMessage = {
-        id: `msg-${Date.now()}-${Math.random()}`,
-        user: sample.user,
-        username: sample.user.toLowerCase().replace(/\s+/g, '_'),
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(sample.user)}`,
-        text: sample.text,
-        badge: sample.badge,
-      };
+    clientRef.current?.setRoomId(currentRoomId);
+    rtcMeshRef.current?.setRoomId(currentRoomId);
+  }, [currentRoomId]);
 
-      setChatMessages((prev) => [...prev.slice(-30), newMsg]);
+  // Live broadcast duration timer (real elapsed seconds from Date.now())
+  useEffect(() => {
+    if (!isHostingLive || !broadcastStartedAt) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const tick = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - broadcastStartedAt) / 1000)));
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [broadcastStartedAt, isHostingLive]);
 
-      // Spawn periodic floating hearts from other viewers
-      if (Math.random() > 0.45) {
-        spawnFloatingHeart();
-      }
-    }, 2600);
+  // Attach MediaStreams to video elements cleanly
+  useEffect(() => {
+    if (setupPreviewVideoRef.current && localStream) {
+      setupPreviewVideoRef.current.srcObject = localStream;
+      setupPreviewVideoRef.current.play().catch(() => {});
+    }
+  }, [isSetupModalOpen, localStream]);
 
-    return () => clearInterval(commentInterval);
-  }, []);
+  const effectiveBroadcast = activeBroadcast;
+  const hostStreamToShow = useMemo(() => {
+    if (isHostingLive) return localStream;
+    if (effectiveBroadcast?.isLive) {
+      return remoteStreams[effectiveBroadcast.hostPeerId] || null;
+    }
+    return null;
+  }, [effectiveBroadcast, isHostingLive, localStream, remoteStreams]);
 
-  // Auto-scroll chat
+  const coHostInfo = effectiveBroadcast?.coHost || null;
+  const coHostStreamToShow = useMemo(() => {
+    if (!coHostInfo) return null;
+    if (coHostInfo.peerId === selfPeerId && isCoHostingLive) {
+      return localStream;
+    }
+    return remoteStreams[coHostInfo.peerId] || null;
+  }, [coHostInfo, isCoHostingLive, localStream, remoteStreams, selfPeerId]);
+
+  useEffect(() => {
+    if (hostVideoRef.current && hostStreamToShow) {
+      hostVideoRef.current.srcObject = hostStreamToShow;
+      hostVideoRef.current.muted = isHostingLive ? true : isMuted;
+      hostVideoRef.current.play().catch(() => {});
+    }
+  }, [hostStreamToShow, isHostingLive, isMuted, coHostInfo]);
+
+  useEffect(() => {
+    if (coHostVideoRef.current && coHostStreamToShow) {
+      coHostVideoRef.current.srcObject = coHostStreamToShow;
+      coHostVideoRef.current.muted = isCoHostingLive && coHostInfo?.peerId === selfPeerId ? true : isMuted;
+      coHostVideoRef.current.play().catch(() => {});
+    }
+  }, [coHostStreamToShow, isCoHostingLive, coHostInfo, isMuted, selfPeerId]);
+
+  useEffect(() => {
+    if (stageFallbackVideoRef.current && !hostStreamToShow && !effectiveBroadcast?.isLive) {
+      stageFallbackVideoRef.current.muted = isMuted;
+      stageFallbackVideoRef.current.play().catch(() => {});
+    }
+  }, [channelIndex, effectiveBroadcast?.isLive, hostStreamToShow, isMuted]);
+
+  // Auto-scroll chat panel
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [chatMessages]);
 
-  const spawnFloatingHeart = (colorOverride?: string) => {
-    const colors = ['#ec4899', '#f43f5e', '#a855f7', '#06b6d4', '#eab308'];
-    const chosenColor = colorOverride || colors[Math.floor(Math.random() * colors.length)];
-    const newHeart: FloatingHeartItem = {
-      id: Date.now() + Math.random(),
-      x: Math.random() * 90 - 45,
-      color: chosenColor,
-      size: Math.floor(Math.random() * 12) + 22,
+  // =========================================================================
+  // Go Live / Camera / Mic / Filter Actions
+  // =========================================================================
+
+  const requestDevicePreview = useCallback(async (targetFacing: 'user' | 'environment') => {
+    setIsRequestingCamera(true);
+    setCameraError(null);
+    try {
+      const acquired = await acquireLiveCameraStream({
+        facingMode: targetFacing,
+        audioEnabled: true,
+      });
+      stopMediaStream(localStreamRef.current);
+      localStreamRef.current = acquired.stream;
+      setLocalStream(acquired.stream);
+      setResolutionLabel(acquired.resolutionLabel);
+      setCameraEnabled(acquired.hasVideo);
+      setMicEnabled(acquired.hasAudio);
+      rtcMeshRef.current?.setLocalStream(acquired.stream);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to open camera & microphone.';
+      setCameraError(msg);
+      onShowToast(msg);
+    } finally {
+      setIsRequestingCamera(false);
+    }
+  }, [onShowToast]);
+
+  const handleOpenGoLiveSetup = () => {
+    setLiveSummary(null);
+    setStreamTitleInput((prev) => prev || `${selfName}'s Live Vibes`);
+    setIsSetupModalOpen(true);
+    requestDevicePreview(facingMode);
+  };
+
+  const handleCancelSetup = () => {
+    setIsSetupModalOpen(false);
+    if (!isHostingLive && !isCoHostingLive) {
+      stopMediaStream(localStreamRef.current);
+      localStreamRef.current = null;
+      setLocalStream(null);
+    }
+  };
+
+  const handleStartBroadcast = () => {
+    if (!localStreamRef.current) {
+      onShowToast('Please allow camera access before going live.');
+      return;
+    }
+
+    const now = Date.now();
+    const cleanTitle =
+      sanitizeText(streamTitleInput, 120) || `${selfName} is LIVE on Jatt VibeReels!`;
+    const roomId = `live_${selfPeerId}`;
+
+    const initialState: LiveBroadcastState = {
+      roomId,
+      hostPeerId: selfPeerId,
+      hostName: selfName,
+      hostHandle: selfUsername,
+      hostAvatar: selfAvatar,
+      title: cleanTitle,
+      isLive: true,
+      filter: selectedFilter,
+      resolutionLabel,
+      cameraEnabled,
+      micEnabled,
+      facingMode,
+      coHost: null,
+      startedAt: now,
+      totalLikes: 0,
+      totalDiamonds: 0,
     };
 
-    setFloatingHearts((prev) => [...prev.slice(-25), newHeart]);
+    setTotalLikes(0);
+    setTotalGifts(0);
+    setTotalDiamonds(0);
+    setPeakViewers(activeViewerCount);
+    setCoHostRequests([]);
+    setBroadcastStartedAt(now);
+    setIsHostingLive(true);
+    setIsSetupModalOpen(false);
+    setActiveBroadcast(initialState);
+    activeBroadcastRef.current = initialState;
 
-    setTimeout(() => {
-      setFloatingHearts((prev) => prev.filter((h) => h.id !== newHeart.id));
-    }, 2400);
+    clientRef.current?.setRoomId(roomId);
+    clientRef.current?.setRole('host');
+    rtcMeshRef.current?.setRoomId(roomId);
+    rtcMeshRef.current?.setLocalStream(localStreamRef.current);
+    clientRef.current?.publishBroadcastState(initialState);
+
+    // Connect WebRTC to any peers already watching in the room
+    presenceMembers.forEach((m) => {
+      if (m.peerId !== selfPeerId) {
+        rtcMeshRef.current?.initiateCall(m.peerId);
+      }
+    });
+
+    const sysMsg: LiveChatEvent = {
+      id: createEventId('sys'),
+      roomId,
+      senderId: 'system',
+      user: 'Live Studio',
+      username: 'system',
+      avatar: selfAvatar,
+      text: `${selfName} started a live broadcast: "${cleanTitle}"`,
+      timestamp: now,
+      isSystem: true,
+    };
+    setChatMessages((prev) => [...prev.slice(-60), sysMsg]);
+    clientRef.current?.sendChatMessage(sysMsg);
+
+    soundEngine.playLiveStartSound();
+    onShowToast('You are LIVE now!');
   };
+
+  const handleSwapCamera = async () => {
+    const nextFacing: 'user' | 'environment' = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(nextFacing);
+
+    try {
+      const acquired = await acquireLiveCameraStream({
+        facingMode: nextFacing,
+        audioEnabled: true,
+      });
+
+      // Preserve current mute state
+      acquired.stream.getAudioTracks().forEach((t) => {
+        t.enabled = micEnabled;
+      });
+      acquired.stream.getVideoTracks().forEach((t) => {
+        t.enabled = cameraEnabled;
+      });
+
+      stopMediaStream(localStreamRef.current);
+      localStreamRef.current = acquired.stream;
+      setLocalStream(acquired.stream);
+      setResolutionLabel(acquired.resolutionLabel);
+      rtcMeshRef.current?.setLocalStream(acquired.stream);
+
+      if (isHostingLive && activeBroadcastRef.current) {
+        const updated = buildCurrentBroadcastState({ facingMode: nextFacing, resolutionLabel: acquired.resolutionLabel });
+        setActiveBroadcast(updated);
+        clientRef.current?.publishBroadcastState(updated);
+      }
+      onShowToast(nextFacing === 'environment' ? 'Switched to Back Camera' : 'Switched to Front Camera');
+    } catch {
+      onShowToast('Unable to switch camera on this device.');
+    }
+  };
+
+  const handleToggleMic = () => {
+    const nextMic = !micEnabled;
+    setMicEnabled(nextMic);
+    localStreamRef.current?.getAudioTracks().forEach((t) => {
+      t.enabled = nextMic;
+    });
+
+    if (isHostingLive && activeBroadcastRef.current) {
+      const updated = buildCurrentBroadcastState({ micEnabled: nextMic });
+      setActiveBroadcast(updated);
+      clientRef.current?.publishBroadcastState(updated);
+    } else if (isCoHostingLive && activeBroadcastRef.current?.coHost) {
+      const updated: LiveBroadcastState = {
+        ...activeBroadcastRef.current,
+        coHost: {
+          ...activeBroadcastRef.current.coHost,
+          micEnabled: nextMic,
+        },
+      };
+      setActiveBroadcast(updated);
+      clientRef.current?.publishBroadcastState(updated);
+    }
+    onShowToast(nextMic ? 'Microphone On' : 'Microphone Muted');
+  };
+
+  const handleToggleCamera = () => {
+    const nextCam = !cameraEnabled;
+    setCameraEnabled(nextCam);
+    localStreamRef.current?.getVideoTracks().forEach((t) => {
+      t.enabled = nextCam;
+    });
+
+    if (isHostingLive && activeBroadcastRef.current) {
+      const updated = buildCurrentBroadcastState({ cameraEnabled: nextCam });
+      setActiveBroadcast(updated);
+      clientRef.current?.publishBroadcastState(updated);
+    } else if (isCoHostingLive && activeBroadcastRef.current?.coHost) {
+      const updated: LiveBroadcastState = {
+        ...activeBroadcastRef.current,
+        coHost: {
+          ...activeBroadcastRef.current.coHost,
+          cameraEnabled: nextCam,
+        },
+      };
+      setActiveBroadcast(updated);
+      clientRef.current?.publishBroadcastState(updated);
+    }
+    onShowToast(nextCam ? 'Camera On' : 'Camera Paused');
+  };
+
+  const handleSelectFilter = (filterId: LiveFilterId) => {
+    setSelectedFilter(filterId);
+    if (isHostingLive && activeBroadcastRef.current) {
+      const updated = buildCurrentBroadcastState({ filter: filterId });
+      setActiveBroadcast(updated);
+      clientRef.current?.publishBroadcastState(updated);
+    }
+  };
+
+  const handleEndLiveBroadcast = () => {
+    const roomId = activeBroadcastRef.current?.roomId || currentRoomId;
+    const duration = broadcastStartedAt
+      ? Math.max(1, Math.floor((Date.now() - broadcastStartedAt) / 1000))
+      : elapsedSeconds;
+
+    setLiveSummary({
+      title: activeBroadcastRef.current?.title || `${selfName}'s Live Stream`,
+      durationSeconds: duration,
+      peakViewers: Math.max(peakViewers, activeViewerCount),
+      totalLikes,
+      totalGifts,
+      totalDiamonds,
+    });
+
+    clientRef.current?.endBroadcast(roomId);
+    clientRef.current?.setRole('viewer');
+    rtcMeshRef.current?.closeAll();
+
+    stopMediaStream(localStreamRef.current);
+    localStreamRef.current = null;
+    setLocalStream(null);
+    setRemoteStreams({});
+    setIsHostingLive(false);
+    setActiveBroadcast(null);
+    activeBroadcastRef.current = null;
+    setCoHostRequests([]);
+    setBroadcastStartedAt(0);
+    setShowFilterStrip(false);
+    onShowToast('Live broadcast ended.');
+  };
+
+  // =========================================================================
+  // Viewer "Request to Join" & Host Accept/Decline Co-Host Flow
+  // =========================================================================
+
+  const handleRequestJoinCoHost = () => {
+    if (!effectiveBroadcast?.isLive) {
+      onShowToast('Start a Live broadcast first or wait for a live host to join.');
+      return;
+    }
+    if (hasPendingCoHostRequest) {
+      setHasPendingCoHostRequest(false);
+      onShowToast('Co-Host request cancelled.');
+      return;
+    }
+
+    const req: CoHostRequestEvent = {
+      id: createEventId('coreq'),
+      roomId: effectiveBroadcast.roomId,
+      peerId: selfPeerId,
+      name: selfName,
+      handle: selfUsername,
+      avatar: selfAvatar,
+      requestedAt: Date.now(),
+    };
+    setHasPendingCoHostRequest(true);
+    clientRef.current?.sendCoHostRequest(req);
+    onShowToast('Co-Host request sent to host!');
+  };
+
+  const handleRespondCoHostRequest = (req: CoHostRequestEvent, accepted: boolean) => {
+    setCoHostRequests((prev) => prev.filter((r) => r.peerId !== req.peerId));
+
+    const decision: CoHostDecisionEvent = {
+      id: createEventId('codec'),
+      requestId: req.id,
+      roomId: req.roomId,
+      targetPeerId: req.peerId,
+      hostPeerId: selfPeerId,
+      accepted,
+      timestamp: Date.now(),
+    };
+    clientRef.current?.sendCoHostDecision(decision);
+
+    if (accepted && activeBroadcastRef.current) {
+      const updated = buildCurrentBroadcastState({
+        coHost: {
+          peerId: req.peerId,
+          name: req.name,
+          handle: req.handle,
+          avatar: req.avatar,
+          micEnabled: true,
+          cameraEnabled: true,
+          facingMode: 'user',
+        },
+      });
+      setActiveBroadcast(updated);
+      clientRef.current?.publishBroadcastState(updated);
+      onShowToast(`${req.name} is joining Split-Screen!`);
+    } else {
+      onShowToast(`Declined ${req.name}'s request.`);
+    }
+  };
+
+  const handleLeaveOrRemoveCoHost = () => {
+    if (!effectiveBroadcast) return;
+    const targetCoHostPeerId = isCoHostingLive
+      ? selfPeerId
+      : effectiveBroadcast.coHost?.peerId || '';
+    if (!targetCoHostPeerId) return;
+
+    clientRef.current?.sendCoHostLeave(effectiveBroadcast.roomId, targetCoHostPeerId);
+
+    if (isCoHostingLive) {
+      stopMediaStream(localStreamRef.current);
+      localStreamRef.current = null;
+      setLocalStream(null);
+      setIsCoHostingLive(false);
+      clientRef.current?.setRole('viewer');
+      rtcMeshRef.current?.closeAll();
+      onShowToast('Left Co-Host split screen.');
+    } else if (isHostingLive && activeBroadcastRef.current) {
+      const updated = buildCurrentBroadcastState({ coHost: null });
+      setActiveBroadcast(updated);
+      clientRef.current?.publishBroadcastState(updated);
+      rtcMeshRef.current?.closePeer(targetCoHostPeerId);
+      onShowToast('Removed Co-Host from split screen.');
+    }
+  };
+
+  // =========================================================================
+  // Real-Time Chat, Reactions (Heart / Fire / Wave) & Gifts
+  // =========================================================================
 
   const handleSendComment = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    const cleanText = sanitizeText(inputText, 280);
+    if (!cleanText) return;
 
-    const myName = currentUser?.name || 'You';
-    const myUsername = currentUser?.username || 'you';
-    const myAvatar =
-      currentUser?.avatar ||
-      'https://api.dicebear.com/7.x/bottts/svg?seed=YouLive&backgroundColor=ec4899';
+    const badge = isHostingLive
+      ? 'Host'
+      : isCoHostingLive
+      ? 'Co-Host'
+      : currentUser?.role === 'admin'
+      ? 'Admin'
+      : currentUser?.role === 'creator'
+      ? 'Creator'
+      : undefined;
 
-    const newMsg: LiveChatMessage = {
-      id: `my-msg-${Date.now()}`,
-      user: myName,
-      username: myUsername,
-      avatar: myAvatar,
-      text: inputText.trim(),
-      isHost: currentUser?.role === 'admin' || currentUser?.role === 'creator',
-      badge: currentUser?.role === 'admin' ? 'Admin' : currentUser?.role === 'creator' ? 'Creator' : 'VIP',
+    const msg: LiveChatEvent = {
+      id: createEventId('chat'),
+      roomId: currentRoomId,
+      senderId: selfPeerId,
+      user: selfName,
+      username: selfUsername,
+      avatar: selfAvatar,
+      text: cleanText,
+      timestamp: Date.now(),
+      isHost: isHostingLive,
+      isCoHost: isCoHostingLive,
+      badge,
     };
 
-    setChatMessages((prev) => [...prev, newMsg]);
+    setChatMessages((prev) => [...prev.slice(-80), msg]);
+    clientRef.current?.sendChatMessage(msg);
     setInputText('');
     soundEngine.playCommentSound();
-    spawnFloatingHeart('#ec4899');
-
-    // Host acknowledges message
-    setTimeout(() => {
-      setActiveHostAction(`Host reacted to @${myUsername}'s message! 💬`);
-      setHostSpeechBubble(`Appreciate you tuning in, @${myUsername}! 🔥`);
-    }, 1400);
   };
 
-  const handleSendGift = (gift: typeof GIFTS_CATALOG[0]) => {
+  const handleSendReaction = (type: LiveReactionType) => {
+    soundEngine.playLikeSound();
+    spawnFloatingReaction(type);
+    setTotalLikes((c) => c + 1);
+
+    const reactionEvt: LiveReactionEvent = {
+      id: createEventId('react'),
+      roomId: currentRoomId,
+      senderId: selfPeerId,
+      senderName: selfName,
+      type,
+      timestamp: Date.now(),
+    };
+    clientRef.current?.sendReaction(reactionEvt);
+  };
+
+  const handleSendGift = (gift: (typeof GIFTS_CATALOG)[0]) => {
     soundEngine.playGiftSound();
 
-    const senderName = currentUser?.name || 'You';
-    const bannerItem: ActiveGiftBanner = {
-      id: Date.now(),
-      sender: senderName,
+    const giftEvt: LiveGiftEvent = {
+      id: createEventId('gift'),
+      roomId: currentRoomId,
+      senderId: selfPeerId,
+      senderName: selfName,
+      senderUsername: selfUsername,
+      senderAvatar: selfAvatar,
+      giftId: gift.id,
       giftName: gift.name,
       giftIcon: gift.icon,
       diamonds: gift.diamonds,
+      timestamp: Date.now(),
     };
 
-    setActiveGiftBanner(bannerItem);
-    setDiamondsCount((d) => d + gift.diamonds);
+    setTotalGifts((c) => c + 1);
+    setTotalDiamonds((d) => d + gift.diamonds);
+    setActiveGiftBanner({
+      id: giftEvt.id,
+      sender: selfName,
+      giftName: gift.name,
+      giftIcon: gift.icon,
+      diamonds: gift.diamonds,
+    });
 
-    // Boost host PK score
-    if (isPkBattle) {
-      setPkScoreHost((h) => Math.min(95, h + 5));
-      setPkScoreGuest((g) => Math.max(5, g - 5));
-    }
-
-    // Add gift announcement to live chat
-    const giftMsg: LiveChatMessage = {
-      id: `gift-${Date.now()}`,
-      user: senderName,
-      username: currentUser?.username || 'you',
-      avatar: currentUser?.avatar || 'https://api.dicebear.com/7.x/bottts/svg?seed=YouLive',
+    const giftChatMsg: LiveChatEvent = {
+      id: createEventId('gchat'),
+      roomId: currentRoomId,
+      senderId: selfPeerId,
+      user: selfName,
+      username: selfUsername,
+      avatar: selfAvatar,
       text: `sent ${gift.name} ${gift.icon} (+${gift.diamonds} 💎)`,
+      timestamp: Date.now(),
       isGift: true,
       giftIcon: gift.icon,
       giftName: gift.name,
+      diamonds: gift.diamonds,
     };
-    setChatMessages((prev) => [...prev, giftMsg]);
 
-    // Host celebration response
-    setActiveHostAction(`Host celebrated ${gift.name} from ${senderName}! 👑🎉`);
-    setHostSpeechBubble(`WOW! Thank you so much for the ${gift.name} ${gift.icon}!! 💎`);
+    setChatMessages((prev) => [...prev.slice(-80), giftChatMsg]);
+    clientRef.current?.sendGift(giftEvt);
+    clientRef.current?.sendChatMessage(giftChatMsg);
 
-    // Spawn shower of floating hearts
-    for (let i = 0; i < 7; i++) {
-      setTimeout(() => spawnFloatingHeart(), i * 110);
+    for (let i = 0; i < 6; i++) {
+      window.setTimeout(() => spawnFloatingReaction('heart'), i * 95);
     }
 
     onShowToast(`Sent ${gift.name} ${gift.icon}!`);
-
-    setTimeout(() => {
-      setActiveGiftBanner((curr) => (curr?.id === bannerItem.id ? null : curr));
+    window.setTimeout(() => {
+      setActiveGiftBanner((curr) => (curr?.id === giftEvt.id ? null : curr));
     }, 3400);
   };
 
-  const handleTriggerHostAction = (actionTitle: string, responseSpeech: string) => {
-    setActiveHostAction(actionTitle);
-    setHostSpeechBubble(responseSpeech);
-    soundEngine.playCommentSound();
-    onShowToast(actionTitle);
-  };
+  // Determine displayed host metadata
+  const displayedHostName = effectiveBroadcast?.isLive
+    ? effectiveBroadcast.hostName
+    : selectedWatchRoom.hostName;
+  const displayedHostHandle = effectiveBroadcast?.isLive
+    ? effectiveBroadcast.hostHandle
+    : selectedWatchRoom.hostHandle;
+  const displayedHostAvatar = effectiveBroadcast?.isLive
+    ? effectiveBroadcast.hostAvatar
+    : selectedWatchRoom.hostAvatar;
+  const displayedTitle = effectiveBroadcast?.isLive
+    ? effectiveBroadcast.title
+    : selectedWatchRoom.title;
 
-  const nextChannel = () => {
-    setChannelIndex((prev) => (prev + 1) % LIVE_CHANNELS.length);
-    onShowToast('Switched to next Live Stream');
-  };
-
-  const prevChannel = () => {
-    setChannelIndex((prev) => (prev - 1 + LIVE_CHANNELS.length) % LIVE_CHANNELS.length);
-    onShowToast('Switched to previous Live Stream');
-  };
-
-  // Camera filter class
-  const getCameraFilterStyle = () => {
-    switch (cameraFilter) {
-      case 'studio':
-        return 'contrast-110 saturate-125 brightness-105';
-      case 'gold':
-        return 'sepia-[0.25] contrast-105 saturate-150 brightness-105 hue-rotate-[-10deg]';
-      case 'cyber':
-        return 'contrast-125 saturate-150 hue-rotate-[25deg]';
-      default:
-        return 'contrast-105 saturate-110';
-    }
-  };
+  const activeHostFilterPreset = getFilterPreset(
+    isHostingLive ? selectedFilter : effectiveBroadcast?.filter
+  );
+  const isSplitScreenActive = Boolean(effectiveBroadcast?.isLive && coHostInfo);
 
   return (
     <div className="w-full h-full flex flex-col items-center justify-center bg-black overflow-hidden relative select-none">
-      {/* Top Banner Navigation: Back to Feed / Channel Switcher */}
-      <div className="w-full max-w-5xl px-4 py-2 flex items-center justify-between z-30 shrink-0">
+      {/* ========================================================= */}
+      {/* TOP LIVE TAB HEADER: Back, Channel/Room, Prominent Go Live */}
+      {/* ========================================================= */}
+      <div className="w-full max-w-5xl px-3 sm:px-4 py-2 flex items-center justify-between gap-2 z-30 shrink-0">
         <button
           type="button"
           onClick={() => onSelectTab('foryou')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-700/80 text-xs font-bold transition-all shadow-md active:scale-95"
+          className="min-h-[40px] flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-700/80 text-xs font-bold transition-all shadow-md active:scale-95 shrink-0"
         >
           <ArrowLeft className="w-3.5 h-3.5 text-pink-400" />
-          <span>Back to Reels Feed</span>
+          <span className="hidden sm:inline">Back to Reels</span>
+          <span className="sm:hidden">Back</span>
         </button>
 
-        {/* Channel Indicator & Switcher */}
-        <div className="flex items-center gap-2 bg-neutral-900/80 px-3 py-1 rounded-full border border-neutral-800 backdrop-blur-md">
-          <button
-            type="button"
-            onClick={prevChannel}
-            className="p-1 text-neutral-400 hover:text-white transition-colors"
-            title="Previous Live Channel"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="text-xs font-bold text-white flex items-center gap-1.5">
-            <Radio className="w-3 h-3 text-red-500 animate-pulse" />
-            <span className="truncate max-w-[140px] sm:max-w-[200px]">{currentChannel.hostName}</span>
+        {/* Room Indicator / Stage Switcher */}
+        <div className="flex items-center gap-1.5 bg-neutral-900/85 px-2.5 py-1.5 rounded-full border border-neutral-800 backdrop-blur-md min-w-0">
+          {!effectiveBroadcast?.isLive && (
+            <button
+              type="button"
+              onClick={() =>
+                setChannelIndex((prev) => (prev - 1 + FEATURED_WATCH_ROOMS.length) % FEATURED_WATCH_ROOMS.length)
+              }
+              className="p-1 text-neutral-400 hover:text-white transition-colors"
+              title="Previous Stage"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          )}
+          <span className="text-xs font-bold text-white flex items-center gap-1.5 truncate">
+            <Radio className="w-3.5 h-3.5 text-rose-500 animate-pulse shrink-0" />
+            <span className="truncate max-w-[120px] sm:max-w-[200px]">{displayedHostName}</span>
           </span>
-          <button
-            type="button"
-            onClick={nextChannel}
-            className="p-1 text-neutral-400 hover:text-white transition-colors"
-            title="Next Live Channel"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          {!effectiveBroadcast?.isLive && (
+            <button
+              type="button"
+              onClick={() => setChannelIndex((prev) => (prev + 1) % FEATURED_WATCH_ROOMS.length)}
+              className="p-1 text-neutral-400 hover:text-white transition-colors"
+              title="Next Stage"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
-        {/* Sound toggle */}
-        <button
-          type="button"
-          onClick={onToggleMute}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
-            isMuted
-              ? 'bg-neutral-900 text-neutral-400 border-neutral-800'
-              : 'bg-pink-600/20 text-pink-400 border-pink-500/40'
-          }`}
-        >
-          {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-          <span className="hidden sm:inline">{isMuted ? 'Muted' : 'Sound On'}</span>
-        </button>
+        {/* Right Header Actions: Go Live / End Live + Sound */}
+        <div className="flex items-center gap-2 shrink-0">
+          {!isHostingLive ? (
+            <button
+              type="button"
+              onClick={handleOpenGoLiveSetup}
+              className="min-h-[40px] flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-xs font-black tracking-wide shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
+            >
+              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+              <Camera className="w-3.5 h-3.5" />
+              <span>Go Live</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleEndLiveBroadcast}
+              className="min-h-[40px] flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
+            >
+              <Power className="w-3.5 h-3.5" />
+              <span>End Live</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onToggleMute}
+            className={`min-h-[40px] flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+              isMuted
+                ? 'bg-neutral-900 text-neutral-400 border-neutral-800'
+                : 'bg-pink-600/20 text-pink-400 border-pink-500/40'
+            }`}
+            title={isMuted ? 'Unmute audio' : 'Mute audio'}
+          >
+            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+        </div>
       </div>
 
-      {/* Main Stream Container (Maximized TikTok Live Stage) */}
-      <div className="relative w-full h-[calc(100%-48px)] sm:max-w-4xl max-h-[820px] rounded-2xl sm:rounded-3xl overflow-hidden bg-neutral-950 border border-neutral-800/80 shadow-2xl flex flex-col justify-between">
-        
-        {/* ========================================================= */}
-        {/* CAMERA / VIDEO VIEW WITH SIMULATED HOST BROADCAST */}
-        {/* ========================================================= */}
+      {/* ========================================================= */}
+      {/* MAIN FULL-SCREEN LIVE STAGE CONTAINER */}
+      {/* ========================================================= */}
+      <div className="relative w-full h-[calc(100%-56px)] sm:max-w-5xl max-h-[850px] rounded-2xl sm:rounded-3xl overflow-hidden bg-neutral-950 border border-neutral-800/80 shadow-2xl flex flex-col justify-between">
+        {/* VIDEO / CAMERA VIEWPORT LAYER */}
         <div className="absolute inset-0 z-0 bg-neutral-950 flex flex-col overflow-hidden">
-          {isSplitScreen && currentChannel.guestName ? (
-            /* DUAL SPLIT SCREEN VIEW: Host (Left/Top) + Co-Host Guest (Right/Bottom) */
+          {isSplitScreenActive && coHostInfo ? (
+            /* DUAL CAMERA SPLIT-SCREEN VIEW (HOST + CO-HOST) */
             <div className="w-full h-full flex flex-col sm:flex-row divide-y-2 sm:divide-y-0 sm:divide-x-2 divide-neutral-900 relative">
-              {/* HOST ACTIVE CAMERA VIEWPORT */}
+              {/* HOST HALF */}
               <div className="relative flex-1 h-full overflow-hidden flex items-center justify-center bg-gradient-to-b from-purple-950/60 to-black">
-                <video
-                  ref={videoRef}
-                  src={currentChannel.videoUrl}
-                  loop
-                  autoPlay
-                  playsInline
-                  className={`w-full h-full object-cover opacity-85 transition-all duration-300 ${getCameraFilterStyle()}`}
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 pointer-events-none" />
-
-                {/* Host Live Label & Audio Wave */}
-                <div className="absolute top-14 left-4 z-20 flex items-center gap-2 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-full border border-pink-500/30">
-                  <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
-                  <span className="text-[11px] font-bold text-white flex items-center gap-1">
-                    {currentChannel.hostName}
-                    <CheckCircle className="w-3 h-3 text-pink-400" />
-                  </span>
-                  <div className="flex items-center gap-0.5 ml-1">
-                    <span className="w-1 h-2.5 bg-pink-400 rounded-full animate-bounce [animation-delay:0.1s]" />
-                    <span className="w-1 h-4 bg-pink-400 rounded-full animate-bounce [animation-delay:0.3s]" />
-                    <span className="w-1 h-2 bg-pink-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                  </div>
-                </div>
-
-                {/* Floating Host Speech Bubble */}
-                <div className="absolute top-24 left-4 max-w-[240px] z-20 bg-neutral-900/90 border border-neutral-700/80 rounded-2xl rounded-tl-xs p-2.5 text-xs text-white shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-200">
-                  <p className="text-[11px] font-bold text-pink-400 mb-0.5">Host says:</p>
-                  <p className="leading-snug">{hostSpeechBubble}</p>
-                </div>
-              </div>
-
-              {/* GUEST CO-HOST VIEWPORT */}
-              <div className="relative flex-1 h-full overflow-hidden flex items-center justify-center bg-gradient-to-b from-cyan-950/60 via-neutral-900 to-black">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-cyan-900/25 via-neutral-950/80 to-black pointer-events-none" />
-
-                <div className="relative z-10 flex flex-col items-center gap-2 p-4 text-center">
-                  <div className="relative">
+                {hostStreamToShow && (isHostingLive ? cameraEnabled : effectiveBroadcast?.cameraEnabled !== false) ? (
+                  <video
+                    ref={hostVideoRef}
+                    autoPlay
+                    playsInline
+                    muted={isHostingLive || isMuted}
+                    className={`w-full h-full object-cover transition-all duration-300 ${activeHostFilterPreset.cssClass} ${
+                      (isHostingLive ? facingMode : effectiveBroadcast?.facingMode) === 'user'
+                        ? 'scale-x-[-1]'
+                        : ''
+                    }`}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-2 p-4 text-center">
                     <img
-                      src={currentChannel.guestAvatar}
-                      alt={currentChannel.guestName}
-                      loading="lazy"
-                      decoding="async"
-                      className="w-20 h-20 rounded-full object-cover border-2 border-cyan-400 shadow-xl shadow-cyan-500/25 ring-4 ring-cyan-500/20"
+                      src={displayedHostAvatar}
+                      alt={displayedHostName}
+                      className="w-20 h-20 rounded-full object-cover border-2 border-pink-500 shadow-xl"
                       referrerPolicy="no-referrer"
                     />
-                    <span className="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-cyan-500 text-black flex items-center justify-center text-xs font-bold border-2 border-black">
-                      🎤
-                    </span>
+                    <p className="text-xs font-bold text-white">{displayedHostName}</p>
+                    <p className="text-[11px] text-neutral-400">
+                      {effectiveBroadcast?.cameraEnabled === false ? 'Camera Paused' : 'Connecting video stream...'}
+                    </p>
                   </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">{currentChannel.guestName}</h4>
-                    <p className="text-[11px] text-cyan-400 font-semibold">Co-Host · Live in Studio</p>
-                  </div>
+                )}
 
-                  {/* Guest Audio Equalizer */}
-                  <div className="flex items-center gap-1 mt-1">
-                    <span className="w-1 h-2.5 bg-cyan-400 rounded-full animate-bounce [animation-delay:0.3s]" />
-                    <span className="w-1 h-4 bg-cyan-400 rounded-full animate-bounce [animation-delay:0.1s]" />
-                    <span className="w-1 h-5 bg-cyan-400 rounded-full animate-bounce [animation-delay:0.4s]" />
-                    <span className="w-1 h-3 bg-cyan-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                  </div>
-                </div>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/50 pointer-events-none" />
 
-                {/* Guest Connection Stats */}
-                <div className="absolute bottom-24 right-4 z-20 bg-neutral-900/80 px-2 py-0.5 rounded-full border border-neutral-700/80 text-[10px] text-neutral-400 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>1080p60 · 14ms · Stereo</span>
+                <div className="absolute top-16 left-3 z-20 flex items-center gap-1.5 bg-black/65 backdrop-blur-md px-2.5 py-1 rounded-full border border-pink-500/40">
+                  <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse" />
+                  <span className="text-[11px] font-bold text-white">{displayedHostName}</span>
+                  <span className="text-[9px] uppercase font-black text-pink-300 bg-pink-500/20 px-1.5 py-0.5 rounded-sm">
+                    Host
+                  </span>
+                  {effectiveBroadcast?.micEnabled === false && (
+                    <MicOff className="w-3 h-3 text-rose-400" />
+                  )}
                 </div>
               </div>
 
-              {/* PK Battle Score Bar Overlay */}
-              {isPkBattle && (
-                <div className="absolute top-1/2 left-4 right-4 -translate-y-1/2 z-30 flex flex-col gap-1 pointer-events-none">
-                  <div className="flex items-center justify-between text-xs font-black text-white px-2 drop-shadow-md">
-                    <span className="text-pink-400 font-bold flex items-center gap-1">
-                      <Trophy className="w-3.5 h-3.5" /> {currentChannel.hostName}: {pkScoreHost}%
-                    </span>
-                    <span className="text-[10px] uppercase font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/30">
-                      ⚔️ PK Battle Rush
-                    </span>
-                    <span className="text-cyan-400 font-bold flex items-center gap-1">
-                      {currentChannel.guestName}: {pkScoreGuest}% <Swords className="w-3.5 h-3.5" />
-                    </span>
+              {/* CO-HOST HALF */}
+              <div className="relative flex-1 h-full overflow-hidden flex items-center justify-center bg-gradient-to-b from-cyan-950/60 to-black">
+                {coHostStreamToShow && (isCoHostingLive ? cameraEnabled : coHostInfo.cameraEnabled !== false) ? (
+                  <video
+                    ref={coHostVideoRef}
+                    autoPlay
+                    playsInline
+                    muted={(isCoHostingLive && coHostInfo.peerId === selfPeerId) || isMuted}
+                    className={`w-full h-full object-cover transition-all duration-300 ${
+                      (isCoHostingLive && coHostInfo.peerId === selfPeerId ? facingMode : coHostInfo.facingMode) ===
+                      'user'
+                        ? 'scale-x-[-1]'
+                        : ''
+                    }`}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-2 p-4 text-center">
+                    <img
+                      src={coHostInfo.avatar}
+                      alt={coHostInfo.name}
+                      className="w-20 h-20 rounded-full object-cover border-2 border-cyan-400 shadow-xl"
+                      referrerPolicy="no-referrer"
+                    />
+                    <p className="text-xs font-bold text-white">{coHostInfo.name}</p>
+                    <p className="text-[11px] text-cyan-300">Connecting Co-Host WebRTC feed...</p>
                   </div>
+                )}
 
-                  <div className="w-full h-3 bg-neutral-900 rounded-full overflow-hidden flex border border-neutral-700/80 shadow-lg">
-                    <div
-                      style={{ width: `${pkScoreHost}%` }}
-                      className="h-full bg-gradient-to-r from-pink-600 to-rose-500 transition-all duration-500"
-                    />
-                    <div
-                      style={{ width: `${pkScoreGuest}%` }}
-                      className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500"
-                    />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/50 pointer-events-none" />
+
+                <div className="absolute top-16 right-3 z-20 flex items-center gap-1.5 bg-black/65 backdrop-blur-md px-2.5 py-1 rounded-full border border-cyan-500/40">
+                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                  <span className="text-[11px] font-bold text-white">{coHostInfo.name}</span>
+                  <span className="text-[9px] uppercase font-black text-cyan-300 bg-cyan-500/20 px-1.5 py-0.5 rounded-sm">
+                    Co-Host
+                  </span>
+                  {coHostInfo.micEnabled === false && <MicOff className="w-3 h-3 text-rose-400" />}
+                </div>
+              </div>
+            </div>
+          ) : effectiveBroadcast?.isLive ? (
+            /* FULL-SCREEN REAL LIVE BROADCAST (HOST CAMERA OR VIEWER RECEIVING WEBRTC) */
+            <div className="relative w-full h-full overflow-hidden flex items-center justify-center bg-black">
+              {hostStreamToShow && (isHostingLive ? cameraEnabled : effectiveBroadcast.cameraEnabled !== false) ? (
+                <video
+                  ref={hostVideoRef}
+                  autoPlay
+                  playsInline
+                  muted={isHostingLive || isMuted}
+                  className={`w-full h-full object-cover transition-all duration-300 ${activeHostFilterPreset.cssClass} ${
+                    (isHostingLive ? facingMode : effectiveBroadcast.facingMode) === 'user'
+                      ? 'scale-x-[-1]'
+                      : ''
+                  }`}
+                />
+              ) : (
+                <div className="relative z-10 flex flex-col items-center gap-3 p-6 text-center">
+                  <img
+                    src={displayedHostAvatar}
+                    alt={displayedHostName}
+                    className="w-24 h-24 rounded-full object-cover border-4 border-pink-500 shadow-2xl"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div>
+                    <p className="text-base font-bold text-white">{displayedHostName}</p>
+                    <p className="text-xs text-neutral-400 mt-1">
+                      {effectiveBroadcast.cameraEnabled === false
+                        ? 'Host paused their camera (audio still live)'
+                        : 'Connecting real-time WebRTC video stream...'}
+                    </p>
                   </div>
                 </div>
               )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/55 pointer-events-none" />
             </div>
           ) : (
-            /* SOLO FULL SCREEN BROADCAST VIEW */
+            /* FEATURED LIVE STAGE WHEN NO CREATOR IS CURRENTLY BROADCASTING */
             <div className="relative w-full h-full overflow-hidden flex items-center justify-center">
               <video
-                ref={videoRef}
-                src={currentChannel.videoUrl}
+                ref={stageFallbackVideoRef}
+                src={selectedWatchRoom.videoUrl}
                 loop
                 autoPlay
                 playsInline
-                className={`w-full h-full object-cover opacity-90 transition-all duration-300 ${getCameraFilterStyle()}`}
+                muted={isMuted}
+                className="w-full h-full object-cover opacity-85"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/60 pointer-events-none" />
-
-              {/* Floating Host Speech Bubble in Solo Mode */}
-              <div className="absolute top-20 left-4 max-w-[260px] z-20 bg-neutral-900/90 border border-pink-500/30 rounded-2xl rounded-tl-xs p-3 text-xs text-white shadow-xl backdrop-blur-md animate-in fade-in duration-200">
-                <p className="text-[11px] font-bold text-pink-400 mb-0.5 flex items-center gap-1">
-                  <span>{currentChannel.hostName}</span>
-                  <CheckCircle className="w-3 h-3 text-pink-400" />
-                </p>
-                <p className="leading-snug">{hostSpeechBubble}</p>
-              </div>
             </div>
           )}
         </div>
 
         {/* ========================================================= */}
-        {/* TOP OVERLAY BAR: Host Card, Live Badge, Viewers, Diamonds */}
+        {/* TOP OVERLAY BAR: Host Pill, Stream Title, LIVE & Viewers  */}
         {/* ========================================================= */}
-        <div className="relative z-30 p-3 sm:p-4 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex items-center justify-between gap-2 pointer-events-auto">
-          {/* Host Profile Info Pill */}
-          <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md p-1 pr-3 rounded-full border border-white/15">
-            <img
-              src={currentChannel.hostAvatar}
-              alt={currentChannel.hostName}
-              loading="lazy"
-              decoding="async"
-              className="w-9 h-9 rounded-full object-cover border-2 border-pink-500 shrink-0"
-              referrerPolicy="no-referrer"
-            />
-            <div className="min-w-0">
-              <div className="flex items-center gap-1">
-                <p className="text-xs font-bold text-white truncate max-w-[110px] sm:max-w-[150px]">
-                  {currentChannel.hostName}
-                </p>
-                <CheckCircle className="w-3 h-3 text-pink-400 shrink-0" />
+        <div className="relative z-20 p-3 sm:p-4 bg-gradient-to-b from-black/85 via-black/40 to-transparent flex flex-col gap-2 pointer-events-auto">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            {/* Host Card */}
+            <div className="flex items-center gap-2 bg-black/65 backdrop-blur-md p-1 pr-3 rounded-full border border-white/15">
+              <img
+                src={displayedHostAvatar}
+                alt={displayedHostName}
+                className="w-9 h-9 rounded-full object-cover border-2 border-pink-500 shrink-0"
+                referrerPolicy="no-referrer"
+              />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1">
+                  <p className="text-xs font-bold text-white truncate max-w-[110px] sm:max-w-[170px]">
+                    {displayedHostName}
+                  </p>
+                  <CheckCircle className="w-3 h-3 text-pink-400 shrink-0" />
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-neutral-300">
+                  <span className="text-amber-400 font-bold">💎 {totalDiamonds.toLocaleString()}</span>
+                  <span>·</span>
+                  <span className="text-neutral-400 truncate">@{displayedHostHandle}</span>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-neutral-300">
-                <span className="text-amber-400 font-bold flex items-center gap-0.5">
-                  💎 {diamondsCount.toLocaleString()}
-                </span>
-                <span>·</span>
-                <span className="text-neutral-400">@{currentChannel.hostHandle}</span>
-              </div>
+
+              {!isHostingLive && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsFollowingHost(!isFollowingHost);
+                    onShowToast(
+                      isFollowingHost ? 'Unfollowed host' : `Following ${displayedHostName}!`
+                    );
+                  }}
+                  className={`ml-1 px-2.5 py-1 rounded-full text-xs font-bold transition-all ${
+                    isFollowingHost
+                      ? 'bg-neutral-800 text-neutral-300 border border-neutral-700'
+                      : 'bg-pink-600 hover:bg-pink-500 text-white shadow-md shadow-pink-600/30'
+                  }`}
+                >
+                  {isFollowingHost ? 'Following' : '+ Follow'}
+                </button>
+              )}
             </div>
 
-            {/* Follow Host Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setIsFollowingHost(!isFollowingHost);
-                onShowToast(isFollowingHost ? 'Unfollowed host' : `Followed ${currentChannel.hostName}!`);
-              }}
-              className={`ml-1 px-2.5 py-1 rounded-full text-xs font-bold transition-all ${
-                isFollowingHost
-                  ? 'bg-neutral-800 text-neutral-300 border border-neutral-700'
-                  : 'bg-pink-600 hover:bg-pink-500 text-white shadow-md shadow-pink-600/30'
-              }`}
-            >
-              {isFollowingHost ? 'Following' : '+ Follow'}
-            </button>
+            {/* Right Status Badges: Real LIVE Timer + Viewer Count + Quality */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {effectiveBroadcast?.isLive && (
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/65 border border-white/15 text-[11px] font-semibold text-emerald-300 backdrop-blur-md">
+                  <Wifi className="w-3 h-3" />
+                  <span>{effectiveBroadcast.resolutionLabel}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-600/25 border border-rose-500/45 text-white backdrop-blur-md shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                <span className="text-xs font-black uppercase tracking-wider text-rose-300">
+                  {effectiveBroadcast?.isLive ? 'LIVE' : 'STAGE'}
+                </span>
+                {isHostingLive && (
+                  <>
+                    <span className="text-neutral-500">|</span>
+                    <span className="text-xs font-bold tabular-nums text-white">
+                      {formatDuration(elapsedSeconds)}
+                    </span>
+                  </>
+                )}
+                <span className="text-neutral-500">|</span>
+                <Users className="w-3.5 h-3.5 text-neutral-200" />
+                <span className="text-xs font-bold tabular-nums" title="Live connected users">
+                  {activeViewerCount}
+                </span>
+              </div>
+            </div>
           </div>
 
-          {/* Right Top Status Controls */}
-          <div className="flex items-center gap-2">
-            {/* Live Viewer Counter */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-600/20 border border-red-500/40 text-white backdrop-blur-md shadow-sm">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-              <span className="text-xs font-bold uppercase tracking-wider text-red-400">LIVE</span>
-              <span className="text-neutral-500">|</span>
-              <Users className="w-3.5 h-3.5 text-neutral-300" />
-              <span className="text-xs font-bold tabular-nums">
-                {viewersCount.toLocaleString()}
+          {/* Stream Title + Sync Channel Status Pill */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="inline-flex items-center gap-2 bg-black/60 border border-white/10 px-3 py-1 rounded-full backdrop-blur-md text-xs text-neutral-100 max-w-full">
+              <Sparkles className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+              <span className="truncate font-semibold">{displayedTitle}</span>
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 bg-black/60 border border-white/10 px-2.5 py-1 rounded-full text-[10px] font-semibold text-neutral-300 backdrop-blur-md">
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  connectionStatus === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
+                }`}
+              />
+              <span>
+                {transportMode === 'supabase' ? 'Supabase Realtime' : 'Live Room Sync'} ·{' '}
+                {connectionStatus === 'connected' ? 'Connected' : 'Syncing'}
               </span>
             </div>
-
-            {/* Split Screen Mode Toggle */}
-            {currentChannel.guestName && (
-              <button
-                type="button"
-                onClick={() => setIsSplitScreen(!isSplitScreen)}
-                className={`p-2 rounded-full border transition-colors backdrop-blur-md ${
-                  isSplitScreen
-                    ? 'bg-pink-500/20 text-pink-400 border-pink-500/40'
-                    : 'bg-black/60 text-neutral-300 border-white/15'
-                }`}
-                title={isSplitScreen ? 'Switch to Solo mode' : 'Switch to Split Screen'}
-              >
-                <Users className="w-4 h-4" />
-              </button>
-            )}
           </div>
-        </div>
 
-        {/* ========================================================= */}
-        {/* SIMULATED HOST ACTION NOTIFICATION BANNER */}
-        {/* ========================================================= */}
-        <div className="relative z-30 px-4 pointer-events-none">
-          <div className="inline-flex items-center gap-2 bg-neutral-900/80 border border-neutral-700/80 px-3 py-1 rounded-full backdrop-blur-md text-xs text-neutral-200 shadow-md">
-            <span className="w-2 h-2 rounded-full bg-pink-400 animate-pulse" />
-            <span className="font-semibold">{activeHostAction}</span>
-          </div>
+          {/* ========================================================= */}
+          {/* INCOMING CO-HOST REQUESTS BANNER (VISIBLE TO HOST) */}
+          {/* ========================================================= */}
+          {isHostingLive && coHostRequests.length > 0 && (
+            <div className="mt-1 space-y-1.5">
+              {coHostRequests.map((req) => (
+                <div
+                  key={req.id}
+                  className="bg-neutral-900/95 border border-cyan-500/50 rounded-2xl p-2.5 flex items-center justify-between gap-3 shadow-xl backdrop-blur-md animate-in slide-in-from-top-3 duration-200"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <img
+                      src={req.avatar}
+                      alt={req.name}
+                      className="w-9 h-9 rounded-full object-cover border border-cyan-400 shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate">
+                        {req.name} wants to Co-Host
+                      </p>
+                      <p className="text-[11px] text-cyan-300 truncate">
+                        @{req.handle} · Split-Screen Dual Camera
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleRespondCoHostRequest(req, true)}
+                      className="min-h-[36px] px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black transition-all active:scale-95 flex items-center gap-1"
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      <span>Accept</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRespondCoHostRequest(req, false)}
+                      className="min-h-[36px] px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold transition-all"
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ========================================================= */}
@@ -707,60 +1471,152 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   <p className="text-sm font-black tracking-tight">{activeGiftBanner.giftName}!</p>
                 </div>
               </div>
-              <div className="text-right">
-                <span className="text-xs font-black text-amber-300 drop-shadow-md">
-                  +{activeGiftBanner.diamonds} 💎
-                </span>
-              </div>
+              <span className="text-xs font-black text-amber-200 drop-shadow-md">
+                +{activeGiftBanner.diamonds} 💎
+              </span>
             </div>
           </div>
         )}
 
         {/* ========================================================= */}
-        {/* FLOATING HEARTS PARTICLES SYSTEM */}
+        {/* FLOATING REACTIONS (HEART / FIRE / WAVE) */}
         {/* ========================================================= */}
-        <div className="absolute bottom-20 right-4 w-28 h-80 pointer-events-none overflow-hidden z-30">
-          {floatingHearts.map((heart) => (
+        <div className="absolute bottom-28 right-4 w-28 h-80 pointer-events-none overflow-hidden z-30">
+          {floatingReactions.map((item) => (
             <div
-              key={heart.id}
+              key={item.id}
               style={{
-                left: `calc(50% + ${heart.x}px)`,
+                left: `calc(50% + ${item.x}px)`,
                 bottom: '12px',
-                color: heart.color,
-                fontSize: `${heart.size}px`,
+                color: item.color,
+                fontSize: `${item.size}px`,
               }}
               className="absolute animate-float-note-1 font-bold filter drop-shadow-md"
             >
-              ♥
+              {item.emoji}
             </div>
           ))}
         </div>
 
         {/* ========================================================= */}
-        {/* BOTTOM SECTION: SCROLLING COMMENTS (LEFT) + GIFTS (RIGHT) */}
+        {/* BOTTOM OVERLAY: REAL-TIME CHAT + STUDIO/CO-HOST CONTROLS  */}
         {/* ========================================================= */}
         <div className="relative z-30 p-3 sm:p-4 bg-gradient-to-t from-black via-black/85 to-transparent flex flex-col justify-end pointer-events-auto">
-          
-          <div className="flex flex-col sm:flex-row items-end justify-between gap-4 mb-3">
-            {/* ===================================================== */}
-            {/* SIMULATED SCROLLING COMMENTS (PINNED BOTTOM LEFT) */}
-            {/* ===================================================== */}
+          {/* Active Host / Co-Host Camera & Audio Controls Toolbar */}
+          {(isHostingLive || isCoHostingLive) && (
+            <div className="mb-2.5 flex flex-col gap-2">
+              {showFilterStrip && isHostingLive && (
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                  {LIVE_FILTERS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => handleSelectFilter(preset.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition-all ${
+                        selectedFilter === preset.id
+                          ? 'bg-pink-600 text-white border-pink-400 shadow-md'
+                          : 'bg-neutral-900/90 text-neutral-300 border-neutral-700 hover:bg-neutral-800'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-2 flex-wrap bg-neutral-900/85 border border-neutral-800 rounded-2xl p-2 backdrop-blur-md">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleToggleMic}
+                    className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                      micEnabled
+                        ? 'bg-neutral-800 text-white border-neutral-700 hover:bg-neutral-700'
+                        : 'bg-rose-600/25 text-rose-300 border-rose-500/50'
+                    }`}
+                  >
+                    {micEnabled ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+                    <span>{micEnabled ? 'Mic On' : 'Muted'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleToggleCamera}
+                    className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                      cameraEnabled
+                        ? 'bg-neutral-800 text-white border-neutral-700 hover:bg-neutral-700'
+                        : 'bg-rose-600/25 text-rose-300 border-rose-500/50'
+                    }`}
+                  >
+                    {cameraEnabled ? (
+                      <Camera className="w-3.5 h-3.5" />
+                    ) : (
+                      <CameraOff className="w-3.5 h-3.5" />
+                    )}
+                    <span>{cameraEnabled ? 'Cam On' : 'Cam Off'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSwapCamera}
+                    className="min-h-[38px] px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 text-xs font-bold flex items-center gap-1.5 transition-all"
+                    title="Swap Front / Back Camera"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Swap Cam</span>
+                  </button>
+
+                  {isHostingLive && (
+                    <button
+                      type="button"
+                      onClick={() => setShowFilterStrip((s) => !s)}
+                      className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                        showFilterStrip
+                          ? 'bg-purple-600/30 text-purple-200 border-purple-500/50'
+                          : 'bg-neutral-800 text-neutral-200 border-neutral-700 hover:bg-neutral-700'
+                      }`}
+                    >
+                      <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+                      <span>{activeHostFilterPreset.label}</span>
+                    </button>
+                  )}
+                </div>
+
+                {(isCoHostingLive || (isHostingLive && coHostInfo)) && (
+                  <button
+                    type="button"
+                    onClick={handleLeaveOrRemoveCoHost}
+                    className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-600/25 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1.5 transition-all"
+                  >
+                    <UserMinus className="w-3.5 h-3.5" />
+                    <span>{isCoHostingLive ? 'Leave Split-Screen' : 'End Co-Host'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Chat Feed + Viewer Co-Host Request & Reaction Shortcuts */}
+          <div className="flex flex-col sm:flex-row items-end justify-between gap-3 mb-2.5">
+            {/* Live Chat Messages */}
             <div className="w-full sm:max-w-md">
               <div
                 ref={chatScrollRef}
-                className="max-h-44 sm:max-h-52 overflow-y-auto space-y-1.5 no-scrollbar text-xs pr-2"
+                className="max-h-40 sm:max-h-48 overflow-y-auto space-y-1.5 no-scrollbar text-xs pr-2"
               >
                 {chatMessages.map((msg) => (
                   <div
                     key={msg.id}
                     className={`inline-flex items-start gap-1.5 p-1.5 rounded-xl backdrop-blur-xs max-w-[95%] shadow-xs ${
                       msg.isSystem
-                        ? 'bg-neutral-900/80 border border-neutral-700/80 text-neutral-300 text-[10px]'
+                        ? 'bg-neutral-900/85 border border-neutral-700/80 text-neutral-300 text-[11px]'
                         : msg.isGift
                         ? 'bg-amber-500/20 border border-amber-500/40 text-amber-200'
                         : msg.isHost
-                        ? 'bg-pink-500/20 border border-pink-500/40 text-pink-200'
-                        : 'bg-black/50 border border-white/10 text-neutral-200'
+                        ? 'bg-pink-500/25 border border-pink-500/40 text-pink-100'
+                        : msg.isCoHost
+                        ? 'bg-cyan-500/20 border border-cyan-500/40 text-cyan-100'
+                        : 'bg-black/55 border border-white/10 text-neutral-100'
                     }`}
                   >
                     {!msg.isSystem && (
@@ -774,131 +1630,131 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                       />
                     )}
                     <div className="leading-snug">
-                      <span className="font-bold text-white text-[11px] mr-1.5">
-                        {msg.user}
-                      </span>
+                      <span className="font-bold text-white text-[11px] mr-1.5">{msg.user}</span>
                       {msg.badge && (
                         <span
-                          className={`text-[9px] uppercase font-bold px-1 py-0.2 rounded-xs mr-1.5 ${
-                            msg.badge === 'Admin' || msg.badge === 'Host'
+                          className={`text-[9px] uppercase font-black px-1.5 py-0.5 rounded-xs mr-1.5 ${
+                            msg.badge === 'Host' || msg.badge === 'Admin'
                               ? 'bg-pink-500 text-white'
-                              : msg.badge === 'VIP'
-                              ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40'
-                              : 'bg-cyan-500/20 text-cyan-300'
+                              : msg.badge === 'Co-Host'
+                              ? 'bg-cyan-500 text-black'
+                              : 'bg-amber-500/30 text-amber-200 border border-amber-500/40'
                           }`}
                         >
                           {msg.badge}
                         </span>
                       )}
-                      <span className="text-[11px] text-neutral-300 break-words">
-                        {msg.text}
-                      </span>
+                      <span className="text-[11px] text-neutral-200 break-words">{msg.text}</span>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* ===================================================== */}
-            {/* FLOATING QUICK HOST ACTION SHORTCUTS (CENTER/RIGHT) */}
-            {/* ===================================================== */}
-            <div className="flex items-center gap-1.5 bg-neutral-900/80 backdrop-blur-md p-1.5 rounded-2xl border border-neutral-800 text-[11px]">
+            {/* Right Quick Action Cluster: Request to Join + Heart/Fire/Wave Reactions */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {!isHostingLive && !isCoHostingLive && (
+                <button
+                  type="button"
+                  onClick={handleRequestJoinCoHost}
+                  disabled={!effectiveBroadcast?.isLive || Boolean(effectiveBroadcast?.coHost)}
+                  className={`min-h-[40px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                    hasPendingCoHostRequest
+                      ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/50'
+                      : effectiveBroadcast?.isLive && !effectiveBroadcast?.coHost
+                      ? 'bg-cyan-500 hover:bg-cyan-400 text-black border-cyan-400 shadow-lg shadow-cyan-500/25'
+                      : 'bg-neutral-900/80 text-neutral-400 border-neutral-800 opacity-70 cursor-not-allowed'
+                  }`}
+                  title={
+                    effectiveBroadcast?.isLive
+                      ? 'Request to join host split-screen'
+                      : 'Available when a host is broadcasting live'
+                  }
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>
+                    {effectiveBroadcast?.coHost
+                      ? 'Co-Host Busy'
+                      : hasPendingCoHostRequest
+                      ? 'Requested...'
+                      : 'Request to Join'}
+                  </span>
+                </button>
+              )}
+
               <button
                 type="button"
-                onClick={() => handleTriggerHostAction('Host waved back! 👋', 'Big love to the chat! Thanks for watching!')}
-                className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg text-neutral-200 font-semibold transition-colors"
-                title="Simulate Host Wave"
+                onClick={() => handleSendReaction('fire')}
+                className="min-h-[40px] min-w-[40px] px-2.5 rounded-xl bg-neutral-900/90 hover:bg-orange-500/25 border border-neutral-700/80 hover:border-orange-500/50 text-sm flex items-center justify-center active:scale-125 transition-all"
+                title="Send Fire Reaction"
               >
-                👋 Wave
+                <Flame className="w-4 h-4 text-orange-400" />
               </button>
+
               <button
                 type="button"
-                onClick={() => handleTriggerHostAction('Host gave a shoutout! 📣', 'Shoutout to everyone rocking with Jatt VibeReels!')}
-                className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg text-neutral-200 font-semibold transition-colors"
-                title="Simulate Host Shoutout"
+                onClick={() => handleSendReaction('wave')}
+                className="min-h-[40px] min-w-[40px] px-2.5 rounded-xl bg-neutral-900/90 hover:bg-sky-500/25 border border-neutral-700/80 hover:border-sky-500/50 text-sm flex items-center justify-center active:scale-125 transition-all"
+                title="Send Wave Reaction"
               >
-                📣 Shoutout
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const filters: Array<'neon' | 'studio' | 'gold' | 'cyber'> = ['neon', 'studio', 'gold', 'cyber'];
-                  const nextFilter = filters[(filters.indexOf(cameraFilter) + 1) % filters.length];
-                  setCameraFilter(nextFilter);
-                  handleTriggerHostAction(`Host changed camera filter to ${nextFilter.toUpperCase()} ✨`, 'Camera filter updated!');
-                }}
-                className="px-2 py-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg font-semibold border border-purple-500/30 transition-colors flex items-center gap-1"
-                title="Cycle Host Camera Filter"
-              >
-                <Wand2 className="w-3 h-3 text-purple-400" />
-                <span className="capitalize">{cameraFilter}</span>
+                <Hand className="w-4 h-4 text-sky-400" />
               </button>
             </div>
           </div>
 
-          {/* ========================================================= */}
-          {/* BOTTOM INTERACTIVE INPUT BAR & FLOATING GIFT BUTTONS */}
-          {/* ========================================================= */}
+          {/* Bottom Chat Form + Gift + Heart Reaction */}
           <div className="flex items-center gap-2">
-            {/* Comment Form */}
             <form onSubmit={handleSendComment} className="flex-1 flex items-center gap-1.5">
               <input
                 type="text"
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                onChange={(e) => setInputText(sanitizeInputLive(e.target.value, 280))}
                 placeholder="Say something nice in chat..."
-                className="flex-1 bg-neutral-900/90 text-xs text-white placeholder-neutral-500 px-4 py-2.5 rounded-full border border-neutral-700/80 focus:outline-hidden focus:border-pink-500 transition-colors shadow-inner"
+                className="flex-1 min-h-[44px] bg-neutral-900/90 text-xs text-white placeholder-neutral-500 px-4 py-2.5 rounded-full border border-neutral-700/80 focus:outline-hidden focus:border-pink-500 transition-colors shadow-inner"
               />
               <button
                 type="submit"
                 disabled={!inputText.trim()}
-                className="w-9 h-9 rounded-full bg-pink-600 disabled:opacity-40 text-white flex items-center justify-center shrink-0 active:scale-95 transition-all shadow-md shadow-pink-600/30"
+                className="w-11 h-11 rounded-full bg-pink-600 disabled:opacity-40 text-white flex items-center justify-center shrink-0 active:scale-95 transition-all shadow-md shadow-pink-600/30"
                 aria-label="Send comment"
               >
                 <Send className="w-4 h-4" />
               </button>
             </form>
 
-            {/* Virtual Gift Tray Trigger */}
             <button
               type="button"
-              onClick={() => setIsGiftTrayOpen(!isGiftTrayOpen)}
-              className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white flex items-center justify-center shadow-lg shadow-amber-500/25 active:scale-95 transition-transform shrink-0"
-              title="Open Virtual Gifts Panel"
+              onClick={() => setIsGiftTrayOpen((o) => !o)}
+              className="w-11 h-11 rounded-full bg-gradient-to-tr from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white flex items-center justify-center shadow-lg shadow-amber-500/25 active:scale-95 transition-transform shrink-0"
+              title="Open Virtual Gifts"
             >
               <Gift className="w-5 h-5" />
             </button>
 
-            {/* Quick Floating Heart Reaction Button */}
             <button
               type="button"
-              onClick={() => {
-                soundEngine.playLikeSound();
-                spawnFloatingHeart();
-              }}
-              className="w-10 h-10 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-600/30 active:scale-125 transition-transform shrink-0"
+              onClick={() => handleSendReaction('heart')}
+              className="w-11 h-11 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-600/30 active:scale-125 transition-transform shrink-0"
               title="Send Heart Reaction"
             >
               <Heart className="w-5 h-5 fill-white" />
             </button>
           </div>
 
-          {/* ========================================================= */}
-          {/* FLOATING GIFTS PANEL TRAY */}
-          {/* ========================================================= */}
+          {/* Virtual Gifts Tray */}
           {isGiftTrayOpen && (
             <div className="mt-3 bg-neutral-900/95 border border-neutral-800 rounded-2xl p-3 shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-4 duration-200">
               <div className="flex items-center justify-between pb-2 border-b border-neutral-800">
                 <div className="flex items-center gap-2">
                   <Gift className="w-4 h-4 text-amber-400" />
                   <span className="text-xs font-bold text-white uppercase tracking-wider">
-                    Virtual Gifts Panel
+                    Send Live Gift
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsGiftTrayOpen(false)}
-                  className="text-neutral-400 hover:text-white text-xs font-bold"
+                  className="text-neutral-400 hover:text-white text-xs font-bold px-2 py-1"
                 >
                   Close
                 </button>
@@ -912,15 +1768,11 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                     onClick={() => handleSendGift(g)}
                     className="p-2.5 bg-neutral-950 hover:bg-neutral-800/80 rounded-xl border border-neutral-800 flex flex-col items-center justify-center gap-1 group active:scale-95 transition-all hover:border-pink-500/50"
                   >
-                    <span className="text-2xl group-hover:scale-110 transition-transform">
-                      {g.icon}
-                    </span>
+                    <span className="text-2xl group-hover:scale-110 transition-transform">{g.icon}</span>
                     <span className="text-[11px] font-bold text-white truncate max-w-full">
                       {g.name}
                     </span>
-                    <span className="text-[10px] text-amber-400 font-semibold flex items-center gap-0.5">
-                      💎 {g.diamonds}
-                    </span>
+                    <span className="text-[10px] text-amber-400 font-semibold">💎 {g.diamonds}</span>
                   </button>
                 ))}
               </div>
@@ -928,6 +1780,249 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* ========================================================= */}
+      {/* "GO LIVE" PRE-BROADCAST CREATOR STUDIO MODAL */}
+      {/* ========================================================= */}
+      {isSetupModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="px-5 py-4 border-b border-neutral-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                <h2 className="text-base font-black text-white tracking-tight">
+                  Go Live Studio Setup
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelSetup}
+                className="w-9 h-9 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 flex items-center justify-center"
+                aria-label="Close setup"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 space-y-4">
+              {/* Camera Preview Box */}
+              <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-black border border-neutral-800 flex items-center justify-center">
+                {localStream && cameraEnabled ? (
+                  <video
+                    ref={setupPreviewVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${getFilterPreset(selectedFilter).cssClass} ${
+                      facingMode === 'user' ? 'scale-x-[-1]' : ''
+                    }`}
+                  />
+                ) : (
+                  <div className="p-6 text-center space-y-3">
+                    <Camera className="w-10 h-10 text-neutral-500 mx-auto" />
+                    <p className="text-xs text-neutral-300 font-medium">
+                      {isRequestingCamera
+                        ? 'Requesting camera & microphone permission...'
+                        : cameraError || 'Camera preview is paused'}
+                    </p>
+                    {cameraError && (
+                      <button
+                        type="button"
+                        onClick={() => requestDevicePreview(facingMode)}
+                        className="px-4 py-2 rounded-xl bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold"
+                      >
+                        Retry Camera Access
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {localStream && (
+                  <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-full bg-black/70 border border-white/15 text-[11px] font-bold text-emerald-300 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>{resolutionLabel}</span>
+                  </div>
+                )}
+
+                {/* Quick Preview Controls */}
+                <div className="absolute bottom-2.5 right-2.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleToggleMic}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center border backdrop-blur-md ${
+                      micEnabled
+                        ? 'bg-black/70 text-white border-white/20'
+                        : 'bg-rose-600 text-white border-rose-400'
+                    }`}
+                    title={micEnabled ? 'Mute Mic' : 'Unmute Mic'}
+                  >
+                    {micEnabled ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleCamera}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center border backdrop-blur-md ${
+                      cameraEnabled
+                        ? 'bg-black/70 text-white border-white/20'
+                        : 'bg-rose-600 text-white border-rose-400'
+                    }`}
+                    title={cameraEnabled ? 'Turn Camera Off' : 'Turn Camera On'}
+                  >
+                    {cameraEnabled ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSwapCamera}
+                    className="w-10 h-10 rounded-full bg-black/70 text-white border border-white/20 flex items-center justify-center backdrop-blur-md"
+                    title="Switch Front / Back Camera"
+                  >
+                    <RefreshCw className="w-4 h-4 text-cyan-400" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Stream Title Input */}
+              <div>
+                <label className="block text-xs font-bold text-neutral-300 mb-1.5">
+                  Live Stream Title
+                </label>
+                <input
+                  type="text"
+                  value={streamTitleInput}
+                  onChange={(e) => setStreamTitleInput(sanitizeInputLive(e.target.value, 120))}
+                  placeholder="What are you streaming today?"
+                  className="w-full min-h-[44px] bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-neutral-500 focus:outline-hidden focus:border-pink-500"
+                />
+              </div>
+
+              {/* Front / Back & Real-Time Beauty/Color Filter Picker */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-bold text-neutral-300 flex items-center gap-1.5">
+                    <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+                    Live Beauty & Color Filter
+                  </span>
+                  <span className="text-[11px] text-neutral-400">
+                    Camera: {facingMode === 'user' ? 'Front' : 'Back'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {LIVE_FILTERS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => setSelectedFilter(preset.id)}
+                      className={`min-h-[38px] px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                        selectedFilter === preset.id
+                          ? 'bg-pink-600/25 text-white border-pink-500 shadow-sm'
+                          : 'bg-neutral-950 text-neutral-400 border-neutral-800 hover:text-white'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Start Broadcast CTA */}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleCancelSetup}
+                  className="min-h-[44px] px-4 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStartBroadcast}
+                  disabled={!localStream || isRequestingCamera}
+                  className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 disabled:opacity-45 text-white text-sm font-black shadow-lg shadow-rose-600/30 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+                >
+                  <Radio className="w-4 h-4" />
+                  <span>Start Live Broadcast</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* END LIVE SUMMARY MODAL */}
+      {/* ========================================================= */}
+      {liveSummary && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-center space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-rose-600 to-pink-500 text-white flex items-center justify-center mx-auto shadow-xl shadow-rose-600/30">
+              <Radio className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h3 className="text-xl font-black text-white tracking-tight">Live Broadcast Summary</h3>
+              <p className="text-xs text-neutral-400 mt-1 truncate">{liveSummary.title}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
+              <div className="p-2.5 rounded-xl bg-neutral-900/70 border border-neutral-800/80">
+                <p className="text-[10px] uppercase font-bold text-neutral-400 flex items-center justify-center gap-1">
+                  <Clock className="w-3 h-3 text-pink-400" /> Duration
+                </p>
+                <p className="text-lg font-black text-white tabular-nums mt-0.5">
+                  {formatDuration(liveSummary.durationSeconds)}
+                </p>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-neutral-900/70 border border-neutral-800/80">
+                <p className="text-[10px] uppercase font-bold text-neutral-400 flex items-center justify-center gap-1">
+                  <Eye className="w-3 h-3 text-cyan-400" /> Peak Viewers
+                </p>
+                <p className="text-lg font-black text-cyan-300 tabular-nums mt-0.5">
+                  {liveSummary.peakViewers.toLocaleString()}
+                </p>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-neutral-900/70 border border-neutral-800/80">
+                <p className="text-[10px] uppercase font-bold text-neutral-400 flex items-center justify-center gap-1">
+                  <Heart className="w-3 h-3 text-rose-400" /> Total Likes
+                </p>
+                <p className="text-lg font-black text-rose-400 tabular-nums mt-0.5">
+                  {liveSummary.totalLikes.toLocaleString()}
+                </p>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-neutral-900/70 border border-neutral-800/80">
+                <p className="text-[10px] uppercase font-bold text-neutral-400 flex items-center justify-center gap-1">
+                  <Gem className="w-3 h-3 text-amber-400" /> Gifts & Diamonds
+                </p>
+                <p className="text-lg font-black text-amber-300 tabular-nums mt-0.5">
+                  {liveSummary.totalGifts} ({liveSummary.totalDiamonds.toLocaleString()} 💎)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setLiveSummary(null)}
+                className="flex-1 min-h-[44px] py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-xs rounded-xl transition-all"
+              >
+                Stay in Live Hub
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLiveSummary(null);
+                  onSelectTab('foryou');
+                }}
+                className="flex-1 min-h-[44px] py-3 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-pink-600/25 transition-all"
+              >
+                Back to Reels Feed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

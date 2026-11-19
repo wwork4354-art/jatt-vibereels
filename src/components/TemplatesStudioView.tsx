@@ -37,6 +37,7 @@ import {
   VIDEO_TEMPLATES,
   TEMPLATE_CATEGORIES,
   TEMPLATE_COLOR_GRADES,
+  formatTemplateDuration,
   TemplateCategory,
   TemplateEffectTransition,
   VideoTemplateDef,
@@ -885,10 +886,11 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
 
     if (loaded.length > 0) {
       setClips((prev) => [...prev, ...loaded]);
+      setIsPreviewPlaying(true);
+      setPreviewProgressPct(0);
+      startPreviewAudio(selectedAudioTrack, customAudioUrl, isAudioMuted);
       onShowToast(
-        `Applied ${tpl.name} (${tpl.transitions.map(formatTransitionLabel).join(', ')}) to ${loaded.length} ${
-          loaded.length === 1 ? 'clip' : 'clips'
-        }!`
+        `Auto-synced ${loaded.length} clip${loaded.length === 1 ? '' : 's'} with "${tpl.name}" (${tpl.requiredClips} Clips • ${formatTemplateDuration(tpl.durationSec)})!`
       );
     }
   };
@@ -1043,7 +1045,7 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
 
     const totalSec = Math.max(
       4,
-      Math.min(14, Math.round(activeTemplate.durationSec / speedMultiplier))
+      Math.min(25, Math.round(activeTemplate.durationSec / speedMultiplier))
     );
 
     // Prepare video clips from start
@@ -1487,8 +1489,9 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                   </h2>
                 </div>
                 <p className="text-[11px] text-neutral-400 truncate tabular-nums">
-                  {activeTemplate.durationSec}s · {activeTemplate.bpm} BPM · {clips.length}/
-                  {activeTemplate.maxClips} Clips · {selectedColorGrade.name}
+                  {activeTemplate.requiredClips} Clips • {formatTemplateDuration(activeTemplate.durationSec)} ·{' '}
+                  {activeTemplate.bpm} BPM · {clips.length}/{activeTemplate.requiredClips} Selected ·{' '}
+                  {selectedColorGrade.name}
                 </p>
               </div>
             </div>
@@ -1564,15 +1567,15 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                     )}
                   </button>
 
-                  {/* Quick Pick 1-5 Clips Overlay CTA when empty */}
+                  {/* Quick Pick Clips Overlay CTA when empty */}
                   {clips.length === 0 && (
                     <button
                       type="button"
                       onClick={() => mediaPickerRef.current?.click()}
-                      className="absolute bottom-4 right-3 px-3.5 min-h-[44px] rounded-xl bg-gradient-to-r from-pink-600 to-amber-500 text-white text-xs font-black flex items-center gap-1.5 shadow-xl cursor-pointer active:scale-95"
+                      className="absolute bottom-4 right-3 px-3.5 min-h-[44px] rounded-xl bg-white hover:bg-neutral-100 text-neutral-950 text-xs font-black flex items-center gap-1.5 shadow-xl cursor-pointer active:scale-95"
                     >
-                      <Plus className="w-4 h-4" />
-                      <span>Select 1–5 Clips</span>
+                      <Plus className="w-4 h-4 text-pink-600" />
+                      <span>Select {activeTemplate.requiredClips} Clips</span>
                     </button>
                   )}
 
@@ -2049,10 +2052,11 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                 const trackName =
                   CURATED_AUDIO_LIBRARY.find((a) => a.id === tpl.defaultAudioTrackId)?.title ||
                   'Auto Beat';
+                const formattedDuration = formatTemplateDuration(tpl.durationSec);
                 return (
                   <article
                     key={tpl.id}
-                    className="group rounded-2xl bg-neutral-900/75 border border-neutral-800/90 hover:border-pink-500/45 overflow-hidden flex flex-col transition-colors"
+                    className="group rounded-2xl bg-neutral-900/90 border border-neutral-800 hover:border-white/30 overflow-hidden flex flex-col transition-all shadow-lg"
                   >
                     {/* Live Animated 9:14 Template Preview */}
                     <div
@@ -2062,8 +2066,8 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                       <TemplateAnimatedPreview template={tpl} />
 
                       {/* Top Category + BPM Header over gradient scrim */}
-                      <div className="absolute top-0 left-0 right-0 p-2.5 bg-gradient-to-b from-black/75 to-transparent flex items-center justify-between gap-1 pointer-events-none">
-                        <span className="px-2 py-0.5 rounded-md bg-black/70 border border-white/15 text-[10px] font-bold text-white truncate">
+                      <div className="absolute top-0 left-0 right-0 p-2.5 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between gap-1 pointer-events-none">
+                        <span className="px-2 py-0.5 rounded-md bg-black/75 border border-white/15 text-[10px] font-bold text-white truncate">
                           {tpl.categoryLabel}
                         </span>
                         <span className="text-[10px] font-bold text-cyan-300 tabular-nums shrink-0">
@@ -2071,40 +2075,43 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                         </span>
                       </div>
 
-                      {/* Bottom Duration & Clip Count Scrim Overlay */}
-                      <div className="absolute bottom-0 left-0 right-0 px-2.5 py-2 bg-gradient-to-t from-black/90 via-black/45 to-transparent flex items-center justify-between text-[11px] font-bold text-white tabular-nums pointer-events-none">
-                        <span>{tpl.durationSec}s</span>
-                        <span className="text-neutral-200">
-                          {tpl.minClips}–{tpl.maxClips} Clips
-                        </span>
+                      {/* Subtle Preview Hint Overlay */}
+                      <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/70 border border-white/15 text-[10px] font-bold text-neutral-200 pointer-events-none">
+                        Preview
                       </div>
                     </div>
 
-                    {/* Card Body & One-Tap Use Template CTA */}
-                    <div className="p-3 sm:p-3.5 flex flex-col justify-between gap-3 flex-1">
-                      <div className="space-y-1.5">
-                        <h2 className="text-sm font-black text-white leading-snug line-clamp-1">
+                    {/* Card Body: Bold Title, Subtitle Badge (X Clips • 0:XX) & High-Contrast Use Template CTA */}
+                    <div className="p-3 sm:p-3.5 flex flex-col justify-between gap-3 flex-1 bg-neutral-950/60">
+                      <div className="space-y-2">
+                        <h2 className="text-sm sm:text-base font-black text-white tracking-tight leading-snug line-clamp-1">
                           {tpl.name}
                         </h2>
+
+                        {/* Required Clip Count & Duration Subtitle Badge */}
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-800/95 border border-neutral-700 text-[11px] font-extrabold text-pink-300 tabular-nums">
+                          <Film className="w-3 h-3 text-pink-400 shrink-0" />
+                          <span>
+                            {tpl.requiredClips} Clips • {formattedDuration}
+                          </span>
+                        </div>
+
                         <p className="text-[11px] text-neutral-400 line-clamp-2 leading-relaxed">
                           {tpl.tagline}
                         </p>
-                        <p className="text-[10px] font-semibold text-neutral-400 pt-0.5 line-clamp-1">
-                          {tpl.transitions.map(formatTransitionLabel).join(' · ')} ·{' '}
-                          {tpl.colorGradeName}
-                        </p>
-                        <p className="text-[10px] text-neutral-500 flex items-center gap-1 truncate">
-                          <Music className="w-3 h-3 text-pink-400 shrink-0" />
-                          <span className="truncate">{trackName}</span>
+
+                        <p className="text-[10px] text-neutral-400 flex items-center gap-1 truncate pt-0.5">
+                          <Music className="w-3 h-3 text-cyan-400 shrink-0" />
+                          <span className="truncate font-semibold">{trackName}</span>
                         </p>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => handleUseTemplate(tpl)}
-                        className={`w-full min-h-[44px] rounded-xl bg-gradient-to-r ${tpl.accentGradient} hover:brightness-110 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-lg cursor-pointer active:scale-[0.98] transition-all`}
+                        className="w-full min-h-[44px] px-3 rounded-xl bg-white hover:bg-neutral-100 text-neutral-950 text-xs font-black flex items-center justify-center gap-1.5 shadow-lg shadow-black/40 border border-white cursor-pointer active:scale-[0.98] transition-all"
                       >
-                        <Wand2 className="w-3.5 h-3.5" />
+                        <Wand2 className="w-3.5 h-3.5 text-pink-600" />
                         <span>Use Template</span>
                       </button>
                     </div>
