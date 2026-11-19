@@ -66,6 +66,7 @@ import {
 } from './lib/liveSnapService';
 import {
   getAllOfflineSavedPosts,
+  getOfflineMediaRecord,
   hydratePostWithOfflineRecord,
   savePostForOffline,
 } from './lib/offlineMediaStore';
@@ -77,6 +78,14 @@ import {
   removeFriendInSocialGraph,
   toggleFollowInSocialGraph,
 } from './lib/socialGraph';
+import { getIsRamSaverMode, useRamSaverMode } from './lib/ramSaverMode';
+import {
+  getRegisteredCloudUrl,
+  registerPostBlobUrl,
+  registerPostCloudUrl,
+  revokeBlobsForPost,
+  safeRevokeBlobUrl,
+} from './lib/blobMemoryManager';
 import type { ProfileSubTab } from './components/CreatorProfileView';
 
 // Lazy-load offscreen tabs and modals so initial page load is fast
@@ -454,6 +463,8 @@ export default function App() {
   );
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const isOnline = useOnlineStatus();
+  const { isRamSaverMode } = useRamSaverMode();
+  const revokedOfflineIdsRef = useRef<Set<string>>(new Set());
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -715,8 +726,9 @@ export default function App() {
       void loadCloudData();
     }
 
-    // Idle-preload heavy tab/modal chunks so tab switches are instant
+    // Idle-preload heavy tab/modal chunks on >=6GB devices; skip in 3GB RAM Saver mode to keep memory minimal
     const preloadChunks = () => {
+      if (getIsRamSaverMode()) return;
       void import('./components/DownloadHub');
       void import('./components/CreatorProfileView');
       void import('./components/TrendsDashboard');
@@ -1145,6 +1157,9 @@ export default function App() {
     }
   }, [activeIndex, displayedVideos]);
 
+  const feedWindowStart = Math.max(0, activeIndex - 1);
+  const feedWindowEnd = Math.min(displayedVideos.length - 1, activeIndex + 1);
+
   // Viewport IntersectionObserver on snap container to ensure only the visible reel plays
   useEffect(() => {
     const rootEl = containerRef.current;
@@ -1184,7 +1199,131 @@ export default function App() {
     return () => {
       observer.disconnect();
     };
-  }, [displayedVideos, currentTab]);
+  }, [displayedVideos, currentTab, feedWindowStart]);
+
+  // Memory Reaper: automatically revoke unused blob URLs & prune distant old feed items when scrolling down
+  useEffect(() => {
+    if (
+      currentTab === 'live' ||
+      currentTab === 'downloads' ||
+      currentTab === 'templates' ||
+      currentTab === 'profile' ||
+      currentTab === 'activity' ||
+      currentTab === 'channel'
+    ) {
+      return;
+    }
+
+    const activePostId = displayedVideos[activeIndex]?.id;
+    const nearbyIds = new Set(
+      displayedVideos
+        .slice(Math.max(0, activeIndex - 2), activeIndex + 3)
+        .map((v) => v.id)
+    );
+
+    // 1) Re-hydrate offline blob URLs cleanly if user scrolled back up to an offline post whose blob was freed
+    const idsNeedingHydration = Array.from(nearbyIds).filter((id) =>
+      revokedOfflineIdsRef.current.has(id)
+    );
+    if (idsNeedingHydration.length > 0) {
+      void Promise.all(idsNeedingHydration.map((id) => getOfflineMediaRecord(id))).then(
+        (records) => {
+          const validRecords = records.filter((r): r is NonNullable<typeof r> => Boolean(r));
+          if (validRecords.length === 0) return;
+          const recMap = new Map(validRecords.map((r) => [r.id, r]));
+          validRecords.forEach((r) => revokedOfflineIdsRef.current.delete(r.id));
+          setVideos((prev) =>
+            prev.map((v) => {
+              const rec = recMap.get(v.id);
+              return rec ? hydratePostWithOfflineRecord(v, rec) : v;
+            })
+          );
+        }
+      );
+    }
+
+    // 2) Revoke unused blob: URLs and prune distant comment arrays & old scrolled-past items from RAM
+    const timer = window.setTimeout(() => {
+      let mutated = false;
+      const maxKeepBehind = isRamSaverMode ? 6 : 14;
+      const shouldTrimTop =
+        currentTab === 'foryou' &&
+        !selectedTag &&
+        activeIndex > maxKeepBehind + 8 &&
+        videosRef.current.length > 24;
+
+      const updatedVideos = videosRef.current.map((v, vIdx) => {
+        if (v.id === activePostId || nearbyIds.has(v.id)) {
+          return v;
+        }
+
+        let nextPost = v;
+
+        // Replace off-screen blob: URL with cloud URL and immediately revoke the blob URL
+        const cloudUrl = getRegisteredCloudUrl(v.id);
+        if (v.videoUrl?.startsWith('blob:')) {
+          if (cloudUrl) {
+            safeRevokeBlobUrl(v.videoUrl);
+            mutated = true;
+            nextPost = {
+              ...nextPost,
+              videoUrl: cloudUrl,
+              posterUrl:
+                nextPost.posterUrl?.startsWith('blob:') && nextPost.mediaType === 'image'
+                  ? cloudUrl
+                  : nextPost.posterUrl,
+            };
+          } else if (Math.abs(vIdx - activeIndex) >= (isRamSaverMode ? 3 : 6) && !v.isUserUploaded) {
+            safeRevokeBlobUrl(v.videoUrl);
+            revokedOfflineIdsRef.current.add(v.id);
+            mutated = true;
+          }
+        }
+        if (nextPost.sound?.audioUrl?.startsWith('blob:') && Math.abs(vIdx - activeIndex) >= 4) {
+          safeRevokeBlobUrl(nextPost.sound.audioUrl);
+          revokedOfflineIdsRef.current.add(v.id);
+          mutated = true;
+        }
+
+        // Trim bulky in-memory comment lists on far off-screen items (keeps stats.comments intact)
+        if (nextPost.commentsList.length > 0 && Math.abs(vIdx - activeIndex) >= 5) {
+          mutated = true;
+          nextPost = { ...nextPost, commentsList: [] };
+        }
+
+        return nextPost;
+      });
+
+      if (shouldTrimTop) {
+        const pruneCutoff = activeIndex - maxKeepBehind;
+        let droppedCount = 0;
+        const pruned = updatedVideos.filter((v, idx) => {
+          if (idx < pruneCutoff && !v.isUserUploaded && !v.isSaved) {
+            revokeBlobsForPost(v.id);
+            droppedCount += 1;
+            return false;
+          }
+          return true;
+        });
+
+        if (droppedCount > 0) {
+          setVideos(pruned);
+          const nextIdx = Math.max(0, activeIndex - droppedCount);
+          setActiveIndex(nextIdx);
+          if (containerRef.current && containerRef.current.clientHeight > 0) {
+            containerRef.current.scrollTop = nextIdx * containerRef.current.clientHeight;
+          }
+          return;
+        }
+      }
+
+      if (mutated) {
+        setVideos(updatedVideos);
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [activeIndex, currentTab, displayedVideos, isRamSaverMode, selectedTag]);
 
   // Smooth touch + desktop mouse/wheel swipe gestures for collapsible Live Stories Bar
   const beginStoriesSwipe = useCallback(
@@ -1645,7 +1784,16 @@ export default function App() {
     setCurrentTab('channel');
   }, []);
 
-  const handleOpenComments = useCallback((vid: VideoPost) => setCommentsVideo(vid), []);
+  const handleOpenComments = useCallback((vid: VideoPost) => {
+    if (vid.commentsList.length === 0 && vid.stats.comments > 0) {
+      const cachedComments = getStoredPostComments()[vid.id] || [];
+      if (cachedComments.length > 0) {
+        setCommentsVideo({ ...vid, commentsList: cachedComments });
+        return;
+      }
+    }
+    setCommentsVideo(vid);
+  }, []);
   const handleOpenShare = useCallback((vid: VideoPost) => setShareVideo(vid), []);
   const handleHashtagClick = useCallback((tag: string) => setSelectedTag(tag), []);
 
@@ -1653,6 +1801,9 @@ export default function App() {
   const handleDeletePost = useCallback(
     async (postId: string) => {
       const target = videosRef.current.find((v) => v.id === postId);
+      revokeBlobsForPost(postId);
+      safeRevokeBlobUrl(target?.videoUrl);
+      safeRevokeBlobUrl(target?.sound?.audioUrl);
 
       setVideos((prev) => prev.filter((v) => v.id !== postId));
       setActivityEvents((prev) => prev.filter((ev) => ev.postId !== postId));
@@ -1825,21 +1976,31 @@ export default function App() {
   // Reconcile optimistic instant upload with final Supabase cloud post silently in background
   const handleUploadCloudSynced = useCallback(
     (tempId: string, syncedPost: VideoPost) => {
+      registerPostCloudUrl(syncedPost.id, syncedPost.videoUrl);
       if (expectedVideoIdRef.current === tempId) {
         expectedVideoIdRef.current = syncedPost.id;
       }
+      const isCurrentlyActive =
+        expectedVideoIdRef.current === tempId || expectedVideoIdRef.current === syncedPost.id;
+
       setVideos((prev) => {
         const withoutDupes = prev.filter((v) => v.id !== syncedPost.id || v.id === tempId);
-        return withoutDupes.map((v) =>
-          v.id === tempId
-            ? {
-                ...syncedPost,
-                // Keep instant local blob URL during active playback to prevent frame jump
-                videoUrl: v.videoUrl.startsWith('blob:') ? v.videoUrl : syncedPost.videoUrl,
-                posterUrl: v.posterUrl || syncedPost.posterUrl,
-              }
-            : v
-        );
+        return withoutDupes.map((v) => {
+          if (v.id !== tempId) return v;
+          if (!isCurrentlyActive && v.videoUrl.startsWith('blob:') && syncedPost.videoUrl && !syncedPost.videoUrl.startsWith('blob:')) {
+            safeRevokeBlobUrl(v.videoUrl);
+            return {
+              ...syncedPost,
+              posterUrl: syncedPost.posterUrl || v.posterUrl,
+            };
+          }
+          return {
+            ...syncedPost,
+            // Keep instant local blob URL while active; memory reaper revokes once scrolled away
+            videoUrl: v.videoUrl.startsWith('blob:') ? v.videoUrl : syncedPost.videoUrl,
+            posterUrl: v.posterUrl || syncedPost.posterUrl,
+          };
+        });
       });
     },
     []
@@ -1896,6 +2057,7 @@ export default function App() {
         const authorUsername = currentUser?.username || creatorProfile.username;
         const authorAvatar = currentUser?.avatar || creatorProfile.avatar;
         const tempPostId = `reel-${isLive ? 'live' : 'gallery'}-${Date.now()}`;
+        registerPostBlobUrl(tempPostId, localPreviewUrl);
 
         const optimisticPost: VideoPost = {
           id: tempPostId,
@@ -2253,6 +2415,7 @@ export default function App() {
         onOpenDirectSnaps={() => setIsDirectSnapsOpen(true)}
         unreadDirectSnapsCount={unreadDirectSnapsCount}
         onLogout={handleLogout}
+        onShowToast={showToast}
         currentTab={currentTab}
       />
 
@@ -2616,41 +2779,61 @@ export default function App() {
                     onScroll={handleScroll}
                     className="flex-1 min-h-0 w-full snap-container gpu-accelerated overflow-y-scroll overflow-x-hidden overscroll-y-contain no-scrollbar [will-change:scroll-position]"
                   >
-                    {displayedVideos.map((video, idx) => {
-                      const rel = getFollowRelationship(
-                        creatorProfile.username,
-                        video.creator.username,
-                        socialEdges
-                      );
-                      return (
-                        <VideoCard
-                          key={video.id}
-                          cardIndex={idx}
-                          video={video}
-                          isActive={idx === activeIndex}
-                          isNext={idx === activeIndex + 1}
-                          isNearViewport={Math.abs(idx - activeIndex) <= 1}
-                          isMuted={isMuted}
-                          currentUserId={creatorProfile.id}
-                          currentUsername={creatorProfile.username}
-                          isFollowingCreator={rel.isFollowing || video.creator.isFollowing}
-                          isFollowerCreator={rel.isFollower}
-                          isMutualFriend={rel.isMutualFriend}
-                          onToggleMute={handleToggleMute}
-                          onLikeToggle={handleLikeToggle}
-                          onSaveToggle={handleSaveToggle}
-                          onFollowToggle={handleFollowToggle}
-                          onOpenComments={handleOpenComments}
-                          onOpenShare={handleOpenShare}
-                          onViewTracked={handleViewTracked}
-                          onDownloadTracked={handleDownloadTracked}
-                          onDeletePost={handleDeletePost}
-                          onHashtagClick={handleHashtagClick}
-                          onOpenCreatorProfile={handleOpenCreatorProfile}
-                          onShowToast={showToast}
-                        />
-                      );
-                    })}
+                    {/* Strict Virtualized Feed: keep max 3 cards mounted in DOM ([active-1 .. active+1]) */}
+                    {feedWindowStart > 0 && (
+                      <div
+                        style={{ height: `${feedWindowStart * 100}%` }}
+                        className="w-full shrink-0 pointer-events-none"
+                        aria-hidden="true"
+                      />
+                    )}
+                    {displayedVideos
+                      .slice(feedWindowStart, feedWindowEnd + 1)
+                      .map((video, offset) => {
+                        const idx = feedWindowStart + offset;
+                        const rel = getFollowRelationship(
+                          creatorProfile.username,
+                          video.creator.username,
+                          socialEdges
+                        );
+                        return (
+                          <VideoCard
+                            key={video.id}
+                            cardIndex={idx}
+                            video={video}
+                            isActive={idx === activeIndex}
+                            isNext={idx === activeIndex + 1}
+                            isNearViewport={true}
+                            isMuted={isMuted}
+                            currentUserId={creatorProfile.id}
+                            currentUsername={creatorProfile.username}
+                            isFollowingCreator={rel.isFollowing || video.creator.isFollowing}
+                            isFollowerCreator={rel.isFollower}
+                            isMutualFriend={rel.isMutualFriend}
+                            onToggleMute={handleToggleMute}
+                            onLikeToggle={handleLikeToggle}
+                            onSaveToggle={handleSaveToggle}
+                            onFollowToggle={handleFollowToggle}
+                            onOpenComments={handleOpenComments}
+                            onOpenShare={handleOpenShare}
+                            onViewTracked={handleViewTracked}
+                            onDownloadTracked={handleDownloadTracked}
+                            onDeletePost={handleDeletePost}
+                            onHashtagClick={handleHashtagClick}
+                            onOpenCreatorProfile={handleOpenCreatorProfile}
+                            onShowToast={showToast}
+                          />
+                        );
+                      })}
+                    {feedWindowEnd < displayedVideos.length - 1 && (
+                      <div
+                        style={{
+                          height: `${(displayedVideos.length - 1 - feedWindowEnd) * 100}%`,
+                        }}
+                        className="w-full shrink-0 pointer-events-none"
+                        aria-hidden="true"
+                      />
+                    )}
                   </div>
                 )}
               </div>

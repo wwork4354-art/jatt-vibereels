@@ -24,7 +24,9 @@ import {
   ArrowUpDown,
   Youtube,
   Sliders,
+  Zap,
 } from 'lucide-react';
+import { useRamSaverMode } from '../lib/ramSaverMode';
 import {
   FeedTab,
   UserAccount,
@@ -98,6 +100,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
   isBottomNavOpen,
   onToggleBottomNav,
 }) => {
+  const { isRamSaverMode, toggleRamSaverMode } = useRamSaverMode();
   const [isMobileProfileOpen, setIsMobileProfileOpen] = useState(false);
   const [isUploadSheetOpen, setIsUploadSheetOpen] = useState(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
@@ -182,6 +185,27 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const next = toggleRamSaverMode();
+                onShowToast?.(
+                  next
+                    ? 'Lite / RAM Saver Mode ON (3GB RAM Optimized)'
+                    : 'Lite / RAM Saver Mode OFF (Full Visuals)'
+                );
+              }}
+              className={`px-2 py-1 rounded-lg border text-[10px] font-black flex items-center gap-1 cursor-pointer ${
+                isRamSaverMode
+                  ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
+                  : 'bg-neutral-900 border-neutral-800 text-neutral-400'
+              }`}
+              title="Toggle Lite / RAM Saver Mode for 3GB RAM Android devices"
+              aria-label="Toggle Lite RAM Saver Mode"
+            >
+              <Zap className="w-3 h-3" />
+              <span>{isRamSaverMode ? 'Lite' : 'RAM'}</span>
+            </button>
             <PWAInstallButton variant="mobile-header" />
             <button
               type="button"

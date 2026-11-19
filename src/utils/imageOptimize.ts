@@ -1,27 +1,40 @@
+import { getIsRamSaverMode } from '../lib/ramSaverMode';
+
 /**
  * Lightweight thumbnail & image compression utilities for 60fps feeds & instant grid loads.
  */
 
-export function optimizeThumbnailUrl(url?: string, mode: 'grid' | 'hero' = 'grid'): string {
+export function optimizeThumbnailUrl(
+  url?: string,
+  mode: 'grid' | 'hero' = 'grid',
+  forceRamSaver?: boolean
+): string {
   if (!url || typeof url !== 'string') return '';
+  const ramSaver = forceRamSaver ?? getIsRamSaverMode();
 
-  // Optimize YouTube thumbnails: mqdefault (320x180, ~9KB) for grid cards, hqdefault for hero
-  if (url.includes('i.ytimg.com/vi/')) {
-    if (mode === 'grid') {
-      return url.replace(/\/(maxresdefault|sddefault|hqdefault)\.(jpg|webp)/i, '/mqdefault.jpg');
+  // Optimize YouTube thumbnails: cap to mqdefault.jpg (320x180, ~9KB) to save 70% RAM
+  if (url.includes('i.ytimg.com/vi/') || url.includes('i.ytimg.com/vi_webp/')) {
+    const cleanUrl = url
+      .replace('i.ytimg.com/vi_webp/', 'i.ytimg.com/vi/')
+      .replace(/\.(webp)(\?|$)/i, '.jpg$2');
+    if (ramSaver || mode === 'grid') {
+      return cleanUrl.replace(
+        /\/(maxresdefault|sddefault|hqdefault)\.(jpg|webp)/i,
+        '/mqdefault.jpg'
+      );
     }
-    return url.replace(/\/maxresdefault\.(jpg|webp)/i, '/hqdefault.jpg');
+    return cleanUrl.replace(/\/maxresdefault\.(jpg|webp)/i, '/hqdefault.jpg');
   }
 
-  // Optimize Unsplash image sizes & quality for fast mobile decoding
+  // Optimize Unsplash image sizes & quality for fast mobile decoding on 3GB RAM
   if (url.includes('images.unsplash.com/photo-')) {
-    const targetW = mode === 'grid' ? '480' : '720';
+    const targetW = ramSaver ? (mode === 'grid' ? '320' : '480') : mode === 'grid' ? '480' : '720';
     try {
       const parsed = new URL(url);
       parsed.searchParams.set('auto', 'format');
       parsed.searchParams.set('fit', 'crop');
       parsed.searchParams.set('w', targetW);
-      parsed.searchParams.set('q', mode === 'grid' ? '70' : '78');
+      parsed.searchParams.set('q', ramSaver ? '58' : mode === 'grid' ? '70' : '78');
       return parsed.toString();
     } catch {
       return url;

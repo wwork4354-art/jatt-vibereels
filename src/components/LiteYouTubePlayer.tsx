@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Zap } from 'lucide-react';
+import { getIsRamSaverMode, useRamSaverMode } from '../lib/ramSaverMode';
 
 export type YouTubeQualityId = 'auto' | 'medium' | 'large' | 'hd720' | 'hd1080' | 'highres';
 
@@ -62,7 +63,14 @@ export function getQualityOption(id: YouTubeQualityId): YouTubeQualityOption {
   return YOUTUBE_QUALITY_OPTIONS.find((q) => q.id === id) || YOUTUBE_QUALITY_OPTIONS[0];
 }
 
-export function getYouTubeThumbSources(videoId: string): string[] {
+export function getYouTubeThumbSources(videoId: string, ramSaver = getIsRamSaverMode()): string[] {
+  if (ramSaver) {
+    // 3GB RAM / Lite mode: lightweight 320x180 (~9KB) mqdefault.jpg saves ~70% RAM
+    return [
+      `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+      `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    ];
+  }
   return [
     `https://i.ytimg.com/vi_webp/${videoId}/maxresdefault.webp`,
     `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
@@ -75,20 +83,24 @@ export const LiteYouTubeThumb: React.FC<{
   alt: string;
   fallbackUrl?: string;
   className?: string;
-}> = React.memo(({ videoId, alt, fallbackUrl, className = 'w-full h-full object-cover' }) => {
+  ramSaverMode?: boolean;
+}> = React.memo(({ videoId, alt, fallbackUrl, className = 'w-full h-full object-cover', ramSaverMode }) => {
+  const { isRamSaverMode: hookRamSaver } = useRamSaverMode();
+  const effectiveRamSaver = ramSaverMode ?? hookRamSaver;
+
   const candidates = useMemo(() => {
-    const list = getYouTubeThumbSources(videoId);
-    if (fallbackUrl && !list.includes(fallbackUrl)) {
+    const list = getYouTubeThumbSources(videoId, effectiveRamSaver);
+    if (!effectiveRamSaver && fallbackUrl && !list.includes(fallbackUrl)) {
       list.push(fallbackUrl);
     }
     return list;
-  }, [videoId, fallbackUrl]);
+  }, [videoId, fallbackUrl, effectiveRamSaver]);
 
   const [tierIdx, setTierIdx] = useState(0);
 
   useEffect(() => {
     setTierIdx(0);
-  }, [videoId]);
+  }, [videoId, effectiveRamSaver]);
 
   const currentSrc = candidates[Math.min(tierIdx, candidates.length - 1)];
 
@@ -106,7 +118,12 @@ export const LiteYouTubeThumb: React.FC<{
       onError={advanceFallback}
       onLoad={(e) => {
         // YouTube serves a 120x90 grey placeholder when maxresdefault does not exist
-        if (e.currentTarget.naturalWidth > 0 && e.currentTarget.naturalWidth <= 120 && tierIdx < 2) {
+        if (
+          !effectiveRamSaver &&
+          e.currentTarget.naturalWidth > 0 &&
+          e.currentTarget.naturalWidth <= 120 &&
+          tierIdx < candidates.length - 1
+        ) {
           advanceFallback();
         }
       }}
@@ -219,6 +236,23 @@ export const LiteYouTubePlayer: React.FC<LiteYouTubePlayerProps> = ({
   }, [selectedQuality, isActivated, iframeLoaded, youtubeId]);
 
   const shouldMountIframe = isActivated && (isInViewport || isCinemaMode);
+
+  // Explicitly clear iframe src on unmount or off-screen destruction to release native decoder RAM
+  useEffect(() => {
+    if (shouldMountIframe) {
+      const iframe = iframeRef.current;
+      return () => {
+        if (iframe) {
+          try {
+            iframe.src = 'about:blank';
+          } catch {
+            // ignore
+          }
+        }
+      };
+    }
+    return undefined;
+  }, [shouldMountIframe, youtubeId, serverIndex, reloadNonce]);
 
   const iframeClassName = isCinemaMode
     ? cssLandscapeActive || playerScaleMode === 'fit'

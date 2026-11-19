@@ -35,12 +35,15 @@ import {
   Settings,
   Zap,
   RefreshCw,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import Hls from 'hls.js';
 import { DownloadItem, DownloadCategory } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
 import { soundEngine } from '../utils/soundEngine';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import { getIsRamSaverMode, useRamSaverMode } from '../lib/ramSaverMode';
 import {
   LiteYouTubePlayer,
   LiteYouTubeThumb,
@@ -65,15 +68,10 @@ import {
 } from '../utils/security';
 
 const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
+const HUB_PAGE_SIZE = 10;
 
 interface GlobalHubTab {
-  id:
-    | 'all'
-    | 'world_movies'
-    | 'punjabi_hindi_songs'
-    | 'dramas'
-    | 'cartoons_anime'
-    | 'music_videos_4k';
+  id: 'all' | 'world_movies' | 'songs' | 'dramas' | 'cartoons';
   label: string;
   query: string;
 }
@@ -86,8 +84,8 @@ const GLOBAL_HUB_TABS: GlobalHubTab[] = [
     query: 'full movies Hollywood Hindi dubbed Punjabi Korean action adventure HD',
   },
   {
-    id: 'punjabi_hindi_songs',
-    label: 'Punjabi & Hindi Songs',
+    id: 'songs',
+    label: 'Songs',
     query: 'Punjabi Hindi latest songs Sidhu Moose Wala Karan Aujla Diljit Arijit official',
   },
   {
@@ -96,23 +94,17 @@ const GLOBAL_HUB_TABS: GlobalHubTab[] = [
     query: 'Pakistani Indian Turkish Korean full dramas episodes HD',
   },
   {
-    id: 'cartoons_anime',
-    label: 'Cartoons & Anime',
+    id: 'cartoons',
+    label: 'Cartoons',
     query: 'full cartoons anime episodes animated adventure movies kids HD',
-  },
-  {
-    id: 'music_videos_4k',
-    label: '4K Music Videos',
-    query: '4K music video official 2160p ultra HD global hits',
   },
 ];
 
 const QUICK_MOVIEBOX_CHIPS = [
   'World Movies',
-  'Punjabi & Hindi Songs',
+  'Songs',
   'Dramas',
-  'Cartoons & Anime',
-  '4K Music Videos',
+  'Cartoons',
   'Pakistani Dramas',
   'Turkish Dramas',
   'Hollywood & English',
@@ -155,6 +147,82 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       tags: ['World Movies', 'Fantasy', 'HD'],
       description: 'Award-winning dramatic fantasy adventure feature.',
       youtubeId: 'eRsGyueVLvQ',
+    },
+  ],
+  Songs: [
+    {
+      id: 'yt-6MgsHSAcI9k',
+      title: 'Top Punjabi & Hindi Bass Mix Hits',
+      subtitle: 'Punjabi & Desi Music Global',
+      category: 'songs',
+      categoryLabel: 'Songs',
+      fileSize: 'Streaming HD',
+      sizeBytes: 12000000,
+      durationOrVersion: 'Music HD',
+      qualityBadge: 'YouTube HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/6MgsHSAcI9k/mqdefault.jpg',
+      fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Songs', 'Punjabi', 'Hindi'],
+      description: 'Non-stop Punjabi & Hindi hit music stream.',
+      youtubeId: '6MgsHSAcI9k',
+    },
+    {
+      id: 'yt-jfKfPfyJRdk',
+      title: '24/7 Chill Beats & Late Night Study Radio',
+      subtitle: 'Global Music Radio Live',
+      category: 'songs',
+      categoryLabel: 'Songs',
+      fileSize: 'Live Stream',
+      sizeBytes: 45000000,
+      durationOrVersion: 'LIVE 24/7',
+      qualityBadge: 'Live Audio HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/jfKfPfyJRdk/mqdefault.jpg',
+      fallbackGradient: 'from-rose-950 via-purple-950 to-black',
+      downloadsCount: 'Live',
+      rating: 4.95,
+      tags: ['Songs', 'Live Radio'],
+      description: 'Continuous 24/7 music broadcast.',
+      youtubeId: 'jfKfPfyJRdk',
+    },
+  ],
+  Cartoons: [
+    {
+      id: 'yt-YE7VzlLtp-4',
+      title: 'Big Buck Bunny - Full Animated Adventure 4K 60fps',
+      subtitle: 'Blender Animation Studio',
+      category: 'cartoons',
+      categoryLabel: 'Cartoons',
+      fileSize: 'Streaming HD',
+      sizeBytes: 150000000,
+      durationOrVersion: 'Animated HD',
+      qualityBadge: 'Cartoon HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/mqdefault.jpg',
+      fallbackGradient: 'from-amber-950 via-purple-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.95,
+      tags: ['Cartoons', 'Animation'],
+      description: 'Full family animated comedy adventure.',
+      youtubeId: 'YE7VzlLtp-4',
+    },
+    {
+      id: 'yt-aqz-KE-bpKQ',
+      title: 'Cosmos & 3D Animated Showcase 60FPS',
+      subtitle: 'Open Animation Central',
+      category: 'cartoons',
+      categoryLabel: 'Cartoons',
+      fileSize: 'Streaming HD',
+      sizeBytes: 140000000,
+      durationOrVersion: '60FPS',
+      qualityBadge: 'Cartoon HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/mqdefault.jpg',
+      fallbackGradient: 'from-cyan-950 via-indigo-950 to-neutral-950',
+      downloadsCount: 'YouTube',
+      rating: 4.9,
+      tags: ['Cartoons', 'Anime'],
+      description: 'Ultra-crisp 60fps animated feature.',
+      youtubeId: 'aqz-KE-bpKQ',
     },
   ],
   'Punjabi & Hindi Songs': [
@@ -626,6 +694,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
   onToggleMute,
 }) => {
   const isOnline = useOnlineStatus();
+  const { isRamSaverMode, toggleRamSaverMode } = useRamSaverMode();
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const [items] = useState<DownloadItem[]>(INITIAL_DOWNLOADS);
   const [selectedCategory, setSelectedCategory] = useState<string>(() => {
@@ -667,11 +736,31 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
   const directVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const didEnterCinemaFullscreenRef = React.useRef<boolean>(false);
 
-  // Resolution Selector (360p to 4K Ultra HD) & Fast Server / Reload State
-  const [selectedQuality, setSelectedQuality] = useState<YouTubeQualityId>('hd1080');
+  // Resolution Selector: defaults to 480p ('large') on 3GB/low-RAM devices for zero-buffer playback
+  const hasManualQualityRef = React.useRef<boolean>(false);
+  const [selectedQuality, setSelectedQuality] = useState<YouTubeQualityId>(() =>
+    getIsRamSaverMode() ? 'large' : 'hd1080'
+  );
   const [isQualityMenuOpen, setIsQualityMenuOpen] = useState<boolean>(false);
   const [serverIndex, setServerIndex] = useState<number>(0);
   const [reloadNonce, setReloadNonce] = useState<number>(0);
+
+  // Pagination states (maxResults=10 per page to keep RAM low)
+  const [ytPage, setYtPage] = useState<number>(1);
+  const [ytNextPageToken, setYtNextPageToken] = useState<string | null>(null);
+  const [ytPrevPageToken, setYtPrevPageToken] = useState<string | null>(null);
+  const [catalogPage, setCatalogPage] = useState<number>(1);
+  const lastSearchContextRef = React.useRef<{
+    query: string;
+    tabCacheKey?: GlobalHubTab['id'];
+    displayLabel?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!hasManualQualityRef.current) {
+      setSelectedQuality(isRamSaverMode ? 'large' : 'hd1080');
+    }
+  }, [isRamSaverMode]);
 
   const activeQualityOption = getQualityOption(selectedQuality);
   const cssLandscapeActive = isCinemaMode && orientationLockBlocked && viewportPortrait;
@@ -765,6 +854,13 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
         hlsInstance.destroy();
         hlsInstance = null;
       }
+      videoEl.pause();
+      videoEl.removeAttribute('src');
+      try {
+        videoEl.load();
+      } catch {
+        // ignore
+      }
     };
   }, [previewItem?.directVideoUrl]);
 
@@ -849,13 +945,13 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
   // YouTube Search States
   const [isSearchingYouTube, setIsSearchingYouTube] = useState<boolean>(false);
 
-  // Instant Caching: Cache YouTube search results and thumbnails in sessionStorage for instant tab switching
+  // Instant Caching: Cache max 10 YouTube search results per page in sessionStorage
   const [youtubeLiveResults, setYoutubeLiveResults] = useState<DownloadItem[]>(() => {
     try {
       const cached = sessionStorage.getItem('jatt_yt_search_results');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed.slice(0, HUB_PAGE_SIZE);
       }
     } catch {
       // ignore
@@ -1125,9 +1221,13 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     });
   };
 
-  // Switch between Global Content Hub category tabs with instant sessionStorage cache
+  // Switch between Global Content Hub category tabs with instant sessionStorage cache (max 10/page)
   const handleSelectGlobalTab = (tab: GlobalHubTab) => {
     setActiveGlobalTab(tab.id);
+    setYtPage(1);
+    setCatalogPage(1);
+    setYtNextPageToken(null);
+    setYtPrevPageToken(null);
     try {
       sessionStorage.setItem('jatt_hub_global_tab', tab.id);
     } catch {
@@ -1141,13 +1241,29 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
       return;
     }
 
+    lastSearchContextRef.current = {
+      query: tab.query,
+      tabCacheKey: tab.id,
+      displayLabel: tab.label,
+    };
+
     // Check sessionStorage per-tab cache first for instant switching
     try {
       const rawCache = sessionStorage.getItem('jatt_yt_tab_cache');
       if (rawCache) {
-        const parsed = JSON.parse(rawCache) as Record<string, DownloadItem[]>;
-        if (Array.isArray(parsed?.[tab.id]) && parsed[tab.id].length > 0) {
-          setYoutubeLiveResults(parsed[tab.id]);
+        const parsed = JSON.parse(rawCache) as Record<
+          string,
+          DownloadItem[] | { items: DownloadItem[]; nextPageToken?: string | null }
+        >;
+        const entry = parsed?.[tab.id];
+        const cachedItems = Array.isArray(entry)
+          ? entry
+          : Array.isArray(entry?.items)
+          ? entry.items
+          : [];
+        if (cachedItems.length > 0) {
+          setYoutubeLiveResults(cachedItems.slice(0, HUB_PAGE_SIZE));
+          setYtNextPageToken(Array.isArray(entry) ? null : entry?.nextPageToken || null);
           setSearchQuery(tab.label);
           setSearchSource('youtube');
           return;
@@ -1158,14 +1274,16 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     }
 
     setSearchQuery(tab.label);
-    void handleSearchYouTubeLive(tab.query, tab.id, tab.label);
+    void handleSearchYouTubeLive(tab.query, tab.id, tab.label, 1, null);
   };
 
-  // Bulletproof multi-tier search: YouTube Data API v3 (safeSearch=strict) -> Public Invidious/Piped -> Verified Local Fallback
+  // Paginated multi-tier search (maxResults=10 per page to keep 3GB RAM phones fast & lag-free)
   const handleSearchYouTubeLive = async (
     targetQuery?: string,
     tabCacheKey?: GlobalHubTab['id'],
-    displayLabel?: string
+    displayLabel?: string,
+    targetPage = 1,
+    pageToken: string | null = null
   ) => {
     if (!isOnline) {
       onShowToast('Offline Mode: Online YouTube search needs internet. Watch Saved / Downloads offline!');
@@ -1178,7 +1296,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     }
 
     // If user pasted a direct YouTube/MP4/M3U8/Embed link in the search bar, play it right away in 16:9 Landscape!
-    if (targetQuery === undefined) {
+    if (targetQuery === undefined && targetPage === 1 && !pageToken) {
       const parsedLink = parseUniversalPlayableLink(query);
       if (parsedLink) {
         const playable = playParsedUniversalLink(parsedLink);
@@ -1192,6 +1310,12 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     if (targetQuery !== undefined && displayLabel === undefined) {
       setSearchQuery(query);
     }
+
+    lastSearchContextRef.current = {
+      query,
+      tabCacheKey,
+      displayLabel,
+    };
 
     const effectiveKey = (
       (import.meta.env.VITE_YOUTUBE_API_KEY as string | undefined) ||
@@ -1211,21 +1335,28 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
       }
     };
 
+    let resolvedNextToken: string | null = null;
+    let resolvedPrevToken: string | null = null;
+
     try {
       let mappedResults: DownloadItem[] = [];
 
-      // Tier 1: Official YouTube Data API v3 (safeSearch=strict & videoEmbeddable=true for clean worldwide results)
+      // Tier 1: Official YouTube Data API v3 (maxResults=10 per page + pageToken for low RAM)
       if (effectiveKey) {
         try {
-          const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=18&type=video&safeSearch=strict&videoEmbeddable=true&q=${encodeURIComponent(
+          const tokenParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+          const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=${HUB_PAGE_SIZE}&type=video&safeSearch=strict&videoEmbeddable=true${tokenParam}&q=${encodeURIComponent(
             query
           )}&key=${encodeURIComponent(effectiveKey)}`;
           const res = await fetchWithTimeout(endpoint, 6000);
           if (res.ok) {
             const data = await res.json();
+            resolvedNextToken = typeof data?.nextPageToken === 'string' ? data.nextPageToken : null;
+            resolvedPrevToken = typeof data?.prevPageToken === 'string' ? data.prevPageToken : null;
             if (Array.isArray(data?.items) && data.items.length > 0) {
               mappedResults = data.items
                 .filter((item: any) => item.id?.videoId)
+                .slice(0, HUB_PAGE_SIZE)
                 .map((item: any) => ({
                   id: `yt-${item.id.videoId}`,
                   title: decodeHtmlEntities(item.snippet?.title || 'YouTube Video'),
@@ -1236,10 +1367,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                   sizeBytes: 150000000,
                   durationOrVersion: 'YouTube HD',
                   qualityBadge: 'YouTube HD',
-                  thumbnailUrl:
-                    item.snippet?.thumbnails?.high?.url ||
-                    item.snippet?.thumbnails?.medium?.url ||
-                    `https://i.ytimg.com/vi/${item.id.videoId}/hqdefault.jpg`,
+                  thumbnailUrl: `https://i.ytimg.com/vi/${item.id.videoId}/mqdefault.jpg`,
                   fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
                   downloadsCount: 'YouTube',
                   rating: 4.9,
@@ -1254,12 +1382,12 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
         }
       }
 
-      // Tier 2: Public Invidious & Piped YouTube search APIs fallback
+      // Tier 2: Public Invidious & Piped YouTube search APIs fallback (paginated max 10/page)
       if (mappedResults.length === 0) {
         const invidiousInstances = [
-          `https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
-          `https://invidious.nerdvpn.de/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
-          `https://yewtu.be/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
+          `https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video&page=${targetPage}`,
+          `https://invidious.nerdvpn.de/api/v1/search?q=${encodeURIComponent(query)}&type=video&page=${targetPage}`,
+          `https://yewtu.be/api/v1/search?q=${encodeURIComponent(query)}&type=video&page=${targetPage}`,
         ];
 
         for (const url of invidiousInstances) {
@@ -1269,19 +1397,13 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
             if (!res.ok) continue;
             const list = await res.json();
             if (Array.isArray(list) && list.length > 0) {
-              mappedResults = list
-                .filter((item: any) => item?.videoId && (item.type === 'video' || !item.type))
-                .slice(0, 18)
+              const filteredList = list.filter(
+                (item: any) => item?.videoId && (item.type === 'video' || !item.type)
+              );
+              mappedResults = filteredList
+                .slice(0, HUB_PAGE_SIZE)
                 .map((item: any) => {
                   const vidId = item.videoId as string;
-                  const bestThumb =
-                    item.videoThumbnails?.find((t: any) => t.quality === 'high')?.url ||
-                    item.videoThumbnails?.[0]?.url ||
-                    '';
-                  const safeThumb = bestThumb.startsWith('http')
-                    ? bestThumb
-                    : `https://i.ytimg.com/vi/${vidId}/hqdefault.jpg`;
-
                   return {
                     id: `yt-${vidId}`,
                     title: decodeHtmlEntities(item.title || 'YouTube Video'),
@@ -1292,7 +1414,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                     sizeBytes: 150000000,
                     durationOrVersion: 'YouTube HD',
                     qualityBadge: 'YouTube HD',
-                    thumbnailUrl: safeThumb,
+                    thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
                     fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
                     downloadsCount: 'YouTube',
                     rating: 4.9,
@@ -1301,6 +1423,9 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                     youtubeId: vidId,
                   };
                 });
+              if (filteredList.length >= HUB_PAGE_SIZE) {
+                resolvedNextToken = `page-${targetPage + 1}`;
+              }
             }
           } catch {
             // Try next mirror
@@ -1323,32 +1448,30 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
             const list = Array.isArray(data?.items) ? data.items : [];
             const streams = list.filter((it: any) => it?.url && it.url.includes('v='));
             if (streams.length > 0) {
-              mappedResults = streams.slice(0, 18).map((item: any) => {
-                const vidId = extractYouTubeId(item.url) || '';
-                const safeThumb =
-                  typeof item.thumbnail === 'string' && item.thumbnail.startsWith('http')
-                    ? item.thumbnail
-                    : `https://i.ytimg.com/vi/${vidId}/hqdefault.jpg`;
-
-                return {
-                  id: `yt-${vidId}`,
-                  title: decodeHtmlEntities(item.title || 'YouTube Video'),
-                  subtitle: decodeHtmlEntities(item.uploaderName || 'YouTube Channel'),
-                  category: (selectedCategory === 'all' ? 'movies' : selectedCategory) as DownloadCategory,
-                  categoryLabel: 'YouTube Live',
-                  fileSize: 'Streaming HD',
-                  sizeBytes: 150000000,
-                  durationOrVersion: 'YouTube HD',
-                  qualityBadge: 'YouTube HD',
-                  thumbnailUrl: safeThumb,
-                  fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-                  downloadsCount: 'YouTube',
-                  rating: 4.9,
-                  tags: ['YouTube Live', 'Movie Box'],
-                  description: decodeHtmlEntities(item.shortDescription || ''),
-                  youtubeId: vidId,
-                };
-              }).filter((r: DownloadItem) => Boolean(r.youtubeId));
+              mappedResults = streams
+                .slice(0, HUB_PAGE_SIZE)
+                .map((item: any) => {
+                  const vidId = extractYouTubeId(item.url) || '';
+                  return {
+                    id: `yt-${vidId}`,
+                    title: decodeHtmlEntities(item.title || 'YouTube Video'),
+                    subtitle: decodeHtmlEntities(item.uploaderName || 'YouTube Channel'),
+                    category: (selectedCategory === 'all' ? 'movies' : selectedCategory) as DownloadCategory,
+                    categoryLabel: 'YouTube Live',
+                    fileSize: 'Streaming HD',
+                    sizeBytes: 150000000,
+                    durationOrVersion: 'YouTube HD',
+                    qualityBadge: 'YouTube HD',
+                    thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
+                    fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
+                    downloadsCount: 'YouTube',
+                    rating: 4.9,
+                    tags: ['YouTube Live', 'Movie Box'],
+                    description: decodeHtmlEntities(item.shortDescription || ''),
+                    youtubeId: vidId,
+                  };
+                })
+                .filter((r: DownloadItem) => Boolean(r.youtubeId));
             }
           } catch {
             // Try next mirror
@@ -1356,7 +1479,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
         }
       }
 
-      // Tier 3: Guaranteed local curated fallback so search never fails or errors out
+      // Tier 3: Guaranteed local curated fallback (capped at 10 per page)
       if (mappedResults.length === 0) {
         const lookupText = (displayLabel || query).toLowerCase();
         const curatedKey = Object.keys(CURATED_FALLBACK_VIDEOS).find(
@@ -1370,37 +1493,62 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
               it.tags.some((t) => t.toLowerCase().includes(lookupText)))
         );
         const allCatalogYoutube = INITIAL_DOWNLOADS.filter((it) => Boolean(it.youtubeId));
-
-        mappedResults = [
+        const combinedPool = [
           ...(curatedKey ? CURATED_FALLBACK_VIDEOS[curatedKey] : []),
           ...catalogMatches,
           ...(!curatedKey && catalogMatches.length === 0 ? allCatalogYoutube : []),
-        ]
-          .slice(0, 12)
+        ];
+        const startOffset = ((targetPage - 1) * HUB_PAGE_SIZE) % Math.max(1, combinedPool.length);
+
+        mappedResults = combinedPool
+          .slice(startOffset, startOffset + HUB_PAGE_SIZE)
           .map((it) => ({
             ...it,
             id: it.id.startsWith('yt-') ? it.id : `yt-${it.youtubeId}`,
+            thumbnailUrl: it.youtubeId
+              ? `https://i.ytimg.com/vi/${it.youtubeId}/mqdefault.jpg`
+              : it.thumbnailUrl,
           }));
       }
 
-      if (tabCacheKey && mappedResults.length > 0) {
+      if (tabCacheKey && targetPage === 1 && mappedResults.length > 0) {
         try {
           const rawCache = sessionStorage.getItem('jatt_yt_tab_cache');
           const parsed = rawCache ? JSON.parse(rawCache) : {};
-          parsed[tabCacheKey] = mappedResults;
+          parsed[tabCacheKey] = {
+            items: mappedResults.slice(0, HUB_PAGE_SIZE),
+            nextPageToken: resolvedNextToken,
+          };
           sessionStorage.setItem('jatt_yt_tab_cache', JSON.stringify(parsed));
         } catch {
           // ignore
         }
       }
 
-      setYoutubeLiveResults(mappedResults);
+      setYtPage(targetPage);
+      setYtNextPageToken(resolvedNextToken);
+      setYtPrevPageToken(resolvedPrevToken);
+      setYoutubeLiveResults(mappedResults.slice(0, HUB_PAGE_SIZE));
       setSearchSource('youtube');
+      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       onShowToast(
-        `Showing ${mappedResults.length} playable videos${displayLabel ? ` in ${displayLabel}` : ` for "${query}"`}`
+        `Page ${targetPage}: Showing ${mappedResults.length} playable videos${displayLabel ? ` in ${displayLabel}` : ` for "${query}"`}`
       );
     } finally {
       setIsSearchingYouTube(false);
+    }
+  };
+
+  const handleLoadYouTubePage = (direction: 'prev' | 'next') => {
+    const ctx = lastSearchContextRef.current || {
+      query: searchQuery || 'World Movies',
+    };
+    if (direction === 'next') {
+      const nextToken = ytNextPageToken && !ytNextPageToken.startsWith('page-') ? ytNextPageToken : null;
+      void handleSearchYouTubeLive(ctx.query, ctx.tabCacheKey, ctx.displayLabel, ytPage + 1, nextToken);
+    } else if (ytPage > 1) {
+      const prevToken = ytPrevPageToken && !ytPrevPageToken.startsWith('page-') ? ytPrevPageToken : null;
+      void handleSearchYouTubeLive(ctx.query, ctx.tabCacheKey, ctx.displayLabel, ytPage - 1, prevToken);
     }
   };
 
@@ -1560,13 +1708,21 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
       });
   }, [items, selectedCategory, searchQuery, sortBy]);
 
-  // Merge live YouTube search results or catalog items
+  // Paginated Catalog or Live YouTube results (max 10 cards mounted per page to save 3GB RAM)
+  const totalCatalogPages = Math.max(1, Math.ceil(filteredItems.length / HUB_PAGE_SIZE));
+  const safeCatalogPage = Math.min(catalogPage, totalCatalogPages);
+
+  useEffect(() => {
+    setCatalogPage(1);
+  }, [selectedCategory, searchQuery, sortBy]);
+
   const displayedItems = useMemo(() => {
     if (searchSource === 'youtube' && youtubeLiveResults.length > 0) {
-      return youtubeLiveResults;
+      return youtubeLiveResults.slice(0, HUB_PAGE_SIZE);
     }
-    return filteredItems;
-  }, [searchSource, youtubeLiveResults, filteredItems]);
+    const start = (safeCatalogPage - 1) * HUB_PAGE_SIZE;
+    return filteredItems.slice(start, start + HUB_PAGE_SIZE);
+  }, [searchSource, youtubeLiveResults, filteredItems, safeCatalogPage]);
 
   // Completed downloads for "My Downloads"
   const completedDownloads = useMemo(() => {
@@ -1634,8 +1790,29 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
           </div>
         </div>
 
-        {/* View Switcher: Marketplace vs My Downloads */}
+        {/* View Switcher: RAM Saver Toggle, Marketplace vs My Downloads, Mute */}
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const next = toggleRamSaverMode();
+              onShowToast(
+                next
+                  ? 'Lite / RAM Saver Mode ON (480p default, mqdefault thumbs, zero blur)'
+                  : 'Lite / RAM Saver Mode OFF (Full visuals)'
+              );
+            }}
+            className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-1 cursor-pointer transition-colors ${
+              isRamSaverMode
+                ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
+                : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+            }`}
+            title="Toggle Lite / 3GB RAM Saver Mode"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">{isRamSaverMode ? 'RAM Saver ON' : 'Lite RAM'}</span>
+          </button>
+
           <div className="flex items-center p-1 bg-neutral-900 rounded-xl border border-neutral-800 text-xs font-bold">
             <button
               type="button"
@@ -1763,6 +1940,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                       key={opt.id}
                                       type="button"
                                       onClick={() => {
+                                        hasManualQualityRef.current = true;
                                         setSelectedQuality(opt.id);
                                         setIsQualityMenuOpen(false);
                                         onShowToast(`Resolution set to ${opt.label}`);
@@ -2001,6 +2179,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                           key={opt.id}
                                           type="button"
                                           onClick={() => {
+                                            hasManualQualityRef.current = true;
                                             setSelectedQuality(opt.id);
                                             setIsQualityMenuOpen(false);
                                             onShowToast(`Resolution set to ${opt.label}`);
@@ -2902,6 +3081,67 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                 })}
               </div>
             )}
+
+              {/* Paginated Navigation (10 items/page keeps RAM low on 3GB Android phones) */}
+              {!isSearchingYouTube && displayedItems.length > 0 && (
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-neutral-900/90 border border-neutral-800">
+                  {searchSource === 'youtube' ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={ytPage <= 1}
+                        onClick={() => handleLoadYouTubePage('prev')}
+                        className="px-3.5 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        <span>Prev 10</span>
+                      </button>
+                      <span className="text-xs font-black text-neutral-300 tabular-nums">
+                        Page {ytPage} · 10 / page ({isRamSaverMode ? '3GB RAM Lite' : 'Standard'})
+                      </span>
+                      <button
+                        type="button"
+                        disabled={!ytNextPageToken && displayedItems.length < HUB_PAGE_SIZE}
+                        onClick={() => handleLoadYouTubePage('next')}
+                        className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 disabled:opacity-40 text-xs font-black text-white flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <span>Next 10</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={safeCatalogPage <= 1}
+                        onClick={() => {
+                          setCatalogPage((p) => Math.max(1, p - 1));
+                          scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        <span>Prev 10</span>
+                      </button>
+                      <span className="text-xs font-black text-neutral-300 tabular-nums">
+                        Page {safeCatalogPage} of {totalCatalogPages} · 10 / page
+                      </span>
+                      <button
+                        type="button"
+                        disabled={safeCatalogPage >= totalCatalogPages}
+                        onClick={() => {
+                          setCatalogPage((p) => Math.min(totalCatalogPages, p + 1));
+                          scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 disabled:opacity-40 text-xs font-black text-white flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <span>Next 10</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
               </div>
             </div>
           </div>

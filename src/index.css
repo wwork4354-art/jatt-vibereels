@@ -117,3 +117,27 @@
   white-space: nowrap;
   animation: marquee 12s linear infinite;
 }
+
+/* ========================================================================= */
+/* LITE / 3GB RAM SAVER MODE (Disables backdrop blur & heavy particle glows) */
+/* ========================================================================= */
+html.ram-saver-mode *,
+html.ram-saver-mode *::before,
+html.ram-saver-mode *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html.ram-saver-mode .animate-spin-slow,
+html.ram-saver-mode .animate-float-note-1,
+html.ram-saver-mode .animate-float-note-2,
+html.ram-saver-mode .animate-marquee,
+html.ram-saver-mode .animate-ping,
+html.ram-saver-mode .animate-bounce {
+  animation: none !important;
+}
+
+html.ram-saver-mode [class*="shadow-"] {
+  --tw-shadow-color: transparent;
+}
+

@@ -22,7 +22,9 @@ import {
   Image as ImageIcon,
   Send,
   Sliders,
+  Zap,
 } from 'lucide-react';
+import { useRamSaverMode } from '../lib/ramSaverMode';
 import { UserAccount, VideoPost, CreatorProfileData, AudioTrackOption } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService';
@@ -60,6 +62,7 @@ interface TopBarProps {
   onOpenDirectSnaps?: () => void;
   unreadDirectSnapsCount?: number;
   onLogout: () => void;
+  onShowToast?: (msg: string) => void;
   currentTab?: string;
 }
 
@@ -85,8 +88,10 @@ const TopBarComponent: React.FC<TopBarProps> = ({
   onOpenDirectSnaps,
   unreadDirectSnapsCount = 0,
   onLogout,
+  onShowToast,
   currentTab,
 }) => {
+  const { isRamSaverMode, toggleRamSaverMode } = useRamSaverMode();
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -403,6 +408,28 @@ const TopBarComponent: React.FC<TopBarProps> = ({
 
       {/* Primary Action Controls */}
       <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+        {/* Lite / RAM Saver Mode Toggle */}
+        <button
+          type="button"
+          onClick={() => {
+            const next = toggleRamSaverMode();
+            onShowToast?.(
+              next
+                ? 'Lite / RAM Saver Mode ON (3GB RAM Optimized)'
+                : 'Lite / RAM Saver Mode OFF (Full Visuals)'
+            );
+          }}
+          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-black border transition-all cursor-pointer ${
+            isRamSaverMode
+              ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
+              : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700/80 text-neutral-300'
+          }`}
+          title="Toggle Lite / RAM Saver Mode (Disables blur/particles & caps thumbnails to 320x180)"
+        >
+          <Zap className={`w-3.5 h-3.5 ${isRamSaverMode ? 'text-emerald-400 fill-emerald-400/30' : 'text-neutral-400'}`} />
+          <span className="hidden xl:inline">{isRamSaverMode ? 'RAM Saver' : 'Lite RAM'}</span>
+        </button>
+
         <PWAInstallButton variant="topbar" />
 
         {/* Search Creators Modal Trigger */}

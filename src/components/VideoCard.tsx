@@ -28,6 +28,8 @@ import {
   savePlaybackState,
   saveVideoTimestamp,
 } from '../lib/playbackPersistence';
+import { useRamSaverMode } from '../lib/ramSaverMode';
+import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 
 interface VideoCardProps {
   video: VideoPost;
@@ -92,6 +94,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const bgAudioRef = useRef<HTMLAudioElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
   const [isInViewport, setIsInViewport] = useState(isActive);
+  const { isRamSaverMode } = useRamSaverMode();
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [showPlayIcon, setShowPlayIcon] = useState(false);
@@ -267,7 +270,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     const shouldBePlaying = isActive && isInViewport;
 
     if (video.mediaType === 'image') {
-      if (isNext && video.videoUrl) {
+      if (isNext && !isRamSaverMode && video.videoUrl) {
         const prefetch = new Image();
         prefetch.decoding = 'async';
         prefetch.src = video.videoUrl;
@@ -285,35 +288,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     }
 
     const el = videoRef.current;
-    if (!el) return;
-
-    if (shouldBePlaying) {
-      if (el.getAttribute('src') !== video.videoUrl) {
-        el.setAttribute('src', video.videoUrl);
-        pendingResumeTimeRef.current = getSavedVideoTimestamp(video.id);
-      }
-      el.preload = 'auto';
-      el.volume = Math.max(0, Math.min(1, originalVol));
-      el.muted = isMuted || originalVol <= 0.01;
-      applySavedTimestampIfNeeded(el);
-      savePlaybackState({ videoId: video.id });
-
-      const playPromise = el.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            applySavedTimestampIfNeeded(el);
-            setIsPlaying(true);
-            setVideoError(false);
-            syncBackgroundAudio(true);
-          })
-          .catch(() => {
-            setIsPlaying(false);
-            syncBackgroundAudio(false);
-          });
-      }
-    } else {
-      el.pause();
+    if (!shouldBePlaying || !el) {
       if (bgAudioRef.current) {
         bgAudioRef.current.pause();
       }
@@ -321,6 +296,39 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         soundEngine.stopTrack();
       }
       setIsPlaying(false);
+      return;
+    }
+
+    if (el.getAttribute('src') !== video.videoUrl) {
+      el.setAttribute('src', video.videoUrl);
+      pendingResumeTimeRef.current = getSavedVideoTimestamp(video.id);
+    }
+    el.preload = 'auto';
+    el.volume = Math.max(0, Math.min(1, originalVol));
+    el.muted = isMuted || originalVol <= 0.01;
+    applySavedTimestampIfNeeded(el);
+    savePlaybackState({ videoId: video.id });
+
+    const playPromise = el.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          applySavedTimestampIfNeeded(el);
+          setIsPlaying(true);
+          setVideoError(false);
+          syncBackgroundAudio(true);
+        })
+        .catch(() => {
+          setIsPlaying(false);
+          syncBackgroundAudio(false);
+        });
+    }
+
+    return () => {
+      if (el.currentTime > 0.2) {
+        saveVideoTimestamp(video.id, el.currentTime, !el.paused);
+      }
+      el.pause();
       el.muted = true;
       el.preload = 'none';
       if (el.hasAttribute('src')) {
@@ -331,13 +339,14 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           // ignore
         }
       }
-    }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isActive,
     isInViewport,
     isNext,
     isMuted,
+    isRamSaverMode,
     video.id,
     video.videoUrl,
     video.mediaType,
@@ -465,6 +474,16 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   };
 
   const handleDoubleTapLike = (e: React.MouseEvent<HTMLDivElement>) => {
+    soundEngine.playLikeSound();
+
+    if (!video.isLiked) {
+      onLikeToggle(video.id);
+      onShowToast('Liked!');
+    }
+
+    // Skip floating particle burst animations in Lite / 3GB RAM Saver Mode
+    if (isRamSaverMode) return;
+
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -476,13 +495,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       rotation: (Math.random() - 0.5) * 40,
     };
 
-    setFloatingHearts((prev) => [...prev, newHeart]);
-    soundEngine.playLikeSound();
-
-    if (!video.isLiked) {
-      onLikeToggle(video.id);
-      onShowToast('Liked!');
-    }
+    setFloatingHearts((prev) => [...prev.slice(-3), newHeart]);
 
     // Clean up heart after animation
     setTimeout(() => {
@@ -686,6 +699,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   };
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const optimizedPoster = optimizeThumbnailUrl(
+    video.posterUrl,
+    isRamSaverMode ? 'grid' : 'hero',
+    isRamSaverMode
+  );
 
   // Strict virtualization: unmount video DOM completely for off-screen cards outside [active-1 .. active+1]
   if (!isNearViewport && !isActive && !isNext) {
@@ -696,9 +714,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         className="relative w-full h-full snap-item gpu-accelerated bg-neutral-950 flex items-center justify-center overflow-hidden"
         style={{ contain: 'strict' }}
       >
-        {video.posterUrl && (
+        {optimizedPoster && (
           <img
-            src={video.posterUrl}
+            src={optimizedPoster}
             alt={video.title}
             loading="lazy"
             decoding="async"
@@ -709,6 +727,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     );
   }
 
+  // Strictly ONLY 1 active <video> and <audio> element mounted in the entire DOM at any time
   const canPlayMediaNow = isActive && isInViewport;
 
   return (
@@ -718,15 +737,15 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       className="relative w-full h-full snap-item gpu-accelerated flex items-center justify-center bg-black select-none overflow-hidden"
     >
       <div className="relative w-full h-full gpu-accelerated flex items-center justify-center overflow-hidden">
-      {/* Attached Custom Song / Naat Audio Player (when audioUrl exists) */}
-      {hasExternalAudio && (
+      {/* Attached Custom Song / Naat Audio Player (strictly mounted ONLY on active visible card) */}
+      {hasExternalAudio && canPlayMediaNow && (
         <audio
           ref={bgAudioRef}
-          src={canPlayMediaNow ? video.sound.audioUrl : undefined}
+          src={video.sound.audioUrl}
           loop
           playsInline
           crossOrigin="anonymous"
-          preload={canPlayMediaNow ? 'auto' : 'none'}
+          preload="auto"
           className="hidden"
         />
       )}
@@ -760,7 +779,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             />
             {isPlaying && (
               <div className="absolute top-16 left-4 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none">
-                <Music className="w-3 h-3 text-pink-400 animate-pulse" />
+                <Music className={`w-3 h-3 text-pink-400 ${isRamSaverMode ? '' : 'animate-pulse'}`} />
                 <span className="text-[10px] font-black text-pink-200 tracking-wide">
                   {video.sound.category === 'naat' ? 'Naat Audio-Visual' : 'Photo + Audio'}
                 </span>
@@ -769,7 +788,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           </div>
         ) : (
           <>
-            {!videoError && (
+            {!videoError && canPlayMediaNow ? (
               <div
                 className={
                   isLandscape
@@ -779,12 +798,12 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               >
                 <video
                   ref={videoRef}
-                  src={canPlayMediaNow ? video.videoUrl : undefined}
-                  poster={video.posterUrl}
+                  src={video.videoUrl}
+                  poster={optimizedPoster}
                   playsInline
                   loop
-                  muted={isMuted || !canPlayMediaNow}
-                  preload={canPlayMediaNow ? 'auto' : 'none'}
+                  muted={isMuted}
+                  preload="auto"
                   crossOrigin="anonymous"
                   onTimeUpdate={handleTimeUpdate}
                   onCanPlay={() => {
@@ -814,14 +833,31 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   }
                 />
               </div>
-            )}
+            ) : !videoError ? (
+              /* Off-screen adjacent card (prev/next): lightweight poster image only — zero <video> DOM */
+              <div className="w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center bg-neutral-950">
+                {optimizedPoster && (
+                  <img
+                    src={optimizedPoster}
+                    alt={video.title}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover sm:object-contain opacity-85"
+                  />
+                )}
+              </div>
+            ) : null}
 
-            {/* Fallback procedural 60fps canvas if video fails or is unsupported */}
+            {/* Fallback visual if video fails or is unsupported (lightweight static card in RAM Saver Mode) */}
             {videoError && (
-              <div className="relative w-full h-full flex items-center justify-center [transform:translateZ(0)]">
-                <ProceduralCanvas theme={video.category} isPlaying={isPlaying} />
+              <div
+                className={`relative w-full h-full flex items-center justify-center [transform:translateZ(0)] ${
+                  isRamSaverMode ? `bg-gradient-to-b ${video.fallbackGradient || 'from-neutral-900 to-black'}` : ''
+                }`}
+              >
+                {!isRamSaverMode && <ProceduralCanvas theme={video.category} isPlaying={isPlaying} />}
                 <div className="absolute top-16 left-4 z-20 bg-neutral-900/90 px-3 py-1.5 rounded-full border border-neutral-700/60 flex items-center gap-2 [transform:translateZ(0)]">
-                  <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
+                  <span className={`w-2 h-2 rounded-full bg-pink-500 ${isRamSaverMode ? '' : 'animate-ping'}`} />
                   <span className="text-[11px] font-semibold text-neutral-300">Live Visual Reel</span>
                 </div>
               </div>
@@ -1205,8 +1241,8 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             onShowToast(`Sound: "${video.sound.title}" by ${video.sound.artist}`);
           }}
         >
-          {/* Floating musical note particles */}
-          {isPlaying && (
+          {/* Floating musical note particles (disabled in RAM Saver Mode) */}
+          {isPlaying && !isRamSaverMode && (
             <>
               <span className="absolute text-pink-400 text-xs font-bold pointer-events-none animate-float-note-1">
                 ♪
@@ -1218,7 +1254,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           )}
           <div
             className={`w-11 h-11 rounded-full bg-neutral-900 border-2 border-neutral-700/80 p-1 flex items-center justify-center shadow-xl ${
-              isPlaying ? 'animate-spin-slow' : ''
+              isPlaying && !isRamSaverMode ? 'animate-spin-slow' : ''
             }`}
           >
             <div className="w-full h-full rounded-full bg-gradient-to-tr from-pink-600 via-purple-600 to-indigo-600 flex items-center justify-center">
@@ -1366,9 +1402,15 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               </span>
             )}
             <div className="overflow-hidden whitespace-nowrap">
-              <span className="animate-marquee inline-block font-medium">
-                {video.sound.title} · {video.sound.artist} &nbsp;&nbsp;&nbsp;&nbsp; {video.sound.title} · {video.sound.artist}
-              </span>
+              {isRamSaverMode ? (
+                <span className="inline-block font-medium truncate max-w-[215px]">
+                  {video.sound.title} · {video.sound.artist}
+                </span>
+              ) : (
+                <span className="animate-marquee inline-block font-medium">
+                  {video.sound.title} · {video.sound.artist} &nbsp;&nbsp;&nbsp;&nbsp; {video.sound.title} · {video.sound.artist}
+                </span>
+              )}
             </div>
           </div>
         </div>
