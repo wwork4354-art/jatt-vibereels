@@ -62,6 +62,10 @@ import {
   fileToPersistentDataUrl,
 } from '../lib/supabaseService';
 import { savePostForOffline } from '../lib/offlineMediaStore';
+import {
+  StudioMusicPickerDrawer,
+  AttachedOnlineSong,
+} from './StudioMusicPickerDrawer';
 
 interface TemplatesStudioViewProps {
   currentUser: UserAccount | null;
@@ -274,6 +278,19 @@ function drawTemplateFrame(
     scale += beatPulse * 0.05;
   }
 
+  if (template.transitionStyle === '3d_zoom') {
+    const swing = Math.sin(clipLocalT * Math.PI);
+    scale += 0.08 + swing * 0.16;
+    tx += Math.sin(elapsedSec * 2.1) * (w * 0.025);
+    ty += Math.cos(elapsedSec * 1.7) * (h * 0.015);
+    tiltRad += Math.sin(elapsedSec * 1.9) * 0.024;
+  } else if (template.transitionStyle === 'velocity_edit') {
+    const ramp = Math.pow(clipLocalT, 2.2);
+    scale += ramp * 0.18 + beatPulse * 0.09;
+  } else if (template.transitionStyle === 'blur_glow') {
+    scale += clipLocalT * 0.08;
+  }
+
   if (template.transitionStyle === 'ken_burns') {
     scale += clipLocalT * 0.06;
     tx += (clipLocalT - 0.5) * (w * 0.035);
@@ -291,11 +308,18 @@ function drawTemplateFrame(
     tiltRad = Math.sin(elapsedSec * 38) * shakeStrength * 0.018;
   }
 
-  // Render media layer with template Color Grading Filter
+  // Render media layer with template Color Grading Filter (+ soft optical blur on blur_glow entry)
   ctx.save();
   try {
     if ('filter' in ctx) {
-      ctx.filter = colorGrade.filterCss;
+      const blurPx =
+        template.transitionStyle === 'blur_glow' && timeInCut < 0.35
+          ? Math.max(0, (1 - timeInCut / 0.35) * 6).toFixed(1)
+          : '0';
+      ctx.filter =
+        blurPx !== '0'
+          ? `${colorGrade.filterCss} blur(${blurPx}px)`
+          : colorGrade.filterCss;
     }
   } catch {
     // ignore unsupported canvas filter fallback
@@ -394,6 +418,17 @@ function drawTemplateFrame(
     ctx.restore();
   }
 
+  // Blur Glow soft luminous bloom across beat transitions
+  if (template.transitionStyle === 'blur_glow') {
+    const glowAlpha = Math.min(0.55, (timeInCut < 0.45 ? (1 - timeInCut / 0.45) * 0.48 : 0.12) + beatPulse * 0.15);
+    const bloom = ctx.createRadialGradient(w / 2, h * 0.42, w * 0.04, w / 2, h * 0.42, w * 0.78);
+    bloom.addColorStop(0, `rgba(255, 228, 246, ${glowAlpha})`);
+    bloom.addColorStop(0.55, `rgba(236, 72, 153, ${glowAlpha * 0.45})`);
+    bloom.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = bloom;
+    ctx.fillRect(0, 0, w, h);
+  }
+
   // Flash Transition & Beat Strobe
   if (hasFlash) {
     const cutFlash = cutIndex > 0 ? Math.exp(-timeInCut * 14) * 0.72 : 0;
@@ -401,7 +436,7 @@ function drawTemplateFrame(
     const flashAlpha = Math.min(0.82, cutFlash + beatFlash);
     if (flashAlpha > 0.015) {
       ctx.fillStyle =
-        template.category === 'neon_glow'
+        template.category === 'neon_glow' || template.transitionStyle === '3d_zoom'
           ? `rgba(224, 242, 254, ${flashAlpha})`
           : `rgba(255, 255, 255, ${flashAlpha})`;
       ctx.fillRect(0, 0, w, h);
@@ -639,12 +674,15 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     TEMPLATE_COLOR_GRADES[0]
   );
   const [selectedAudioTrack, setSelectedAudioTrack] = useState<AudioTrackOption | null>(null);
+  const [selectedOnlineSong, setSelectedOnlineSong] = useState<AttachedOnlineSong | null>(null);
+  const [isMusicDrawerOpen, setIsMusicDrawerOpen] = useState(false);
   const [customAudioFile, setCustomAudioFile] = useState<File | null>(null);
   const [customAudioUrl, setCustomAudioUrl] = useState<string>('');
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [allowDownload, setAllowDownload] = useState(true);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(true);
   const [previewProgressPct, setPreviewProgressPct] = useState(0);
+  const [targetSlotIndex, setTargetSlotIndex] = useState<number | null>(null);
 
   // Export progress state
   const [isExporting, setIsExporting] = useState(false);
@@ -652,11 +690,14 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
   const [exportActionLabel, setExportActionLabel] = useState('');
 
   const mediaPickerRef = useRef<HTMLInputElement | null>(null);
+  const singleSlotPickerRef = useRef<HTMLInputElement | null>(null);
   const customAudioPickerRef = useRef<HTMLInputElement | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const customAudioElRef = useRef<HTMLAudioElement | null>(null);
   const exportCancelledRef = useRef(false);
   const activeTemplateRef = useRef<VideoTemplateDef | null>(null);
+  const targetSlotIndexRef = useRef<number | null>(null);
+  targetSlotIndexRef.current = targetSlotIndex;
   const clipsRef = useRef<LoadedMediaClip[]>([]);
   clipsRef.current = clips;
 
@@ -773,15 +814,19 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
         CURATED_AUDIO_LIBRARY.find((a) => a.id === tpl.defaultAudioTrackId) ||
         CURATED_AUDIO_LIBRARY[0];
       setSelectedAudioTrack(defaultTrack);
+      setSelectedOnlineSong(null);
+      setTargetSlotIndex(null);
       startPreviewAudio(defaultTrack, '', false);
     },
     [customAudioUrl, startPreviewAudio]
   );
 
-  // One-Tap "Use Template": applies preset effects + immediately opens gallery to pick 1-5 clips
+  // One-Tap "Use Template": opens the interactive CapCut Multi-Photo/Video Slot Picker & Studio
   const handleUseTemplate = (tpl: VideoTemplateDef) => {
     initializeTemplateEditor(tpl);
-    mediaPickerRef.current?.click();
+    onShowToast(
+      `Opened "${tpl.name}" — select your ${tpl.requiredClips} photos/videos in Step 1!`
+    );
   };
 
   // Tap preview thumbnail directly to inspect live demo studio first before picking files
@@ -804,6 +849,65 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     setClips([]);
     activeTemplateRef.current = null;
     setActiveTemplate(null);
+    setSelectedOnlineSong(null);
+    setTargetSlotIndex(null);
+  };
+
+  const loadSingleMediaFile = async (file: File): Promise<LoadedMediaClip | null> => {
+    const check = validateSafeMediaFile(file);
+    if (!check.valid) {
+      onShowToast(
+        check.reason ||
+          'Blocked unsafe file. Only .mp4, .webm, .jpg, .png, .webp allowed.'
+      );
+      return null;
+    }
+
+    const url = URL.createObjectURL(file);
+    const clipId = `clip-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+    if (check.mediaType === 'image' || file.type.startsWith('image/')) {
+      const img = new Image();
+      img.src = url;
+      await new Promise<void>((resolve) => {
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+        window.setTimeout(resolve, 1500);
+      });
+      return {
+        id: clipId,
+        file,
+        url,
+        mediaType: 'image',
+        name: file.name,
+        durationSec: 3,
+        imageEl: img,
+      };
+    }
+
+    const vid = document.createElement('video');
+    vid.src = url;
+    vid.muted = true;
+    vid.playsInline = true;
+    vid.loop = true;
+    vid.preload = 'auto';
+    await new Promise<void>((resolve) => {
+      vid.onloadeddata = () => resolve();
+      vid.onerror = () => resolve();
+      window.setTimeout(resolve, 2000);
+    });
+    void vid.play().catch(() => {
+      // ignore autoplay restriction
+    });
+    return {
+      id: clipId,
+      file,
+      url,
+      mediaType: 'video',
+      name: file.name,
+      durationSec: Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 4,
+      videoEl: vid,
+    };
   };
 
   // Handle selecting 1 to 5 photos or videos from device gallery
@@ -828,71 +932,54 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     const loaded: LoadedMediaClip[] = [];
 
     for (const file of toProcess) {
-      const check = validateSafeMediaFile(file);
-      if (!check.valid) {
-        onShowToast(
-          check.reason ||
-            'Blocked unsafe file. Only .mp4, .webm, .jpg, .png, .webp allowed.'
-        );
-        continue;
-      }
-
-      const url = URL.createObjectURL(file);
-      const clipId = `clip-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-      if (check.mediaType === 'image' || file.type.startsWith('image/')) {
-        const img = new Image();
-        img.src = url;
-        await new Promise<void>((resolve) => {
-          img.onload = () => resolve();
-          img.onerror = () => resolve();
-          window.setTimeout(resolve, 1500);
-        });
-        loaded.push({
-          id: clipId,
-          file,
-          url,
-          mediaType: 'image',
-          name: file.name,
-          durationSec: 3,
-          imageEl: img,
-        });
-      } else {
-        const vid = document.createElement('video');
-        vid.src = url;
-        vid.muted = true;
-        vid.playsInline = true;
-        vid.loop = true;
-        vid.preload = 'auto';
-        await new Promise<void>((resolve) => {
-          vid.onloadeddata = () => resolve();
-          vid.onerror = () => resolve();
-          window.setTimeout(resolve, 2000);
-        });
-        void vid.play().catch(() => {
-          // ignore autoplay restriction
-        });
-        loaded.push({
-          id: clipId,
-          file,
-          url,
-          mediaType: 'video',
-          name: file.name,
-          durationSec: Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 4,
-          videoEl: vid,
-        });
-      }
+      const item = await loadSingleMediaFile(file);
+      if (item) loaded.push(item);
     }
 
     if (loaded.length > 0) {
       setClips((prev) => [...prev, ...loaded]);
       setIsPreviewPlaying(true);
       setPreviewProgressPct(0);
-      startPreviewAudio(selectedAudioTrack, customAudioUrl, isAudioMuted);
+      startPreviewAudio(selectedAudioTrack, customAudioUrl || selectedOnlineSong?.streamUrl || '', isAudioMuted);
       onShowToast(
-        `Auto-synced ${loaded.length} clip${loaded.length === 1 ? '' : 's'} with "${tpl.name}" (${tpl.requiredClips} Clips • ${formatTemplateDuration(tpl.durationSec)})!`
+        `Auto-synced ${loaded.length} clip${loaded.length === 1 ? '' : 's'} with "${tpl.name}"!`
       );
     }
+  };
+
+  const handlePickSingleSlotFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const tpl = activeTemplateRef.current || activeTemplate;
+    const slotIdx = targetSlotIndexRef.current;
+    setTargetSlotIndex(null);
+    if (!file || !tpl) return;
+
+    const item = await loadSingleMediaFile(file);
+    if (!item) return;
+
+    setClips((prev) => {
+      const next = [...prev];
+      if (slotIdx !== null && slotIdx >= 0 && slotIdx < next.length) {
+        const old = next[slotIdx];
+        if (old) {
+          try {
+            old.videoEl?.pause();
+            URL.revokeObjectURL(old.url);
+          } catch {
+            // ignore
+          }
+        }
+        next[slotIdx] = item;
+        return next;
+      }
+      if (next.length >= tpl.maxClips) return next;
+      return [...next, item];
+    });
+    setIsPreviewPlaying(true);
+    setPreviewProgressPct(0);
+    startPreviewAudio(selectedAudioTrack, customAudioUrl || selectedOnlineSong?.streamUrl || '', isAudioMuted);
+    onShowToast(`Added media to Slot ${(slotIdx ?? clipsRef.current.length) + 1} in "${tpl.name}"`);
   };
 
   const handleRemoveClip = (clipId: string) => {
@@ -1319,11 +1406,17 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
       const soundMeta: VideoPost['sound'] = {
         title: customAudioFile
           ? sanitizeText(customAudioFile.name.replace(/\.[^/.]+$/, ''), 60)
+          : selectedOnlineSong
+          ? selectedOnlineSong.title
           : trackToUse.title,
-        artist: customAudioFile ? activeAuthorName : trackToUse.artist,
+        artist: customAudioFile
+          ? activeAuthorName
+          : selectedOnlineSong
+          ? selectedOnlineSong.artist
+          : trackToUse.artist,
         trackType: trackToUse.trackType,
-        audioUrl: customAudioUrl || undefined,
-        category: customAudioFile ? 'original' : trackToUse.category,
+        audioUrl: customAudioUrl || selectedOnlineSong?.streamUrl || undefined,
+        category: customAudioFile ? 'original' : selectedOnlineSong ? 'song' : trackToUse.category,
         originalVolume: 0.7,
         bgAudioVolume: isAudioMuted ? 0 : 0.85,
         hasAttachedAudio: !isAudioMuted,
@@ -1456,6 +1549,13 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
         accept=".mp4,.webm,.jpg,.jpeg,.png,.webp,video/mp4,video/webm,image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={handlePickGalleryFiles}
+      />
+      <input
+        ref={singleSlotPickerRef}
+        type="file"
+        accept=".mp4,.webm,.jpg,.jpeg,.png,.webp,video/mp4,video/webm,image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={handlePickSingleSlotFile}
       />
       <input
         ref={customAudioPickerRef}
@@ -1598,40 +1698,90 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
 
               {/* Right: Clip Strip, Transitions/Color Grade, Text & Sound Controls, Export */}
               <div className="lg:col-span-7 space-y-4">
-                {/* Step 1: 1-5 Gallery Clip Timeline */}
-                <div className="rounded-2xl bg-neutral-900/75 border border-neutral-800 p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
+                {/* Step 1: CapCut-Style Multi-Photo/Video Slot Picker */}
+                <div className="rounded-2xl bg-neutral-900/80 border border-pink-500/30 p-4 space-y-3 shadow-lg shadow-pink-600/5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
                         <Film className="w-3.5 h-3.5 text-pink-400" />
                         <span>
-                          1. Select 1–{activeTemplate.maxClips} Clips ({clips.length}/
-                          {activeTemplate.maxClips})
+                          1. CapCut Media Slot Picker ({clips.length}/{activeTemplate.requiredClips} Needed · Max {activeTemplate.maxClips})
                         </span>
                       </h3>
                       <p className="text-[11px] text-neutral-400 mt-0.5">
-                        Auto-cut on {activeTemplate.bpm} BPM beats · Photos &amp; videos supported
+                        Tap any slot below to add/replace a photo or video, or pick all clips from your gallery
                       </p>
                     </div>
                     <button
                       type="button"
                       disabled={clips.length >= activeTemplate.maxClips}
                       onClick={() => mediaPickerRef.current?.click()}
-                      className="min-h-[44px] px-3.5 rounded-xl bg-pink-600 hover:bg-pink-500 disabled:opacity-45 text-white text-xs font-black flex items-center gap-1.5 shrink-0 cursor-pointer"
+                      className="min-h-[42px] px-3.5 rounded-xl bg-gradient-to-r from-pink-600 to-rose-500 hover:brightness-110 disabled:opacity-45 text-white text-xs font-black flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md shadow-pink-600/20"
                     >
                       <Upload className="w-3.5 h-3.5" />
-                      <span>{clips.length === 0 ? 'Choose Clips' : 'Add More'}</span>
+                      <span>
+                        {clips.length === 0
+                          ? `Select ${activeTemplate.requiredClips} from Gallery`
+                          : 'Add Multiple'}
+                      </span>
                     </button>
                   </div>
 
-                  {clips.length > 0 && (
-                    <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar py-1">
-                      {clips.map((clip, idx) => (
+                  {/* Interactive Visual Slots Grid (Slot 1..N) */}
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5 pt-1">
+                    {Array.from({
+                      length: Math.min(
+                        activeTemplate.maxClips,
+                        Math.max(activeTemplate.requiredClips, clips.length + (clips.length < activeTemplate.maxClips ? 1 : 0))
+                      ),
+                    }).map((_, slotIdx) => {
+                      const clip = clips[slotIdx];
+                      const slotLabel =
+                        activeTemplate.slotLabels?.[slotIdx] || `Clip ${slotIdx + 1}`;
+                      const cutDur = (
+                        activeTemplate.durationSec /
+                        Math.max(1, activeTemplate.requiredClips) /
+                        speedMultiplier
+                      ).toFixed(1);
+
+                      if (!clip) {
+                        return (
+                          <button
+                            key={`empty-slot-${slotIdx}`}
+                            type="button"
+                            onClick={() => {
+                              setTargetSlotIndex(slotIdx);
+                              singleSlotPickerRef.current?.click();
+                            }}
+                            className="aspect-[9/14] rounded-xl border-2 border-dashed border-neutral-700 hover:border-pink-500 bg-neutral-950/90 hover:bg-neutral-900 flex flex-col items-center justify-center p-2 text-center gap-1.5 transition-all cursor-pointer group"
+                          >
+                            <div className="w-8 h-8 rounded-full bg-pink-500/15 border border-pink-500/40 text-pink-400 group-hover:scale-110 transition-transform flex items-center justify-center">
+                              <Plus className="w-4 h-4" />
+                            </div>
+                            <span className="text-[10px] font-black text-white leading-tight line-clamp-1">
+                              {slotLabel}
+                            </span>
+                            <span className="text-[9px] font-bold text-neutral-400 tabular-nums">
+                              ~{cutDur}s
+                            </span>
+                          </button>
+                        );
+                      }
+
+                      return (
                         <div
                           key={clip.id}
-                          className="relative w-20 shrink-0 rounded-xl overflow-hidden border border-neutral-700 bg-black"
+                          className="relative rounded-xl overflow-hidden border border-pink-500/50 bg-black flex flex-col"
                         >
-                          <div className="aspect-[9/14] w-full bg-neutral-900 relative">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTargetSlotIndex(slotIdx);
+                              singleSlotPickerRef.current?.click();
+                            }}
+                            className="aspect-[9/14] w-full bg-neutral-900 relative block cursor-pointer"
+                            title="Tap to replace photo/video in this slot"
+                          >
                             {clip.mediaType === 'image' ? (
                               <img
                                 src={clip.url}
@@ -1649,47 +1799,52 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                                 className="w-full h-full object-cover"
                               />
                             )}
-                            <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/75 text-[9px] font-black text-white flex items-center gap-0.5">
+                            <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/80 text-[9px] font-black text-white flex items-center gap-0.5">
                               {clip.mediaType === 'image' ? (
                                 <ImageIcon className="w-2.5 h-2.5 text-cyan-400" />
                               ) : (
                                 <Film className="w-2.5 h-2.5 text-pink-400" />
                               )}
-                              {idx + 1}
+                              {slotIdx + 1}
                             </span>
+                            <span className="absolute bottom-1 left-1 right-1 px-1.5 py-0.5 rounded bg-black/75 text-[9px] font-bold text-neutral-200 truncate text-center">
+                              {slotLabel}
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveClip(clip.id)}
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/85 hover:bg-rose-600 text-white flex items-center justify-center cursor-pointer"
+                            aria-label="Remove clip"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+
+                          <div className="flex items-center justify-between px-1 py-0.5 bg-neutral-900 border-t border-neutral-800">
                             <button
                               type="button"
-                              onClick={() => handleRemoveClip(clip.id)}
-                              className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/80 hover:bg-rose-600 text-white flex items-center justify-center cursor-pointer"
-                              aria-label="Remove clip"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                          <div className="flex items-center justify-between px-1 py-1 bg-neutral-900 border-t border-neutral-800">
-                            <button
-                              type="button"
-                              disabled={idx === 0}
-                              onClick={() => handleMoveClip(idx, -1)}
-                              className="min-w-[28px] min-h-[28px] flex items-center justify-center text-neutral-300 disabled:opacity-30 cursor-pointer"
+                              disabled={slotIdx === 0}
+                              onClick={() => handleMoveClip(slotIdx, -1)}
+                              className="min-w-[26px] min-h-[26px] flex items-center justify-center text-neutral-300 disabled:opacity-30 cursor-pointer"
                               aria-label="Move clip left"
                             >
                               <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
                             <button
                               type="button"
-                              disabled={idx === clips.length - 1}
-                              onClick={() => handleMoveClip(idx, 1)}
-                              className="min-w-[28px] min-h-[28px] flex items-center justify-center text-neutral-300 disabled:opacity-30 cursor-pointer"
+                              disabled={slotIdx === clips.length - 1}
+                              onClick={() => handleMoveClip(slotIdx, 1)}
+                              className="min-w-[26px] min-h-[26px] flex items-center justify-center text-neutral-300 disabled:opacity-30 cursor-pointer"
                               aria-label="Move clip right"
                             >
                               <ChevronRight className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Step 2: Beat Cuts, Transitions & Color Grading */}
@@ -1838,21 +1993,51 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
 
                 {/* Step 4: Audio Track & Privacy */}
                 <div className="rounded-2xl bg-neutral-900/75 border border-neutral-800 p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
                       <Music className="w-3.5 h-3.5 text-emerald-400" />
                       <span>4. Background Music &amp; Privacy</span>
                     </h3>
-                    <button
-                      type="button"
-                      onClick={() => customAudioPickerRef.current?.click()}
-                      className="min-h-[38px] px-3 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-700 text-[11px] font-bold text-cyan-300 cursor-pointer"
-                    >
-                      + Custom Audio
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsMusicDrawerOpen(true)}
+                        className="min-h-[38px] px-3 rounded-lg bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 text-[11px] font-black text-white cursor-pointer"
+                      >
+                        Search / Change Song
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => customAudioPickerRef.current?.click()}
+                        className="min-h-[38px] px-3 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-700 text-[11px] font-bold text-cyan-300 cursor-pointer"
+                      >
+                        + MP3
+                      </button>
+                    </div>
                   </div>
 
-                  {customAudioFile ? (
+                  {selectedOnlineSong ? (
+                    <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-pink-500/15 border border-pink-500/35 text-xs">
+                      <div className="min-w-0">
+                        <p className="truncate font-black text-white">{selectedOnlineSong.title}</p>
+                        <p className="truncate text-[10px] text-pink-300">
+                          {selectedOnlineSong.artist} · {selectedOnlineSong.durationLabel}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedOnlineSong(null);
+                          if (isPreviewPlaying && !isAudioMuted) {
+                            startPreviewAudio(selectedAudioTrack, customAudioUrl, false);
+                          }
+                        }}
+                        className="text-neutral-300 hover:text-white p-1.5 cursor-pointer shrink-0"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : customAudioFile ? (
                     <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs">
                       <span className="truncate font-bold text-cyan-200">
                         Custom Audio: {customAudioFile.name}
@@ -1881,6 +2066,7 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                             type="button"
                             onClick={() => {
                               setSelectedAudioTrack(track);
+                              setSelectedOnlineSong(null);
                               if (!isAudioMuted) {
                                 setIsPreviewPlaying(true);
                                 startPreviewAudio(track, '', false);
@@ -2122,6 +2308,44 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
           </div>
         </>
       )}
+
+      {/* Full CapCut Music & Online Song Picker Drawer */}
+      <StudioMusicPickerDrawer
+        isOpen={isMusicDrawerOpen}
+        onClose={() => setIsMusicDrawerOpen(false)}
+        initialTab="online"
+        selectedLibraryTrack={selectedAudioTrack}
+        selectedAudioFile={customAudioFile}
+        selectedAudioPreviewUrl={customAudioUrl || null}
+        selectedOnlineSong={selectedOnlineSong}
+        volume={0.85}
+        onAttachLibraryTrack={(track) => {
+          setSelectedAudioTrack(track);
+          setSelectedOnlineSong(null);
+          setCustomAudioFile(null);
+          setCustomAudioUrl('');
+          setIsAudioMuted(false);
+          setIsPreviewPlaying(true);
+          startPreviewAudio(track, '', false);
+        }}
+        onAttachDeviceFile={(file, url) => {
+          setCustomAudioFile(file);
+          setCustomAudioUrl(url);
+          setSelectedOnlineSong(null);
+          setIsAudioMuted(false);
+          setIsPreviewPlaying(true);
+          startPreviewAudio(selectedAudioTrack, url, false);
+        }}
+        onAttachOnlineSong={(song) => {
+          setSelectedOnlineSong(song);
+          setCustomAudioFile(null);
+          setCustomAudioUrl('');
+          setIsAudioMuted(false);
+          setIsPreviewPlaying(true);
+          startPreviewAudio(selectedAudioTrack, song.streamUrl || '', false);
+        }}
+        onShowToast={onShowToast}
+      />
     </div>
   );
 };

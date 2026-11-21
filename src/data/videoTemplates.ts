@@ -1,5 +1,6 @@
 export type TemplateCategory =
   | 'all'
+  | 'tiktok_viral'
   | 'trending'
   | 'beat_sync'
   | 'slow_mo'
@@ -15,7 +16,10 @@ export type TemplateTransitionStyle =
   | 'ken_burns'
   | 'lyrics_frame'
   | 'spiritual_aura'
-  | 'slide_wipe';
+  | 'slide_wipe'
+  | 'velocity_edit'
+  | '3d_zoom'
+  | 'blur_glow';
 
 export interface ColorGradePreset {
   id: string;
@@ -93,6 +97,7 @@ export interface VideoTemplateDef {
   hashtags: string[];
   previewColors: [string, string, string];
   previewBadge: string;
+  slotLabels?: string[];
 }
 
 export function formatTemplateDuration(durationSec: number): string {
@@ -104,6 +109,7 @@ export function formatTemplateDuration(durationSec: number): string {
 
 export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
   { id: 'all', label: 'All' },
+  { id: 'tiktok_viral', label: 'TikTok Viral' },
   { id: 'trending', label: 'Trending' },
   { id: 'beat_sync', label: 'Beat Sync' },
   { id: 'slow_mo', label: 'Slow-Mo' },
@@ -112,6 +118,166 @@ export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string }[] = [
 ];
 
 export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
+  {
+    id: 'tpl-tiktok-velocity',
+    name: 'TikTok Velocity Edit',
+    tagline: 'Viral CapCut-style speed-ramped photo/video beat cuts with punchy flash drops.',
+    category: 'tiktok_viral',
+    categories: ['tiktok_viral', 'trending', 'beat_sync'],
+    categoryLabel: 'TikTok Viral',
+    durationSec: 14,
+    bpm: 130,
+    beatCutIntervalBeats: 2,
+    requiredClips: 4,
+    minClips: 1,
+    maxClips: 5,
+    aspectRatio: '9:16',
+    defaultSpeedMultiplier: 1.25,
+    defaultOverlayText: 'VELOCITY EDIT',
+    defaultSecondaryText: 'Viral Beat Ramp · Smooth Flash Cuts',
+    defaultAudioTrackId: 'beat-phonk-drift',
+    colorGradeName: 'Cyber Neon',
+    colorTintRgba: 'rgba(6, 182, 212, 0.14)',
+    filterCss: 'contrast(1.2) saturate(1.34) brightness(1.03)',
+    accentColor: '#ec4899',
+    accentGradient: 'from-pink-600 via-fuchsia-500 to-cyan-500',
+    primaryTransition: 'zoom-in',
+    transitions: ['zoom-in', 'flash', 'shake'],
+    transitionStyle: 'velocity_edit',
+    hashtags: ['tiktokvelocity', 'capcuttemplate', 'viral', 'vibereels'],
+    previewColors: ['#190b28', '#ec4899', '#06b6d4'],
+    previewBadge: 'TikTok Velocity',
+    slotLabels: ['Intro Shot', 'Beat Drop 1', 'Beat Drop 2', 'Outro Climax'],
+  },
+  {
+    id: 'tpl-capcut-3d-zoom',
+    name: 'CapCut 3D Zoom Photo',
+    tagline: 'Signature 3D parallax photo depth motion with pop-out zoom & smooth slide transitions.',
+    category: 'tiktok_viral',
+    categories: ['tiktok_viral', 'trending', 'neon_glow'],
+    categoryLabel: 'TikTok Viral',
+    durationSec: 15,
+    bpm: 118,
+    beatCutIntervalBeats: 4,
+    requiredClips: 4,
+    minClips: 1,
+    maxClips: 5,
+    aspectRatio: '9:16',
+    defaultSpeedMultiplier: 1,
+    defaultOverlayText: '3D PHOTO ZOOM',
+    defaultSecondaryText: 'CapCut 3D Depth · Auto Parallax Motion',
+    defaultAudioTrackId: 'beat-future-neon',
+    colorGradeName: 'Cyber Neon',
+    colorTintRgba: 'rgba(56, 189, 248, 0.12)',
+    filterCss: 'contrast(1.18) saturate(1.3) brightness(1.04)',
+    accentColor: '#22d3ee',
+    accentGradient: 'from-cyan-500 via-blue-600 to-purple-600',
+    primaryTransition: 'zoom-in',
+    transitions: ['zoom-in', 'slide', 'flash'],
+    transitionStyle: '3d_zoom',
+    hashtags: ['3dzoom', 'capcut', 'photoedit', 'vibereels'],
+    previewColors: ['#091529', '#06b6d4', '#8b5cf6'],
+    previewBadge: '3D Zoom Photo',
+    slotLabels: ['Portrait 1', 'Portrait 2', 'Pose 3', 'Hero Shot'],
+  },
+  {
+    id: 'tpl-blur-glow-transition',
+    name: 'Blur Glow Transition',
+    tagline: 'Dreamy soft-focus optical blur glow & luminous pastel light leak transitions.',
+    category: 'tiktok_viral',
+    categories: ['tiktok_viral', 'slow_mo', 'neon_glow'],
+    categoryLabel: 'TikTok Viral',
+    durationSec: 15,
+    bpm: 96,
+    beatCutIntervalBeats: 4,
+    requiredClips: 3,
+    minClips: 1,
+    maxClips: 5,
+    aspectRatio: '9:16',
+    defaultSpeedMultiplier: 0.75,
+    defaultOverlayText: 'DREAMY GLOW',
+    defaultSecondaryText: 'Soft Blur Transition · Aesthetic Shine',
+    defaultAudioTrackId: 'beat-lofi-chill',
+    colorGradeName: 'Velvet Rose',
+    colorTintRgba: 'rgba(236, 72, 153, 0.15)',
+    filterCss: 'contrast(1.1) saturate(1.24) brightness(1.05)',
+    accentColor: '#f472b6',
+    accentGradient: 'from-rose-500 via-pink-500 to-indigo-500',
+    primaryTransition: 'flash',
+    transitions: ['flash', 'zoom-in', 'slide'],
+    transitionStyle: 'blur_glow',
+    hashtags: ['blurglow', 'aesthetic', 'tiktokviral', 'vibereels'],
+    previewColors: ['#250e24', '#db2777', '#a855f7'],
+    previewBadge: 'Blur Glow · 0.75x',
+    slotLabels: ['Photo / Clip 1', 'Glow Reveal', 'Final Aesthetic'],
+  },
+  {
+    id: 'tpl-punjabi-beat-flash',
+    name: 'Punjabi Beat Flash',
+    tagline: 'Hard Punjabi dhol strobe flash cuts, bass shake & royal golden swag typography.',
+    category: 'bhangra_punjabi',
+    categories: ['tiktok_viral', 'trending', 'bhangra_punjabi', 'beat_sync'],
+    categoryLabel: 'Bhangra / Punjabi Vibe',
+    durationSec: 15,
+    bpm: 132,
+    beatCutIntervalBeats: 2,
+    requiredClips: 4,
+    minClips: 1,
+    maxClips: 5,
+    aspectRatio: '9:16',
+    defaultSpeedMultiplier: 1,
+    defaultOverlayText: 'PUNJABI BEAT FLASH',
+    defaultSecondaryText: 'Dhol Strobe · High Voltage Vibe',
+    lyricLines: [
+      'Dhol Strobe · High Voltage Vibe',
+      'Desi Swag · Zero Limit Attitude',
+      'Jatt VibeReels · Punjab Da Pride',
+    ],
+    defaultAudioTrackId: 'beat-bhangra-drop',
+    colorGradeName: 'Golden Amber',
+    colorTintRgba: 'rgba(245, 158, 11, 0.16)',
+    filterCss: 'contrast(1.22) saturate(1.34) sepia(0.12)',
+    accentColor: '#f59e0b',
+    accentGradient: 'from-amber-500 via-orange-600 to-rose-600',
+    primaryTransition: 'flash',
+    transitions: ['flash', 'shake', 'zoom-in'],
+    transitionStyle: 'neon_flash',
+    hashtags: ['punjabibeatflash', 'bhangra', 'jattswag', 'vibereels'],
+    previewColors: ['#2b1305', '#f59e0b', '#e11d48'],
+    previewBadge: 'Beat Flash · 132 BPM',
+    slotLabels: ['Entry Pose', 'Dhol Flash 1', 'Bass Drop', 'Swag Finale'],
+  },
+  {
+    id: 'tpl-slow-mo-shake',
+    name: 'Slow-Mo Shake',
+    tagline: 'Silky 0.65x slow-motion velocity paired with heavy camera-bump shake on every beat.',
+    category: 'slow_mo',
+    categories: ['tiktok_viral', 'slow_mo', 'beat_sync'],
+    categoryLabel: 'Slow-Mo',
+    durationSec: 16,
+    bpm: 90,
+    beatCutIntervalBeats: 4,
+    requiredClips: 3,
+    minClips: 1,
+    maxClips: 5,
+    aspectRatio: '9:16',
+    defaultSpeedMultiplier: 0.65,
+    defaultOverlayText: 'SLOW-MO SHAKE',
+    defaultSecondaryText: '0.65x Velvet Motion · Sub-Bass Punch',
+    defaultAudioTrackId: 'beat-cinematic-bass',
+    colorGradeName: 'Moody 295 Film',
+    colorTintRgba: 'rgba(180, 83, 9, 0.14)',
+    filterCss: 'contrast(1.22) saturate(0.95) brightness(0.97)',
+    accentColor: '#fb7185',
+    accentGradient: 'from-rose-600 via-amber-500 to-purple-700',
+    primaryTransition: 'shake',
+    transitions: ['shake', 'zoom-in', 'flash'],
+    transitionStyle: 'bass_shake',
+    hashtags: ['slowmoshake', 'capcut', 'velocity', 'vibereels'],
+    previewColors: ['#1d0c16', '#e11d48', '#f59e0b'],
+    previewBadge: '0.65x Slow-Mo Shake',
+    slotLabels: ['Slow-Mo Opener', 'Beat Shake Cut', 'Climax Zoom'],
+  },
   {
     id: 'tpl-punjabi-attitude-zoom',
     name: 'Punjabi Beat Drop',

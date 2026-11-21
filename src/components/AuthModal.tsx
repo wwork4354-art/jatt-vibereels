@@ -24,6 +24,7 @@ import { soundEngine } from '../utils/soundEngine';
 import {
   MAIN_ADMIN_EMAIL,
   MAIN_ADMIN_USERNAME,
+  MAIN_ADMIN_ALT_USERNAME,
   verifyLegacyPasswordForUser,
 } from '../data/mockUsers';
 import { syncRegisteredUserToCloud } from '../lib/supabaseService';
@@ -96,7 +97,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const isTargetMainAdmin = (term: string) => {
     const clean = sanitizeText(term, 120).toLowerCase().replace(/^@+/, '');
-    return clean === MAIN_ADMIN_EMAIL || clean === MAIN_ADMIN_USERNAME;
+    return (
+      clean === MAIN_ADMIN_EMAIL ||
+      clean === MAIN_ADMIN_USERNAME ||
+      clean === MAIN_ADMIN_ALT_USERNAME
+    );
   };
 
   const passwordStrength = validatePasswordStrength(passwordInput);

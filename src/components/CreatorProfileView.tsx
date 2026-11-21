@@ -831,18 +831,18 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-sm font-black text-white flex items-center gap-2 flex-wrap">
-                    <span>Joined Users Tracker</span>
+                    <span>Registered App Users</span>
                     <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/45 text-amber-200 text-[10px] font-black">
                       Admin Only
                     </span>
                     {isAdminUnlocked && (
                       <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[10px] font-black tabular-nums">
-                        {allUsers.length} Joined
+                        {allUsers.length} Registered
                       </span>
                     )}
                   </h3>
                   <p className="text-[11px] text-neutral-400">
-                    Chronological step-by-step log of every registered account and created profile
+                    Live directory showing every registered user&apos;s profile picture, name, @username &amp; join date
                   </p>
                 </div>
               </div>
@@ -2170,13 +2170,13 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                   </div>
                   <div className="min-w-0">
                     <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2 flex-wrap">
-                      <span>All Registered Users</span>
+                      <span>Registered App Users</span>
                       <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[10px] font-black">
                         {allUsers.length} Accounts
                       </span>
                     </h3>
                     <p className="text-[11px] text-neutral-400 truncate">
-                      Admin-only directory · View profiles or follow any member
+                      Live registered accounts · Profile pictures, names &amp; join dates
                     </p>
                   </div>
                 </div>

@@ -25,6 +25,7 @@ import {
   Sliders,
   Zap,
   Menu,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useRamSaverMode } from '../lib/ramSaverMode';
 import {
@@ -70,6 +71,8 @@ interface MobileNavigationProps {
   onShowToast?: (msg: string) => void;
   isBottomNavOpen: boolean;
   onToggleBottomNav: () => void;
+  feedControlsSide?: 'left' | 'right';
+  onToggleFeedControlsSide?: () => void;
 }
 
 const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
@@ -99,6 +102,8 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
   onShowToast,
   isBottomNavOpen,
   onToggleBottomNav,
+  feedControlsSide = 'left',
+  onToggleFeedControlsSide,
 }) => {
   const { isRamSaverMode, toggleRamSaverMode } = useRamSaverMode();
   const [isMobileProfileOpen, setIsMobileProfileOpen] = useState(false);
@@ -170,130 +175,176 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
 
   return (
     <>
-      {/* Mobile Top Header (Notch/Status-bar safe + Compact LIVE / Following / For You Tabs Row) */}
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 backdrop-blur-md border-b border-neutral-800/80 pt-[max(0.65rem,env(safe-area-inset-top))] pb-1.5 px-2.5 flex flex-col gap-1.5 [transform:translateZ(0)]">
-        {/* Top Row: Compact Brand Logo + Quick Utility Icons */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center shrink-0">
-            <img
-              src={BRAND_LOGO_SRC}
-              alt="Jatt VibeReels"
-              loading="lazy"
-              decoding="async"
-              className="h-6 w-auto max-w-[98px] object-contain rounded-md"
-            />
-          </div>
+      {/* Mobile Top Header (Notch/Status-bar safe + Never clips Profile/Logout on narrow phones + Swap Left/Right) */}
+      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 w-full max-w-full overflow-x-hidden bg-neutral-950/95 backdrop-blur-md border-b border-neutral-800/80 pt-[max(0.65rem,env(safe-area-inset-top))] pb-1.5 px-3 flex flex-col gap-1.5 [transform:translateZ(0)]">
+        {/* Top Row: Swappable Profile/Logout cluster & Brand Logo with overflow-safe utility strip */}
+        {(() => {
+          const isLeftHeaderProfile = feedControlsSide === 'left';
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                const next = toggleRamSaverMode();
-                onShowToast?.(
-                  next
-                    ? 'Lite / RAM Saver Mode ON (3GB RAM Optimized)'
-                    : 'Lite / RAM Saver Mode OFF (Full Visuals)'
-                );
-              }}
-              className={`px-2 py-1 rounded-lg border text-[10px] font-black flex items-center gap-1 cursor-pointer ${
-                isRamSaverMode
-                  ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
-                  : 'bg-neutral-900 border-neutral-800 text-neutral-400'
-              }`}
-              title="Toggle Lite / RAM Saver Mode for 3GB RAM Android devices"
-              aria-label="Toggle Lite RAM Saver Mode"
-            >
-              <Zap className="w-3 h-3" />
-              <span>{isRamSaverMode ? 'Lite' : 'RAM'}</span>
-            </button>
-            <PWAInstallButton variant="mobile-header" />
-            <button
-              type="button"
-              onClick={() => setIsMobileSearchOpen((prev) => !prev)}
-              className={`p-1.5 rounded-lg border transition-colors ${
-                isMobileSearchOpen
-                  ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
-                  : 'bg-neutral-900 border-neutral-800 text-cyan-400 hover:text-white'
-              }`}
-              title="Search User ID (@username) or Creator Name"
-              aria-label="Search Creators"
-            >
-              {isMobileSearchOpen ? <X className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
-            </button>
-            {onOpenDirectSnaps && (
+          const brandLogoNode = (
+            <div className="flex items-center shrink-0">
+              <img
+                src={BRAND_LOGO_SRC}
+                alt="Jatt VibeReels"
+                loading="lazy"
+                decoding="async"
+                className="h-5 min-[380px]:h-6 w-auto max-w-[68px] min-[380px]:max-w-[90px] object-contain rounded-md"
+              />
+            </div>
+          );
+
+          const utilityIconsNode = (
+            <div className="flex items-center gap-1 min-w-0 overflow-x-auto no-scrollbar">
               <button
                 type="button"
-                onClick={onOpenDirectSnaps}
-                className="relative p-1.5 rounded-lg border bg-neutral-900 border-amber-500/40 text-amber-300 cursor-pointer"
-                title="Direct Chat & Live Snaps Inbox"
-                aria-label="Direct Chat & Live Snaps"
+                onClick={() => {
+                  const next = toggleRamSaverMode();
+                  onShowToast?.(
+                    next
+                      ? 'Lite / RAM Saver Mode ON (3GB RAM Optimized)'
+                      : 'Lite / RAM Saver Mode OFF (Full Visuals)'
+                  );
+                }}
+                className={`px-1.5 py-1 rounded-lg border text-[10px] font-black flex items-center gap-0.5 shrink-0 cursor-pointer ${
+                  isRamSaverMode
+                    ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
+                    : 'bg-neutral-900 border-neutral-800 text-neutral-400'
+                }`}
+                title="Toggle Lite / RAM Saver Mode for 3GB RAM Android devices"
+                aria-label="Toggle Lite RAM Saver Mode"
               >
-                <Send className="w-3.5 h-3.5" />
-                {unreadDirectSnapsCount > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-amber-400 text-black text-[8px] font-black flex items-center justify-center">
-                    {unreadDirectSnapsCount > 9 ? '9+' : unreadDirectSnapsCount}
+                <Zap className="w-3 h-3 shrink-0" />
+                <span className="hidden min-[360px]:inline">
+                  {isRamSaverMode ? 'Lite' : 'RAM'}
+                </span>
+              </button>
+              <div className="shrink-0">
+                <PWAInstallButton variant="mobile-header" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileSearchOpen((prev) => !prev)}
+                className={`p-1.5 rounded-lg border shrink-0 transition-colors ${
+                  isMobileSearchOpen
+                    ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                    : 'bg-neutral-900 border-neutral-800 text-cyan-400 hover:text-white'
+                }`}
+                title="Search User ID (@username) or Creator Name"
+                aria-label="Search Creators"
+              >
+                {isMobileSearchOpen ? <X className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
+              </button>
+              {onOpenDirectSnaps && (
+                <button
+                  type="button"
+                  onClick={onOpenDirectSnaps}
+                  className="relative p-1.5 rounded-lg border shrink-0 bg-neutral-900 border-amber-500/40 text-amber-300 cursor-pointer"
+                  title="Direct Chat & Live Snaps Inbox"
+                  aria-label="Direct Chat & Live Snaps"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {unreadDirectSnapsCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-amber-400 text-black text-[8px] font-black flex items-center justify-center">
+                      {unreadDirectSnapsCount > 9 ? '9+' : unreadDirectSnapsCount}
+                    </span>
+                  )}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onSelectTab('activity')}
+                className={`relative p-1.5 rounded-lg border shrink-0 transition-colors ${
+                  currentTab === 'activity'
+                    ? 'bg-pink-600/25 border-pink-500/50 text-pink-300'
+                    : 'bg-neutral-900 border-neutral-800 text-neutral-300'
+                }`}
+                title="Notifications & Activity"
+                aria-label="Activity"
+              >
+                <Bell className="w-3.5 h-3.5" />
+                {unreadActivityCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center">
+                    {unreadActivityCount > 9 ? '9+' : unreadActivityCount}
                   </span>
                 )}
               </button>
-            )}
+            </div>
+          );
+
+          const profileAuthClusterNode = !currentUser ? (
             <button
               type="button"
-              onClick={() => onSelectTab('activity')}
-              className={`relative p-1.5 rounded-lg border transition-colors ${
-                currentTab === 'activity'
-                  ? 'bg-pink-600/25 border-pink-500/50 text-pink-300'
-                  : 'bg-neutral-900 border-neutral-800 text-neutral-300'
-              }`}
-              title="Notifications & Activity"
-              aria-label="Activity"
+              onClick={onOpenLogin}
+              className="px-2.5 py-1 bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 text-white rounded-lg text-[10px] font-black border border-pink-400/50 shadow-md shadow-pink-600/25 active:scale-95 shrink-0 cursor-pointer"
             >
-              <Bell className="w-3.5 h-3.5" />
-              {unreadActivityCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center">
-                  {unreadActivityCount > 9 ? '9+' : unreadActivityCount}
-                </span>
-              )}
+              Log In
             </button>
-
-            {!currentUser ? (
-              <button
-                type="button"
-                onClick={onOpenLogin}
-                className="px-2 py-1 bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 text-white rounded-lg text-[10px] font-black border border-pink-400/50 shadow-md shadow-pink-600/25 active:scale-95"
-              >
-                Log In
-              </button>
-            ) : (
-              <div className="flex items-center gap-1">
-                {isMainAdminAccount(currentUser) && (
-                  <button
-                    type="button"
-                    onClick={onOpenAdmin}
-                    className="p-1 bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-lg text-xs"
-                    title="Admin Panel"
-                  >
-                    <Shield className="w-3.5 h-3.5" />
-                  </button>
-                )}
+          ) : (
+            <div className="flex items-center gap-1 shrink-0">
+              {isMainAdminAccount(currentUser) && (
                 <button
                   type="button"
-                  onClick={() => setIsMobileProfileOpen(true)}
-                  className="rounded-full ring-2 ring-pink-500/40 p-0.5 active:scale-95 transition-transform"
-                  title="View user profile & developer credit"
+                  onClick={onOpenAdmin}
+                  className="p-1.5 bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-lg text-xs shrink-0 cursor-pointer"
+                  title="Admin Panel"
+                  aria-label="Admin Panel"
                 >
-                  <img
-                    src={currentUser.avatar}
-                    alt={currentUser.name}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-6 h-6 rounded-full object-cover bg-neutral-800"
-                    referrerPolicy="no-referrer"
-                  />
+                  <Shield className="w-3.5 h-3.5" />
                 </button>
-              </div>
-            )}
-          </div>
-        </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsMobileProfileOpen(true)}
+                className="relative rounded-full ring-2 ring-pink-500/60 p-0.5 active:scale-95 transition-transform shrink-0 cursor-pointer"
+                title="Open Profile & Logout Menu"
+                aria-label="Open Profile Menu"
+              >
+                <img
+                  src={currentUser.avatar}
+                  alt={currentUser.name}
+                  loading="lazy"
+                  decoding="async"
+                  className="w-6 h-6 min-[380px]:w-7 min-[380px]:h-7 rounded-full object-cover bg-neutral-800"
+                  referrerPolicy="no-referrer"
+                />
+                <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-neutral-950" />
+              </button>
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="p-1.5 rounded-lg bg-neutral-900 hover:bg-rose-500/20 border border-neutral-800 hover:border-rose-500/40 text-rose-400 shrink-0 cursor-pointer active:scale-95 transition-colors"
+                  title="Log Out"
+                  aria-label="Log Out"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          );
+
+          return (
+            <div className="flex items-center justify-between gap-1.5 w-full min-w-0">
+              {isLeftHeaderProfile ? (
+                <>
+                  {profileAuthClusterNode}
+                  <div className="flex items-center gap-1.5 min-w-0 justify-end">
+                    {utilityIconsNode}
+                    {brandLogoNode}
+                  </div>
+                </>
+              ) : (
+                <>
+                  {brandLogoNode}
+                  <div className="flex items-center gap-1.5 min-w-0 justify-end">
+                    {utilityIconsNode}
+                    {profileAuthClusterNode}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Lower Compact Tabs Row: LIVE / Following / For You / Movie Box (never clipped by phone notch) */}
         <nav
@@ -758,13 +809,28 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
             {/* Actions */}
             <div className="pt-1 flex flex-col gap-2">
               <PWAInstallButton variant="menu" />
+              {onToggleFeedControlsSide && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onToggleFeedControlsSide();
+                  }}
+                  className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/35 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <ArrowLeftRight className="w-4 h-4" />
+                  <span>
+                    Swap Header &amp; Feed Controls (
+                    {feedControlsSide === 'left' ? 'Move to Right' : 'Move to Left'})
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
                   setIsMobileProfileOpen(false);
                   onSelectTab('profile');
                 }}
-                className="w-full py-2.5 px-3 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center justify-center gap-2"
+                className="w-full py-2.5 px-3 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
                 <User className="w-4 h-4" />
                 <span>Open Creator Profile</span>
@@ -776,7 +842,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                     setIsMobileProfileOpen(false);
                     onOpenAdmin();
                   }}
-                  className="w-full py-2.5 px-3 rounded-xl bg-pink-500/15 hover:bg-pink-500/25 text-pink-300 border border-pink-500/30 text-xs font-bold flex items-center justify-center gap-2"
+                  className="w-full py-2.5 px-3 rounded-xl bg-pink-500/15 hover:bg-pink-500/25 text-pink-300 border border-pink-500/30 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Shield className="w-4 h-4" />
                   <span>Open Admin Panel</span>
@@ -789,7 +855,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                     setIsMobileProfileOpen(false);
                     onLogout();
                   }}
-                  className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-rose-400 text-xs font-bold flex items-center justify-center gap-2 border border-neutral-800"
+                  className="w-full py-2.5 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-rose-400 text-xs font-bold flex items-center justify-center gap-2 border border-neutral-800 cursor-pointer"
                 >
                   <LogOut className="w-4 h-4" />
                   <span>Log Out</span>

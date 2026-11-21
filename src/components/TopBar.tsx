@@ -23,6 +23,7 @@ import {
   Send,
   Sliders,
   Zap,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useRamSaverMode } from '../lib/ramSaverMode';
 import { UserAccount, VideoPost, CreatorProfileData, AudioTrackOption } from '../types';
@@ -64,6 +65,8 @@ interface TopBarProps {
   onLogout: () => void;
   onShowToast?: (msg: string) => void;
   currentTab?: string;
+  feedControlsSide?: 'left' | 'right';
+  onToggleFeedControlsSide?: () => void;
 }
 
 const TopBarComponent: React.FC<TopBarProps> = ({
@@ -90,6 +93,8 @@ const TopBarComponent: React.FC<TopBarProps> = ({
   onLogout,
   onShowToast,
   currentTab,
+  feedControlsSide = 'left',
+  onToggleFeedControlsSide,
 }) => {
   const { isRamSaverMode, toggleRamSaverMode } = useRamSaverMode();
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -183,16 +188,191 @@ const TopBarComponent: React.FC<TopBarProps> = ({
     searchResults.posts.length > 0 ||
     searchResults.audioTracks.length > 0;
 
+  const isProfileOnLeft = feedControlsSide === 'left';
+
+  const profileAuthCluster = !currentUser ? (
+    <div className="flex items-center gap-2 shrink-0">
+      <button
+        type="button"
+        onClick={onOpenLogin}
+        className="flex items-center gap-1.5 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-gradient-to-r from-pink-600/25 via-purple-600/20 to-cyan-500/25 hover:from-pink-600/40 hover:to-cyan-500/40 text-white border border-pink-500/50 hover:border-pink-400 shadow-md shadow-pink-600/20 active:scale-95 text-xs font-black transition-all group cursor-pointer"
+        title="Sign In to your Account"
+      >
+        <LogIn className="w-3.5 h-3.5 text-pink-400 group-hover:scale-110 transition-transform" />
+        <span>Log In</span>
+      </button>
+      <button
+        type="button"
+        onClick={onOpenRegister}
+        className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white text-xs font-bold border border-neutral-700/80 transition-all active:scale-95 cursor-pointer"
+      >
+        <UserPlus className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">Register</span>
+      </button>
+    </div>
+  ) : (
+    <div className="relative shrink-0" ref={profileMenuRef}>
+      <div className="flex items-center gap-2">
+        {isMainAdminAccount(currentUser) && (
+          <button
+            type="button"
+            onClick={onOpenAdmin}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/35 text-pink-400 text-xs font-bold transition-all active:scale-95 cursor-pointer"
+            title="Open user management admin panel"
+          >
+            <Shield className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Admin</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+          className="flex items-center gap-2 p-1 pr-2 rounded-full hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/40 transition-all active:scale-95 cursor-pointer"
+          title="View user profile & logout menu"
+        >
+          <img
+            src={currentUser.avatar}
+            alt={currentUser.name}
+            loading="lazy"
+            decoding="async"
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover bg-neutral-800 border border-pink-500/40"
+            referrerPolicy="no-referrer"
+          />
+          <div className="hidden sm:flex flex-col text-left">
+            <div className="flex items-center gap-1">
+              <span className="text-xs font-bold text-white max-w-[90px] truncate">
+                {currentUser.name}
+              </span>
+              <span
+                className={`text-[8px] font-black uppercase px-1 py-0.2 rounded-xs ${
+                  currentUser.role === 'admin'
+                    ? 'bg-pink-500/20 text-pink-400'
+                    : currentUser.role === 'creator'
+                    ? 'bg-indigo-500/20 text-indigo-400'
+                    : 'bg-neutral-800 text-neutral-400'
+                }`}
+              >
+                {currentUser.role}
+              </span>
+            </div>
+            <span className="text-[10px] text-neutral-400 leading-none">
+              @{currentUser.username}
+            </span>
+          </div>
+          <ChevronDown className="w-3.5 h-3.5 text-neutral-400" />
+        </button>
+
+        <button
+          type="button"
+          onClick={onLogout}
+          className="p-1.5 sm:p-2 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+          title="Log out"
+          aria-label="Log out"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
+      </div>
+
+      {isProfileMenuOpen && (
+        <div
+          className={`absolute ${
+            isProfileOnLeft ? 'left-0' : 'right-0'
+          } top-full mt-2 w-72 sm:w-80 bg-neutral-950 border border-neutral-800 rounded-2xl p-4 shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 duration-150 space-y-3.5 [transform:translateZ(0)]`}
+        >
+          <div className="flex items-center gap-3 pb-3 border-b border-neutral-800">
+            <img
+              src={currentUser.avatar}
+              alt={currentUser.name}
+              loading="lazy"
+              decoding="async"
+              className="w-11 h-11 rounded-xl object-cover bg-neutral-900 border border-neutral-700"
+            />
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-bold text-white truncate">{currentUser.name}</h3>
+              <p className="text-xs text-neutral-400 truncate">@{currentUser.username}</p>
+              <span className="inline-block mt-0.5 text-[9px] font-black uppercase tracking-wider px-2 py-0.2 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                {currentUser.role} account
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider mb-1.5">
+              Application Credits
+            </p>
+            <DeveloperCreditBadge variant="menu" showDetails={true} />
+          </div>
+
+          <div className="pt-1 flex flex-col gap-1.5">
+            <PWAInstallButton variant="menu" />
+            {onToggleFeedControlsSide && (
+              <button
+                type="button"
+                onClick={onToggleFeedControlsSide}
+                className="w-full py-2 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <ArrowLeftRight className="w-4 h-4" />
+                <span>
+                  Swap Header &amp; Feed Controls (
+                  {feedControlsSide === 'left' ? 'Move to Right' : 'Move to Left'})
+                </span>
+              </button>
+            )}
+            {onOpenProfile && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileMenuOpen(false);
+                  onOpenProfile();
+                }}
+                className="w-full py-2 px-3 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <User className="w-4 h-4" />
+                <span>Creator Profile &amp; Videos</span>
+              </button>
+            )}
+            {isMainAdminAccount(currentUser) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileMenuOpen(false);
+                  onOpenAdmin();
+                }}
+                className="w-full py-2 px-3 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 border border-pink-500/30 text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <Shield className="w-4 h-4" />
+                <span>Admin Management Console</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setIsProfileMenuOpen(false);
+                onLogout();
+              }}
+              className="w-full py-2 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-rose-400 text-xs font-bold flex items-center justify-between border border-neutral-800 transition-colors cursor-pointer"
+            >
+              <span>Log Out</span>
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <header className="hidden lg:flex fixed top-0 left-0 right-0 z-40 bg-neutral-950/95 border-b border-neutral-800/80 px-4 sm:px-6 py-2.5 items-center justify-between gap-3 [transform:translateZ(0)]">
-      {/* Brand Zone: Replaced text with Image Logo Tag */}
-      <div className="flex items-center shrink-0">
+      {/* Left Cluster: Profile/Logout when swapped Left + Brand Logo */}
+      <div className="flex items-center gap-3 shrink-0">
+        {isProfileOnLeft && profileAuthCluster}
         <img
           src={BRAND_LOGO_SRC} /* <-- PLACEHOLDER: Link your logo here */
           alt="Jatt VibeReels"
           loading="lazy"
           decoding="async"
-          className="h-8 sm:h-9 w-auto max-w-[165px] object-contain rounded-md shadow-sm"
+          className="h-8 sm:h-9 w-auto max-w-[155px] object-contain rounded-md shadow-sm"
         />
       </div>
 
@@ -575,170 +755,8 @@ const TopBarComponent: React.FC<TopBarProps> = ({
         )}
 
 
-        {/* If Logged Out */}
-        {!currentUser ? (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpenLogin}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-gradient-to-r from-pink-600/25 via-purple-600/20 to-cyan-500/25 hover:from-pink-600/40 hover:to-cyan-500/40 text-white border border-pink-500/50 hover:border-pink-400 shadow-md shadow-pink-600/20 active:scale-95 text-xs font-black transition-all group"
-              title="Sign In to your Account"
-            >
-              <LogIn className="w-3.5 h-3.5 text-pink-400 group-hover:scale-110 transition-transform" />
-              <span>Log In</span>
-            </button>
-            <button
-              type="button"
-              onClick={onOpenRegister}
-              className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white text-xs font-bold border border-neutral-700/80 transition-all active:scale-95"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Register</span>
-            </button>
-          </div>
-        ) : (
-          /* If Logged In */
-          <div className="relative" ref={profileMenuRef}>
-            <div className="flex items-center gap-2">
-              {/* Admin Panel button strictly for main Admin account */}
-              {isMainAdminAccount(currentUser) && (
-                <button
-                  type="button"
-                  onClick={onOpenAdmin}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/35 text-pink-400 text-xs font-bold transition-all active:scale-95"
-                  title="Open user management admin panel"
-                >
-                  <Shield className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Admin</span>
-                </button>
-              )}
-
-              {/* User Profile Badge Button (toggles interactive profile menu) */}
-              <button
-                type="button"
-                onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
-                className="flex items-center gap-2 p-1 pr-2 rounded-full hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/40 transition-all active:scale-95"
-                title="View user profile & developer credit"
-              >
-                <img
-                  src={currentUser.avatar}
-                  alt={currentUser.name}
-                  loading="lazy"
-                  decoding="async"
-                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover bg-neutral-800 border border-pink-500/40"
-                  referrerPolicy="no-referrer"
-                />
-                <div className="hidden sm:flex flex-col text-left">
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs font-bold text-white max-w-[90px] truncate">
-                      {currentUser.name}
-                    </span>
-                    <span
-                      className={`text-[8px] font-black uppercase px-1 py-0.2 rounded-xs ${
-                        currentUser.role === 'admin'
-                          ? 'bg-pink-500/20 text-pink-400'
-                          : currentUser.role === 'creator'
-                          ? 'bg-indigo-500/20 text-indigo-400'
-                          : 'bg-neutral-800 text-neutral-400'
-                      }`}
-                    >
-                      {currentUser.role}
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-neutral-400 leading-none">
-                    @{currentUser.username}
-                  </span>
-                </div>
-                <ChevronDown className="w-3.5 h-3.5 text-neutral-400" />
-              </button>
-
-              {/* Quick Logout Button */}
-              <button
-                type="button"
-                onClick={onLogout}
-                className="p-1.5 sm:p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors"
-                title="Log out"
-                aria-label="Log out"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Interactive User Profile Menu Dropdown */}
-            {isProfileMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-neutral-950 border border-neutral-800 rounded-2xl p-4 shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 duration-150 space-y-3.5 [transform:translateZ(0)]">
-                {/* User Info Header */}
-                <div className="flex items-center gap-3 pb-3 border-b border-neutral-800">
-                  <img
-                    src={currentUser.avatar}
-                    alt={currentUser.name}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-11 h-11 rounded-xl object-cover bg-neutral-900 border border-neutral-700"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-bold text-white truncate">{currentUser.name}</h3>
-                    <p className="text-xs text-neutral-400 truncate">@{currentUser.username}</p>
-                    <span className="inline-block mt-0.5 text-[9px] font-black uppercase tracking-wider px-2 py-0.2 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/30">
-                      {currentUser.role} account
-                    </span>
-                  </div>
-                </div>
-
-                {/* DEDICATED DEVELOPER ATTRIBUTION BADGE INSIDE USER PROFILE MENU */}
-                <div>
-                  <p className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider mb-1.5">
-                    Application Credits
-                  </p>
-                  <DeveloperCreditBadge variant="menu" showDetails={true} />
-                </div>
-
-                {/* Menu Actions */}
-                <div className="pt-1 flex flex-col gap-1.5">
-                  <PWAInstallButton variant="menu" />
-                  {onOpenProfile && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsProfileMenuOpen(false);
-                        onOpenProfile();
-                      }}
-                      className="w-full py-2 px-3 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center gap-2 transition-colors"
-                    >
-                      <User className="w-4 h-4" />
-                      <span>Creator Profile & Videos</span>
-                    </button>
-                  )}
-                  {isMainAdminAccount(currentUser) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsProfileMenuOpen(false);
-                        onOpenAdmin();
-                      }}
-                      className="w-full py-2 px-3 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 border border-pink-500/30 text-xs font-bold flex items-center gap-2 transition-colors"
-                    >
-                      <Shield className="w-4 h-4" />
-                      <span>Admin Management Console</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsProfileMenuOpen(false);
-                      onLogout();
-                    }}
-                    className="w-full py-2 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-rose-400 text-xs font-bold flex items-center justify-between border border-neutral-800 transition-colors"
-                  >
-                    <span>Log Out</span>
-                    <LogOut className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
+        {/* Right Cluster: Profile/Logout when swapped Right */}
+        {!isProfileOnLeft && profileAuthCluster}
       </div>
     </header>
   );

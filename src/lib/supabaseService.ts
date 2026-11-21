@@ -104,6 +104,8 @@ const schemaCapabilities = {
   postsHasAudioUrl: false,
   postsHasAllowDownload: false,
   profilesTableAvailable: true,
+  profilesHasFullName: true,
+  profilesHasCreatedAt: true,
   commentsTableAvailable: true,
   interactionsTableAvailable: true,
 };
@@ -116,6 +118,18 @@ function isMissingRelationError(err: { code?: string; message?: string } | null)
     err.code === '42P01' ||
     msg.includes('does not exist') ||
     msg.includes('could not find the table')
+  );
+}
+
+function isMissingProfileColumnError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  const msg = (err.message || '').toLowerCase();
+  return (
+    err.code === 'PGRST204' ||
+    err.code === '42703' ||
+    msg.includes('full_name') ||
+    msg.includes('created_at') ||
+    msg.includes('could not find the')
   );
 }
 
@@ -150,12 +164,18 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   id text PRIMARY KEY,
   username text UNIQUE NOT NULL,
   display_name text NOT NULL,
+  full_name text DEFAULT '',
   bio text DEFAULT '',
   avatar_url text DEFAULT '',
   followers_count bigint DEFAULT 0,
   profile_views bigint DEFAULT 0,
+  created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
+
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS full_name text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS public.post_comments (
   id text PRIMARY KEY,
@@ -1196,7 +1216,7 @@ export async function upsertUserProfileInSupabase(
   let didSync = false;
   try {
     if (schemaCapabilities.profilesTableAvailable) {
-      const { error } = await supabase.from('profiles').upsert({
+      const basePayload: Record<string, unknown> = {
         id: safeProfile.id,
         username: cleanUsername,
         display_name: safeProfile.name,
@@ -1204,7 +1224,20 @@ export async function upsertUserProfileInSupabase(
         avatar_url: safeProfile.avatar,
         followers_count: safeProfile.baseFollowers,
         updated_at: new Date().toISOString(),
-      });
+      };
+      if (schemaCapabilities.profilesHasFullName) {
+        basePayload.full_name = safeProfile.name;
+      }
+
+      let { error } = await supabase.from('profiles').upsert(basePayload);
+      if (error && isMissingProfileColumnError(error)) {
+        schemaCapabilities.profilesHasFullName = false;
+        schemaCapabilities.profilesHasCreatedAt = false;
+        delete basePayload.full_name;
+        const retry = await supabase.from('profiles').upsert(basePayload);
+        error = retry.error;
+      }
+
       if (error && isMissingRelationError(error)) {
         schemaCapabilities.profilesTableAvailable = false;
       } else if (!error) {
@@ -1340,7 +1373,7 @@ export async function fetchUserProfileFromSupabase(params: {
           const uname = data.username || 'jatt_official';
           return {
             id: String(data.id),
-            name: data.display_name || uname,
+            name: data.full_name || data.display_name || uname,
             username: uname,
             bio: data.bio || '',
             avatar:
@@ -2080,12 +2113,18 @@ export async function syncRegisteredUserToCloud(user: UserAccount): Promise<void
   const cleanUsername = normalizeCreatorUsername(user.username);
   if (!cleanUsername) return;
 
+  const safeFullName = sanitizeText(user.name, 80) || cleanUsername;
+  const safeAvatar =
+    sanitizeSafeUrl(user.avatar) ||
+    `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUsername)}&backgroundColor=06b6d4`;
+  const createdIso = user.createdAtIso || new Date().toISOString();
+
   saveLocalCreatorDirectoryEntry({
     id: user.id,
-    name: user.name,
+    name: safeFullName,
     username: cleanUsername,
     bio: user.bio || 'VibeReels Member',
-    avatar: user.avatar,
+    avatar: safeAvatar,
     baseFollowers: 0,
     isVerified: user.role === 'creator' || user.role === 'admin',
   });
@@ -2098,23 +2137,40 @@ export async function syncRegisteredUserToCloud(user: UserAccount): Promise<void
   // Encode contact & registration metadata safely so profiles table works without extra migrations
   const contactTag = [user.email || '', user.phone || ''].filter(Boolean).join(' · ');
   const metaBio = contactTag
-    ? `${user.bio || 'VibeReels Member'} [[USER_META:${user.createdAtIso || new Date().toISOString()}|${contactTag}|${user.role}]]`
+    ? `${user.bio || 'VibeReels Member'} [[USER_META:${createdIso}|${contactTag}|${user.role}]]`
     : user.bio || 'VibeReels Member';
 
   try {
-    const { error } = await supabase
+    const payload: Record<string, unknown> = {
+      id: user.id,
+      username: cleanUsername,
+      display_name: safeFullName,
+      bio: metaBio,
+      avatar_url: safeAvatar,
+      updated_at: user.lastActiveAt || new Date().toISOString(),
+    };
+    if (schemaCapabilities.profilesHasFullName) {
+      payload.full_name = safeFullName;
+    }
+    if (schemaCapabilities.profilesHasCreatedAt) {
+      payload.created_at = createdIso;
+    }
+
+    let { error } = await supabase
       .from('profiles')
-      .upsert(
-        {
-          id: user.id,
-          username: cleanUsername,
-          display_name: user.name,
-          bio: metaBio,
-          avatar_url: user.avatar,
-          updated_at: user.lastActiveAt || new Date().toISOString(),
-        },
-        { onConflict: 'username' }
-      );
+      .upsert(payload, { onConflict: 'username' });
+
+    if (error && isMissingProfileColumnError(error)) {
+      schemaCapabilities.profilesHasFullName = false;
+      schemaCapabilities.profilesHasCreatedAt = false;
+      delete payload.full_name;
+      delete payload.created_at;
+      const retry = await supabase
+        .from('profiles')
+        .upsert(payload, { onConflict: 'username' });
+      error = retry.error;
+    }
+
     if (error && isMissingRelationError(error)) {
       schemaCapabilities.profilesTableAvailable = false;
     }
@@ -2128,45 +2184,82 @@ export async function fetchRegisteredUsersFromCloud(): Promise<UserAccount[]> {
     return [];
   }
   try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, username, display_name, bio, avatar_url, updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(200);
+    let rows: Record<string, unknown>[] = [];
+    let queryError: { code?: string; message?: string } | null = null;
 
-    if (error) {
-      if (isMissingRelationError(error)) {
+    if (schemaCapabilities.profilesHasFullName && schemaCapabilities.profilesHasCreatedAt) {
+      const res = await supabase
+        .from('profiles')
+        .select('id, username, display_name, full_name, bio, avatar_url, created_at, updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(200);
+      rows = Array.isArray(res.data) ? (res.data as unknown as Record<string, unknown>[]) : [];
+      queryError = res.error;
+
+      if (queryError && isMissingProfileColumnError(queryError)) {
+        schemaCapabilities.profilesHasFullName = false;
+        schemaCapabilities.profilesHasCreatedAt = false;
+        const retry = await supabase
+          .from('profiles')
+          .select('id, username, display_name, bio, avatar_url, updated_at')
+          .order('updated_at', { ascending: false })
+          .limit(200);
+        rows = Array.isArray(retry.data)
+          ? (retry.data as unknown as Record<string, unknown>[])
+          : [];
+        queryError = retry.error;
+      }
+    } else {
+      const res = await supabase
+        .from('profiles')
+        .select('id, username, display_name, bio, avatar_url, updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(200);
+      rows = Array.isArray(res.data) ? (res.data as unknown as Record<string, unknown>[]) : [];
+      queryError = res.error;
+    }
+
+    if (queryError) {
+      if (isMissingRelationError(queryError)) {
         schemaCapabilities.profilesTableAvailable = false;
       }
       return [];
     }
-    if (!Array.isArray(data)) return [];
+    if (!rows.length) return [];
 
-    return data.map((row) => {
+    return rows.map((row) => {
+      const uname = String(row.username || 'user');
       const rawBio = String(row.bio || '');
       const metaMatch = rawBio.match(/\[\[USER_META:([^|\]]*)\|([^|\]]*)\|([^\]]*)\]\]/);
-      const createdAtIso = metaMatch?.[1] || (row.updated_at ? String(row.updated_at) : undefined);
+      const createdAtIso =
+        (row.created_at ? String(row.created_at) : '') ||
+        metaMatch?.[1] ||
+        (row.updated_at ? String(row.updated_at) : undefined);
       const contactRaw = metaMatch?.[2] || '';
       const roleRaw = metaMatch?.[3] || 'user';
       const cleanBio = rawBio.replace(/\[\[USER_META:[^\]]*\]\]/g, '').trim();
       const contactParts = contactRaw.split(' · ').map((s) => s.trim()).filter(Boolean);
-      const emailPart = contactParts.find((c) => c.includes('@')) || `${row.username}@vibereels.app`;
+      const emailPart = contactParts.find((c) => c.includes('@')) || `${uname}@vibereels.app`;
       const phonePart = contactParts.find((c) => !c.includes('@'));
       const cleanRole =
-        roleRaw === 'creator' ? 'creator' : roleRaw === 'admin' && row.username === 'admin' ? 'admin' : 'user';
+        roleRaw === 'creator'
+          ? 'creator'
+          : roleRaw === 'admin' && (uname === 'admin' || uname === 'jatt_vibereels_admin')
+          ? 'admin'
+          : 'user';
       const joinedLabel = createdAtIso
         ? new Date(createdAtIso).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
         : 'Nov 2026';
 
       return {
-        id: String(row.id || `usr-cloud-${row.username}`),
-        name: String(row.display_name || row.username || 'User'),
-        username: String(row.username || 'user'),
+        id: String(row.id || `usr-cloud-${uname}`),
+        name: String(row.full_name || row.display_name || uname || 'User'),
+        username: uname,
         email: emailPart,
         phone: phonePart,
         avatar:
-          String(row.avatar_url || '') ||
-          `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(String(row.username || 'user'))}&backgroundColor=06b6d4`,
+          sanitizeSafeUrl(String(row.avatar_url || '')) ||
+          `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(uname)}&backgroundColor=06b6d4`,
         role: cleanRole,
         status: 'active',
         joinedAt: joinedLabel,

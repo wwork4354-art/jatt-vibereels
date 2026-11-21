@@ -378,7 +378,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-base sm:text-lg font-black text-white tracking-tight truncate">
-                  Admin Live Users Dashboard
+                  Registered App Users &amp; Admin Console
                 </h2>
                 <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/15 px-2.5 py-0.5 rounded-full border border-emerald-500/35">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
@@ -386,7 +386,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </span>
               </div>
               <p className="text-xs text-neutral-400 truncate">
-                Admin Owner: <span className="text-neutral-200 font-semibold">{currentUser?.email}</span>
+                Registered App Users Directory · Owner: <span className="text-neutral-200 font-semibold">{currentUser?.email}</span>
               </p>
             </div>
           </div>
@@ -529,8 +529,68 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <p className="text-xs text-neutral-500 mt-1">Try adjusting your search or filters.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+            <>
+              {/* Mobile Card View for Registered App Users (clean avatar, name, @username & join date) */}
+              <div className="md:hidden space-y-2.5">
+                {filteredUsers.map((u) => {
+                  const isSelf = currentUser?.id === u.id || isMainAdminAccount(u);
+                  const isOnline = isUserOnlineNow(u, nowTick);
+                  const createdDt = formatAccountCreatedDateTime(u);
+
+                  return (
+                    <div
+                      key={`mob-${u.id}`}
+                      className="p-3 rounded-2xl bg-neutral-950/90 border border-neutral-800 space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="relative shrink-0">
+                            <img
+                              src={u.avatar}
+                              alt={u.name}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-10 h-10 rounded-full object-cover bg-neutral-800 border border-pink-500/40"
+                              referrerPolicy="no-referrer"
+                            />
+                            <span
+                              className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-neutral-900 ${
+                                u.status === 'suspended'
+                                  ? 'bg-rose-500'
+                                  : isOnline
+                                  ? 'bg-emerald-400'
+                                  : 'bg-neutral-500'
+                              }`}
+                            />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-black text-white truncate">
+                                {u.name}
+                              </span>
+                              {isSelf && (
+                                <span className="text-[9px] bg-pink-500/20 text-pink-400 px-1.5 py-0.2 rounded-xs font-black">
+                                  Main Admin
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-cyan-400 font-semibold truncate">
+                              @{u.username}
+                            </p>
+                          </div>
+                        </div>
+
+                        <span className="text-[10px] text-neutral-400 tabular-nums shrink-0">
+                          {createdDt.dateLabel}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-neutral-800 text-neutral-400 font-semibold uppercase tracking-wider text-[10px]">
                     <th className="pb-3 pl-2">Name &amp; @Username</th>
@@ -728,6 +788,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </div>
 

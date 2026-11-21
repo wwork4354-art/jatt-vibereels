@@ -3,6 +3,7 @@ import { sanitizeSafeUrl, sanitizeText, sanitizeUsername } from '../utils/securi
 
 export const MAIN_ADMIN_EMAIL = 'wwork4354@gmail.com';
 export const MAIN_ADMIN_USERNAME = 'admin';
+export const MAIN_ADMIN_ALT_USERNAME = 'jatt_vibereels_admin';
 
 export const INITIAL_USERS: UserAccount[] = [
   {
@@ -175,7 +176,11 @@ export function isMainAdminAccount(user: UserAccount | null | undefined): boolea
   if (!user || user.role !== 'admin') return false;
   const emailLower = (user.email || '').trim().toLowerCase();
   const usernameLower = (user.username || '').trim().toLowerCase().replace(/^@+/, '');
-  return emailLower === MAIN_ADMIN_EMAIL || usernameLower === MAIN_ADMIN_USERNAME;
+  return (
+    emailLower === MAIN_ADMIN_EMAIL ||
+    usernameLower === MAIN_ADMIN_USERNAME ||
+    usernameLower === MAIN_ADMIN_ALT_USERNAME
+  );
 }
 
 export function isUserOnlineNow(user: UserAccount, nowMs = Date.now()): boolean {

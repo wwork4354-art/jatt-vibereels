@@ -2437,6 +2437,8 @@ export default function App() {
         onLogout={handleLogout}
         onShowToast={showToast}
         currentTab={currentTab}
+        feedControlsSide={feedControlsSide}
+        onToggleFeedControlsSide={handleToggleFeedControlsSide}
       />
 
       {/* Offline Mode Connectivity Banner */}
@@ -2522,6 +2524,8 @@ export default function App() {
             onShowToast={showToast}
             isBottomNavOpen={isMobileBottomNavOpen}
             onToggleBottomNav={() => setIsMobileBottomNavOpen((prev) => !prev)}
+            feedControlsSide={feedControlsSide}
+            onToggleFeedControlsSide={handleToggleFeedControlsSide}
           />
 
 
@@ -2935,6 +2939,7 @@ export default function App() {
             registeredUsers={users}
             onRegisterUser={(newUser) => {
               updateUsers([newUser, ...users]);
+              void syncRegisteredUserToCloud(newUser);
               showToast(`Registered successfully as @${newUser.username}!`);
             }}
             onUpgradeUserPassword={(userId, passwordHash) => {
