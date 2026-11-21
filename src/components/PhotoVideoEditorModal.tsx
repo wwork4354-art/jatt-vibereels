@@ -132,7 +132,33 @@ const SPEED_QUICK_PRESETS = [
   { val: 2, label: '2x Turbo' },
 ];
 
-const STICKER_OPTIONS = ['🔥', '👑', '❤️', '🎵', '✨', '🦁', '🎬', '💯', '😎', '🌟'];
+const STICKER_OPTIONS = [
+  '🔥',
+  '❤️',
+  '😂',
+  '🎵',
+  '👑',
+  '😎',
+  '✨',
+  '💯',
+  '🕺',
+  '🎬',
+  '🦁',
+  '🌟',
+  '💥',
+  '🥳',
+  '🚀',
+  '💎',
+  '🙌',
+  '🎶',
+];
+
+const QUICK_CAPTION_PRESETS = [
+  'JATT VIBES 🔥',
+  'NEW REEL 🎬',
+  'WAIT FOR IT...',
+  'PUNJABI BEAT 🎵',
+];
 
 function pickSupportedRecorderMime(): string {
   if (typeof MediaRecorder === 'undefined') return '';
@@ -224,6 +250,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasStageRef = useRef<HTMLDivElement | null>(null);
+  const inspectorBodyRef = useRef<HTMLDivElement | null>(null);
+  const textInputRef = useRef<HTMLInputElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const mediaElementCacheRef = useRef<Map<string, HTMLImageElement | HTMLVideoElement>>(new Map());
   const objectUrlsRef = useRef<string[]>([]);
@@ -231,6 +259,21 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   const exportCancelRef = useRef<boolean>(false);
 
   playheadRef.current = playheadTime;
+
+  const activateEditorTool = useCallback(
+    (tool: EditorToolTab) => {
+      setActiveTool(tool);
+      window.requestAnimationFrame(() => {
+        inspectorBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+        if (tool === 'text') {
+          window.setTimeout(() => {
+            textInputRef.current?.focus();
+          }, 40);
+        }
+      });
+    },
+    []
+  );
 
   const { spans, totalDuration } = useMemo(() => computeTimelineSpans(clips), [clips]);
 
@@ -836,7 +879,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
 
     // Check if near any sticker first
     let hitStickerId: string | null = null;
-    let bestDist = 14;
+    let bestDist = 18;
     for (const stk of stickers) {
       const dist = Math.hypot(clickX - stk.xPercent, clickY - stk.yPercent);
       if (dist < bestDist) {
@@ -852,7 +895,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       setActiveTool('stickers');
     } else if (textLayer.text.trim()) {
       const distText = Math.hypot(clickX - textLayer.xPercent, clickY - textLayer.yPercent);
-      if (distText < 24 || activeTool === 'text') {
+      if (distText < 28 || activeTool === 'text') {
         target = 'text';
         setActiveTool('text');
       }
@@ -1835,6 +1878,34 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   className="w-full h-full object-contain block"
                 />
 
+                {/* Interactive Visual Drag Guides for Text & Stickers (non-exported UI guides) */}
+                {activeTool === 'text' && textLayer.text.trim() && (
+                  <div
+                    style={{ left: `${textLayer.xPercent}%`, top: `${textLayer.yPercent}%` }}
+                    className="absolute -translate-x-1/2 -translate-y-1/2 px-3 py-2 min-w-[90px] min-h-[34px] rounded-xl border-2 border-dashed border-cyan-400/85 bg-cyan-500/10 pointer-events-none flex items-center justify-center"
+                  >
+                    <span className="absolute -top-4 left-1/2 -translate-x-1/2 px-1.5 py-0.2 rounded bg-cyan-500 text-black text-[8px] font-black uppercase tracking-wider whitespace-nowrap">
+                      Drag Text
+                    </span>
+                  </div>
+                )}
+
+                {activeTool === 'stickers' &&
+                  stickers.map((stk) => {
+                    const isActiveStk = stk.id === activeStickerId;
+                    return (
+                      <div
+                        key={`guide-${stk.id}`}
+                        style={{ left: `${stk.xPercent}%`, top: `${stk.yPercent}%` }}
+                        className={`absolute -translate-x-1/2 -translate-y-1/2 w-12 h-12 rounded-xl border-2 border-dashed pointer-events-none ${
+                          isActiveStk
+                            ? 'border-pink-400 bg-pink-500/15'
+                            : 'border-white/35'
+                        }`}
+                      />
+                    );
+                  })}
+
                 {/* Center Snapping Crosshair Guide while dragging text or sticker */}
                 {draggingTarget && (
                   <>
@@ -1854,7 +1925,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             </div>
 
             {/* Right / Lower Editing Inspector Panel */}
-            <aside className="w-full lg:w-[400px] xl:w-[430px] max-h-[36vh] lg:max-h-none bg-[#0d0d13] border-t lg:border-t-0 lg:border-l border-neutral-800/90 flex flex-col shrink-0 overflow-hidden">
+            <aside className="w-full lg:w-[400px] xl:w-[430px] max-h-[40vh] lg:max-h-none bg-[#0d0d13] border-t lg:border-t-0 lg:border-l border-neutral-800/90 flex flex-col shrink-0 overflow-hidden">
               {/* Compact Active Tool Inspector Header */}
               <div className="shrink-0 px-3.5 py-2 border-b border-neutral-800/90 flex items-center justify-between gap-2 bg-[#111119]">
                 <div className="flex items-center gap-2 min-w-0">
@@ -1895,7 +1966,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
               </div>
 
               {/* Active Inspector Panel Body */}
-              <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-4 space-y-4 no-scrollbar">
+              <div
+                ref={inspectorBodyRef}
+                className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-4 space-y-4 no-scrollbar"
+              >
                 {/* 1. TRIM & SPLIT */}
                 {activeTool === 'trim' && selectedClip && (
                   <div className="space-y-3.5">
@@ -2247,15 +2321,38 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
 
                 {/* 4. ANIMATED TEXT & CAPTIONS */}
                 {activeTool === 'text' && (
-                  <div className="space-y-3.5">
-                    <div className="flex items-center justify-between">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
                       <h4 className="text-xs font-black text-white">Animated Text &amp; Captions</h4>
-                      <span className="text-[10px] font-semibold text-cyan-300">
-                        Drag directly on preview
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {textLayer.text.trim() && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setTextLayer((p) => ({ ...p, xPercent: 50, yPercent: 72 }))
+                            }
+                            className="text-[10px] font-bold text-neutral-300 hover:text-white cursor-pointer"
+                          >
+                            Center
+                          </button>
+                        )}
+                        {textLayer.text.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setTextLayer((p) => ({ ...p, text: '' }))}
+                            className="text-[10px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                        )}
+                        <span className="text-[10px] font-semibold text-cyan-300">
+                          Drag on preview
+                        </span>
+                      </div>
                     </div>
 
                     <input
+                      ref={textInputRef}
                       type="text"
                       value={textLayer.text}
                       onChange={(e) =>
@@ -2265,8 +2362,22 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                         }))
                       }
                       placeholder="Type animated headline or caption..."
-                      className="w-full bg-neutral-900 border border-neutral-800 focus:border-pink-500 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-hidden"
+                      className="w-full bg-neutral-900 border border-neutral-700 focus:border-pink-500 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-hidden"
                     />
+
+                    {/* Quick Tap Starter Captions */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                      {QUICK_CAPTION_PRESETS.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setTextLayer((prev) => ({ ...prev, text: preset }))}
+                          className="px-2.5 py-1 rounded-full bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-[10px] font-bold text-neutral-300 hover:text-white whitespace-nowrap cursor-pointer shrink-0"
+                        >
+                          + {preset}
+                        </button>
+                      ))}
+                    </div>
 
                     {/* Stylish Fonts */}
                     <div className="space-y-1.5">
@@ -2510,17 +2621,22 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
 
                 {/* 6. STICKERS */}
                 {activeTool === 'stickers' && (
-                  <div className="space-y-3.5">
+                  <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-black text-white">Stickers (Drag on Canvas)</h4>
+                      <h4 className="text-xs font-black text-white">
+                        Emoji &amp; Sticker Picker
+                      </h4>
+                      <span className="text-[10px] font-semibold text-pink-300">
+                        Tap to place · Drag on video
+                      </span>
                     </div>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="grid grid-cols-6 gap-2">
                       {STICKER_OPTIONS.map((emoji) => (
                         <button
                           key={emoji}
                           type="button"
                           onClick={() => handleAddSticker(emoji)}
-                          className="w-11 h-11 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-xl flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
+                          className="h-11 rounded-xl bg-neutral-900 hover:bg-neutral-800 hover:border-pink-500/60 border border-neutral-800 text-xl flex items-center justify-center cursor-pointer active:scale-90 transition-all"
                         >
                           {emoji}
                         </button>
@@ -2892,12 +3008,12 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
               setSelectedClipId(clipId);
               setActiveTool('transitions');
             }}
-            onFocusTrackTool={(tool) => setActiveTool(tool)}
+            onFocusTrackTool={(tool) => activateEditorTool(tool)}
             onAudioBarClick={() => {
               if (!hasAttachedMusic) {
                 openMusicDrawer('online');
               } else {
-                setActiveTool('music');
+                activateEditorTool('music');
               }
             }}
           />
@@ -2927,12 +3043,12 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   type="button"
                   onClick={() => {
                     if (tool.id === 'music') {
-                      setActiveTool('music');
+                      activateEditorTool('music');
                       openMusicDrawer('online');
                     } else if (tool.id === 'trim' && activeTool === 'trim') {
                       handleSplitAtPlayhead();
                     } else {
-                      setActiveTool(tool.id);
+                      activateEditorTool(tool.id);
                     }
                   }}
                   className={`min-w-[68px] min-h-[48px] px-2.5 py-1.5 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 transition-all cursor-pointer ${

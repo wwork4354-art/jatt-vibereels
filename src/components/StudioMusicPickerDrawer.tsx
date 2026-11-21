@@ -53,11 +53,13 @@ interface StudioMusicPickerDrawerProps {
 
 const QUICK_ONLINE_QUERIES = [
   'Punjabi Hits 2025',
-  'Bhangra Beat',
-  'Sad Lofi Song',
-  'Phonk Drift Bass',
-  'Movie Dialogue Audio',
-  'Islamic Naat',
+  'Hindi Bollywood Songs',
+  'Urdu Ghazal & Naat',
+  'English Pop Hits',
+  'Arabic Remix',
+  'Turkish Phonk',
+  'Spanish Latin Hits',
+  'Bhangra Dhol Beat',
 ];
 
 const FEATURED_BEAT_IDS = new Set([
@@ -208,7 +210,10 @@ export const StudioMusicPickerDrawer: React.FC<StudioMusicPickerDrawerProps> = R
       setResolvingId(song.id);
       let resolvedUrl = song.streamUrl || null;
       if (!resolvedUrl) {
-        resolvedUrl = await resolveOnlineAudioStreamUrl(song.videoId).catch(() => null);
+        resolvedUrl = await Promise.race([
+          resolveOnlineAudioStreamUrl(song.videoId).catch(() => null),
+          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 1100)),
+        ]);
       }
       setResolvingId(null);
       stopDrawerPreviews();
@@ -404,7 +409,7 @@ export const StudioMusicPickerDrawer: React.FC<StudioMusicPickerDrawerProps> = R
                       type="text"
                       value={onlineQuery}
                       onChange={(e) => setOnlineQuery(sanitizeInputLive(e.target.value, 90))}
-                      placeholder="Search any song, Punjabi beat, dialogue..."
+                      placeholder="Search any song worldwide (Punjabi, Urdu, Hindi, English, Arabic, Turkish, Spanish...)"
                       className="w-full min-h-[40px] bg-neutral-900 border border-neutral-800 focus:border-pink-500 rounded-xl pl-9 pr-3 text-xs text-white placeholder-neutral-500 focus:outline-hidden"
                     />
                   </div>
@@ -532,7 +537,7 @@ export const StudioMusicPickerDrawer: React.FC<StudioMusicPickerDrawerProps> = R
                               <span>Attached</span>
                             </>
                           ) : (
-                            <span>Use Sound</span>
+                            <span>Use Song</span>
                           )}
                         </button>
                       </div>
@@ -650,7 +655,7 @@ export const StudioMusicPickerDrawer: React.FC<StudioMusicPickerDrawerProps> = R
                               <span>Active</span>
                             </>
                           ) : (
-                            <span>Use Sound</span>
+                            <span>Use Song</span>
                           )}
                         </button>
                       </div>

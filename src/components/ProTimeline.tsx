@@ -273,7 +273,7 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
           ref={trackAreaRef}
           style={{ width: `${labelGutterPx + timelineWidthPx + 48}px` }}
           onPointerDown={(e) => {
-            if ((e.target as HTMLElement).dataset.noScrub === 'true') return;
+            if ((e.target as HTMLElement).closest('[data-no-scrub="true"]')) return;
             scrubFromClientX(e.clientX);
           }}
           className="relative py-1.5 space-y-1.5"
@@ -427,9 +427,16 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
             <button
               type="button"
               data-no-scrub="true"
-              onClick={() => (onAudioBarClick ? onAudioBarClick() : onFocusTrackTool('music'))}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onAudioBarClick) {
+                  onAudioBarClick();
+                } else {
+                  onFocusTrackTool('music');
+                }
+              }}
               style={{ width: `${Math.max(180, totalDuration * pxPerSec)}px` }}
-              className={`relative h-8 rounded-lg border px-2.5 flex items-center justify-between gap-2 overflow-hidden cursor-pointer transition-colors text-left ${
+              className={`relative z-20 h-8 rounded-lg border px-2.5 flex items-center justify-between gap-2 overflow-hidden cursor-pointer transition-colors text-left ${
                 hasAttachedMusic
                   ? 'bg-emerald-950/60 border-emerald-500/45 hover:border-emerald-400'
                   : 'bg-neutral-900/70 border-neutral-800 hover:border-pink-500/50'
@@ -483,21 +490,24 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
               <Type className="w-3 h-3 text-amber-400 shrink-0" />
               <span>Layers</span>
             </div>
-            <div className="flex items-center gap-1.5 h-7">
+            <div className="relative z-20 flex items-center gap-1.5 h-7">
               <button
                 type="button"
                 data-no-scrub="true"
-                onClick={() => onFocusTrackTool('text')}
-                style={{
-                  width: `${Math.max(100, Math.min(totalDuration * pxPerSec, totalDuration * pxPerSec * 0.6))}px`,
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFocusTrackTool('text');
                 }}
-                className={`h-7 rounded-md border px-2 flex items-center gap-1 text-[10px] font-bold truncate cursor-pointer ${
+                style={{
+                  width: `${Math.max(108, Math.min(totalDuration * pxPerSec, totalDuration * pxPerSec * 0.6))}px`,
+                }}
+                className={`h-7 rounded-md border px-2 flex items-center gap-1 text-[10px] font-bold truncate cursor-pointer active:scale-95 transition-all ${
                   textLayer.text.trim()
-                    ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
-                    : 'bg-neutral-900/60 border-neutral-800 text-neutral-400 hover:text-white'
+                    ? 'bg-amber-500/20 border-amber-400/50 text-amber-200 hover:border-amber-300'
+                    : 'bg-neutral-900/80 border-neutral-700 text-neutral-200 hover:text-white hover:border-pink-500/60'
                 }`}
               >
-                <Type className="w-3 h-3 shrink-0" />
+                <Type className="w-3 h-3 shrink-0 text-amber-400" />
                 <span className="truncate">
                   {textLayer.text.trim() ? `"${textLayer.text.trim()}"` : '+ Add Caption'}
                 </span>
@@ -506,14 +516,17 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
               <button
                 type="button"
                 data-no-scrub="true"
-                onClick={() => onFocusTrackTool('stickers')}
-                className={`h-7 rounded-md border px-2.5 flex items-center gap-1 text-[10px] font-bold cursor-pointer shrink-0 ${
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFocusTrackTool('stickers');
+                }}
+                className={`h-7 rounded-md border px-2.5 flex items-center gap-1 text-[10px] font-bold cursor-pointer shrink-0 active:scale-95 transition-all ${
                   stickers.length > 0
-                    ? 'bg-pink-500/20 border-pink-400/50 text-pink-200'
-                    : 'bg-neutral-900/60 border-neutral-800 text-neutral-400 hover:text-white'
+                    ? 'bg-pink-500/20 border-pink-400/50 text-pink-200 hover:border-pink-300'
+                    : 'bg-neutral-900/80 border-neutral-700 text-neutral-200 hover:text-white hover:border-pink-500/60'
                 }`}
               >
-                <Smile className="w-3 h-3 shrink-0" />
+                <Smile className="w-3 h-3 shrink-0 text-pink-400" />
                 <span>
                   {stickers.length > 0
                     ? `${stickers.length} Sticker${stickers.length > 1 ? 's' : ''}`
@@ -523,18 +536,22 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
             </div>
           </div>
 
-          {/* Draggable Playhead Needle */}
+          {/* Draggable Playhead Needle (top handle captures pointer; vertical stem does not block clicks below) */}
           <div
-            data-no-scrub="true"
-            onPointerDown={handlePlayheadPointerDown}
             style={{ left: `${playheadLeftPx}px` }}
-            className={`absolute top-0 bottom-0 -translate-x-1/2 w-5 z-30 flex flex-col items-center cursor-ew-resize touch-none ${
+            className={`absolute top-0 bottom-0 -translate-x-1/2 w-5 z-30 flex flex-col items-center pointer-events-none ${
               isDraggingPlayhead ? 'scale-x-105' : ''
             }`}
-            title="Drag playhead needle"
           >
-            <div className="w-3.5 h-3.5 rounded-sm bg-white border border-cyan-400 shadow-md rotate-45 -mt-0.5 shrink-0" />
-            <div className="w-0.5 flex-1 bg-white shadow-[0_0_8px_rgba(34,211,238,0.85)]" />
+            <div
+              data-no-scrub="true"
+              onPointerDown={handlePlayheadPointerDown}
+              className="w-6 h-5 flex items-start justify-center cursor-ew-resize touch-none pointer-events-auto"
+              title="Drag playhead needle"
+            >
+              <div className="w-3.5 h-3.5 rounded-sm bg-white border border-cyan-400 shadow-md rotate-45 -mt-0.5 shrink-0" />
+            </div>
+            <div className="w-0.5 flex-1 bg-white shadow-[0_0_8px_rgba(34,211,238,0.85)] pointer-events-none" />
           </div>
         </div>
       </div>

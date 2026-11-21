@@ -1696,22 +1696,22 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   return (
     <div className="w-full h-full flex flex-col items-center justify-center bg-black overflow-hidden relative select-none">
       {/* ========================================================= */}
-      {/* TOP LIVE TAB HEADER: Back, Channel/Room, Prominent Go Live */}
+      {/* TOP LIVE TAB HEADER: Compact Back, Room, Go Live, AI Lang */}
       {/* ========================================================= */}
-      <div className="w-full max-w-5xl px-3 sm:px-4 py-2 flex items-center justify-between gap-2 z-30 shrink-0">
+      <div className="w-full max-w-5xl px-2 sm:px-3 py-1 flex items-center justify-between gap-1.5 z-30 shrink-0">
         <button
           type="button"
           onClick={() => onSelectTab('foryou')}
-          className="min-h-[40px] flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-700/80 text-xs font-bold transition-all shadow-md active:scale-95 shrink-0"
+          className="min-h-[32px] flex items-center gap-1 px-2 py-1 rounded-lg bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-700/80 text-[11px] font-bold transition-all shadow-sm active:scale-95 shrink-0"
         >
-          <ArrowLeft className="w-3.5 h-3.5 text-pink-400" />
+          <ArrowLeft className="w-3 h-3 text-pink-400" />
           <span className="hidden sm:inline">Back to Reels</span>
           <span className="sm:hidden">Back</span>
         </button>
 
         {/* Room Indicator / Stage Switcher (`< Jatt VibeReels Stage >`) */}
         <div
-          className={`flex items-center gap-1.5 bg-neutral-900/85 px-2.5 py-1.5 rounded-full border border-neutral-800 ${
+          className={`flex items-center gap-1 bg-neutral-900/85 px-2 py-1 rounded-full border border-neutral-800 ${
             isRamSaverMode ? '' : 'backdrop-blur-md'
           } min-w-0`}
         >
@@ -1719,21 +1719,21 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
             <button
               type="button"
               onClick={() => handleCycleRoom(-1)}
-              className="p-1 text-neutral-400 hover:text-white transition-colors"
+              className="p-0.5 text-neutral-400 hover:text-white transition-colors"
               title="Previous Live Room / Stage"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-3.5 h-3.5" />
             </button>
           )}
-          <span className="text-xs font-bold text-white flex items-center gap-1.5 truncate">
+          <span className="text-[11px] font-bold text-white flex items-center gap-1 truncate">
             <Radio
-              className={`w-3.5 h-3.5 shrink-0 ${
+              className={`w-3 h-3 shrink-0 ${
                 effectiveBroadcast?.isLive ? 'text-rose-500 animate-pulse' : 'text-pink-400'
               }`}
             />
-            <span className="truncate max-w-[110px] sm:max-w-[190px]">{displayedHostName}</span>
+            <span className="truncate max-w-[96px] sm:max-w-[180px]">{displayedHostName}</span>
             {effectiveBroadcast?.isLive && (
-              <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider shrink-0">
+              <span className="px-1 py-0.2 rounded bg-rose-600 text-white text-[8px] font-black uppercase tracking-wider shrink-0">
                 LIVE
               </span>
             )}
@@ -1742,52 +1742,52 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
             <button
               type="button"
               onClick={() => handleCycleRoom(1)}
-              className="p-1 text-neutral-400 hover:text-white transition-colors"
+              className="p-0.5 text-neutral-400 hover:text-white transition-colors"
               title="Next Live Room / Stage"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
 
-        {/* Right Header Actions: Go Live / End Live + Sound */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right Header Actions: Go Live / End Live + Compact Translator + Sound */}
+        <div className="flex items-center gap-1 shrink-0">
           {!isHostingLive ? (
             <button
               type="button"
               onClick={handleOpenGoLiveSetup}
-              className="min-h-[40px] flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-xs font-black tracking-wide shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
+              className="min-h-[32px] flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-[11px] font-black tracking-wide shadow-md shadow-rose-600/30 active:scale-95 transition-all"
             >
-              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-              <Camera className="w-3.5 h-3.5" />
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+              <Camera className="w-3 h-3" />
               <span>Go Live</span>
             </button>
           ) : (
             <button
               type="button"
               onClick={handleEndLiveBroadcast}
-              className="min-h-[40px] flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
+              className="min-h-[32px] flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black shadow-md shadow-rose-600/30 active:scale-95 transition-all"
             >
-              <Power className="w-3.5 h-3.5" />
-              <span>End Live</span>
+              <Power className="w-3 h-3" />
+              <span>End</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={() => setIsTranslatorPanelOpen((open) => !open)}
-            className={`min-h-[40px] flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-all active:scale-95 ${
+            className={`min-h-[32px] flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border transition-all active:scale-95 ${
               isSpeechCapturing
-                ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60 shadow-md shadow-cyan-500/20'
+                ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60 shadow-sm shadow-cyan-500/20'
                 : isTranslatorPanelOpen
                 ? 'bg-purple-600/30 text-purple-200 border-purple-400/50'
                 : 'bg-neutral-900 text-neutral-200 border-neutral-800 hover:bg-neutral-800'
             }`}
             title="Live 13-Language Voice & Subtitle Translator"
           >
-            <Languages className="w-4 h-4 text-cyan-400 shrink-0" />
+            <Languages className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
             <span className="hidden md:inline">AI Translator</span>
-            <span className="text-[10px] font-black text-cyan-300">
+            <span className="text-[9px] font-black text-cyan-300">
               {spokenLangDef.shortTag}↔{listenLangDef.shortTag}
             </span>
           </button>
@@ -1795,14 +1795,14 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
           <button
             type="button"
             onClick={onToggleMute}
-            className={`min-h-[40px] flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+            className={`min-h-[32px] flex items-center justify-center px-2 py-1 rounded-lg text-[11px] font-bold border transition-all ${
               isMuted
                 ? 'bg-neutral-900 text-neutral-400 border-neutral-800'
                 : 'bg-pink-600/20 text-pink-400 border-pink-500/40'
             }`}
             title={isMuted ? 'Unmute audio' : 'Mute audio'}
           >
-            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
@@ -1810,7 +1810,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       {/* ========================================================= */}
       {/* MAIN FULL-SCREEN LIVE STAGE CONTAINER */}
       {/* ========================================================= */}
-      <div className="relative w-full h-[calc(100%-56px)] sm:max-w-5xl max-h-[850px] rounded-2xl sm:rounded-3xl overflow-hidden bg-neutral-950 border border-neutral-800/80 shadow-2xl flex flex-col justify-between">
+      <div className="relative w-full h-[calc(100%-42px)] sm:max-w-5xl max-h-[860px] rounded-xl sm:rounded-3xl overflow-hidden bg-neutral-950 border border-neutral-800/80 shadow-2xl flex flex-col justify-between">
         {/* VIDEO / CAMERA VIEWPORT LAYER */}
         <div className="absolute inset-0 z-0 bg-neutral-950 flex flex-col overflow-hidden">
           {isSplitScreenActive && coHostInfo ? (
@@ -1973,29 +1973,29 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         </div>
 
         {/* ========================================================= */}
-        {/* TOP OVERLAY BAR: Host Pill, Stream Title, LIVE & Viewers  */}
+        {/* TOP OVERLAY BAR: Compact Host Pill, LIVE & Viewers        */}
         {/* ========================================================= */}
-        <div className="relative z-20 p-3 sm:p-4 bg-gradient-to-b from-black/85 via-black/40 to-transparent flex flex-col gap-2 pointer-events-auto">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            {/* Host Card */}
-            <div className="flex items-center gap-2 bg-black/65 backdrop-blur-md p-1 pr-3 rounded-full border border-white/15">
+        <div className="relative z-20 p-2 sm:p-3 bg-gradient-to-b from-black/75 via-black/30 to-transparent flex flex-col gap-1 pointer-events-auto">
+          <div className="flex items-center justify-between gap-1.5 flex-wrap">
+            {/* Compact Host Card */}
+            <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-md p-0.5 pr-2 rounded-full border border-white/15">
               <img
                 src={displayedHostAvatar}
                 alt={displayedHostName}
-                className="w-9 h-9 rounded-full object-cover border-2 border-pink-500 shrink-0"
+                className="w-7 h-7 rounded-full object-cover border border-pink-500 shrink-0"
                 referrerPolicy="no-referrer"
               />
               <div className="min-w-0">
                 <div className="flex items-center gap-1">
-                  <p className="text-xs font-bold text-white truncate max-w-[110px] sm:max-w-[170px]">
+                  <p className="text-[11px] font-bold text-white truncate max-w-[96px] sm:max-w-[160px] leading-tight">
                     {displayedHostName}
                   </p>
-                  <CheckCircle className="w-3 h-3 text-pink-400 shrink-0" />
+                  <CheckCircle className="w-2.5 h-2.5 text-pink-400 shrink-0" />
                 </div>
-                <div className="flex items-center gap-1.5 text-[10px] text-neutral-300">
+                <div className="flex items-center gap-1 text-[9px] text-neutral-300 leading-tight">
                   <span className="text-amber-400 font-bold">💎 {totalDiamonds.toLocaleString()}</span>
-                  <span>·</span>
-                  <span className="text-neutral-400 truncate">@{displayedHostHandle}</span>
+                  <span className="hidden sm:inline">·</span>
+                  <span className="hidden sm:inline text-neutral-400 truncate">@{displayedHostHandle}</span>
                 </div>
               </div>
 
@@ -2008,10 +2008,10 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                       isFollowingHost ? 'Unfollowed host' : `Following ${displayedHostName}!`
                     );
                   }}
-                  className={`ml-1 px-2.5 py-1 rounded-full text-xs font-bold transition-all ${
+                  className={`ml-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold transition-all ${
                     isFollowingHost
                       ? 'bg-neutral-800 text-neutral-300 border border-neutral-700'
-                      : 'bg-pink-600 hover:bg-pink-500 text-white shadow-md shadow-pink-600/30'
+                      : 'bg-pink-600 hover:bg-pink-500 text-white shadow-sm shadow-pink-600/30'
                   }`}
                 >
                   {isFollowingHost ? 'Following' : '+ Follow'}
@@ -2019,46 +2019,46 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               )}
             </div>
 
-            {/* Right Status Badges: Real LIVE Timer + Viewer Count + Quality */}
-            <div className="flex items-center gap-2 flex-wrap">
+            {/* Right Status Badges: Compact LIVE Timer + Viewer Count */}
+            <div className="flex items-center gap-1.5 flex-wrap">
               {effectiveBroadcast?.isLive && (
-                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/65 border border-white/15 text-[11px] font-semibold text-emerald-300 backdrop-blur-md">
-                  <Wifi className="w-3 h-3" />
+                <div className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-full bg-black/60 border border-white/15 text-[10px] font-semibold text-emerald-300 backdrop-blur-md">
+                  <Wifi className="w-2.5 h-2.5" />
                   <span>{effectiveBroadcast.resolutionLabel}</span>
                 </div>
               )}
 
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-600/25 border border-rose-500/45 text-white backdrop-blur-md shadow-sm">
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                <span className="text-xs font-black uppercase tracking-wider text-rose-300">
+              <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-rose-600/25 border border-rose-500/45 text-white backdrop-blur-md shadow-sm">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                <span className="text-[10px] font-black uppercase tracking-wider text-rose-300">
                   {effectiveBroadcast?.isLive ? 'LIVE' : 'STAGE'}
                 </span>
                 {isHostingLive && (
                   <>
-                    <span className="text-neutral-500">|</span>
-                    <span className="text-xs font-bold tabular-nums text-white">
+                    <span className="text-neutral-500 text-[10px]">|</span>
+                    <span className="text-[10px] font-bold tabular-nums text-white">
                       {formatDuration(elapsedSeconds)}
                     </span>
                   </>
                 )}
-                <span className="text-neutral-500">|</span>
-                <Users className="w-3.5 h-3.5 text-neutral-200" />
-                <span className="text-xs font-bold tabular-nums" title="Live connected users">
+                <span className="text-neutral-500 text-[10px]">|</span>
+                <Users className="w-3 h-3 text-neutral-200" />
+                <span className="text-[10px] font-bold tabular-nums" title="Live connected users">
                   {activeViewerCount}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Stream Title + Sync Channel Status Pill */}
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="inline-flex items-center gap-2 bg-black/60 border border-white/10 px-3 py-1 rounded-full backdrop-blur-md text-xs text-neutral-100 max-w-full">
-              <Sparkles className="w-3.5 h-3.5 text-pink-400 shrink-0" />
-              <span className="truncate font-semibold">{displayedTitle}</span>
+          {/* Compact Stream Title + Sync Pill */}
+          <div className="flex items-center justify-between gap-1.5 flex-wrap">
+            <div className="inline-flex items-center gap-1.5 bg-black/55 border border-white/10 px-2 py-0.5 rounded-full backdrop-blur-md text-[10px] text-neutral-100 max-w-full">
+              <Sparkles className="w-2.5 h-2.5 text-pink-400 shrink-0" />
+              <span className="truncate font-semibold max-w-[180px] sm:max-w-[300px]">{displayedTitle}</span>
             </div>
 
             <div
-              className={`inline-flex items-center gap-1.5 bg-black/60 border border-white/10 px-2.5 py-1 rounded-full text-[10px] font-semibold text-neutral-300 ${
+              className={`hidden sm:inline-flex items-center gap-1 bg-black/55 border border-white/10 px-2 py-0.5 rounded-full text-[9px] font-semibold text-neutral-300 ${
                 isRamSaverMode ? '' : 'backdrop-blur-md'
               }`}
             >
@@ -2164,26 +2164,26 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         </div>
 
         {/* ========================================================= */}
-        {/* LIVE 13-LANGUAGE AI TRANSLATOR PANEL (HOST / CO-HOST / VIEWER) */}
+        {/* COMPACT LIVE 13-LANGUAGE AI TRANSLATOR MINI PANEL         */}
         {/* ========================================================= */}
         {isTranslatorPanelOpen && (
-          <div className="relative z-40 mx-3 sm:mx-4 mb-2 bg-neutral-950/95 border border-cyan-500/40 rounded-2xl p-3 sm:p-3.5 shadow-2xl max-h-[54vh] overflow-y-auto pointer-events-auto">
-            <div className="flex items-center justify-between gap-2 pb-2 border-b border-neutral-800">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center shrink-0">
-                  <Languages className="w-4 h-4 text-cyan-300" />
+          <div className="relative z-40 mx-2 sm:mx-3 mb-1.5 bg-neutral-950/95 border border-cyan-500/40 rounded-xl p-2 sm:p-2.5 shadow-2xl max-h-[38vh] overflow-y-auto pointer-events-auto">
+            <div className="flex items-center justify-between gap-1.5 pb-1.5 border-b border-neutral-800">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <div className="w-6 h-6 rounded-md bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center shrink-0">
+                  <Languages className="w-3.5 h-3.5 text-cyan-300" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-black text-white truncate">
-                    Live AI Voice & Subtitle Translator
+                  <p className="text-[11px] font-black text-white truncate leading-tight">
+                    Live AI Translator (13 Languages)
                   </p>
-                  <p className="text-[10px] text-cyan-300 font-semibold truncate">
-                    13 Languages · Real-time captions & voice dubbing
+                  <p className="text-[9px] text-cyan-300 font-semibold truncate leading-tight">
+                    Real-time captions &amp; voice dubbing
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -2194,7 +2194,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                       stopTranslatedVoice();
                     }
                   }}
-                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border transition-all ${
+                  className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase border transition-all ${
                     isTranslatorEnabled
                       ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
                       : 'bg-neutral-800 text-neutral-400 border-neutral-700'
@@ -2205,24 +2205,24 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsTranslatorPanelOpen(false)}
-                  className="w-8 h-8 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-neutral-300 flex items-center justify-center"
+                  className="w-6 h-6 rounded-md bg-neutral-900 hover:bg-neutral-800 text-neutral-300 flex items-center justify-center"
                   aria-label="Close translator"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
 
-            {/* Dual Language Pickers + Swap */}
-            <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2 pt-2.5">
+            {/* Compact Dual Language Pickers + Swap */}
+            <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-1.5 pt-1.5">
               <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
-                  My Spoken Language
+                <label className="block text-[9px] font-bold uppercase tracking-wider text-neutral-400 mb-0.5">
+                  Speak
                 </label>
                 <select
                   value={spokenLang}
                   onChange={(e) => setSpokenLang(e.target.value as TranslatorLangCode)}
-                  className="w-full min-h-[38px] bg-neutral-900 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-white focus:outline-hidden focus:border-cyan-400"
+                  className="w-full min-h-[30px] bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-[11px] font-semibold text-white focus:outline-hidden focus:border-cyan-400"
                 >
                   {TRANSLATOR_LANGUAGES.map((lang) => (
                     <option key={lang.code} value={lang.code}>
@@ -2235,20 +2235,20 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               <button
                 type="button"
                 onClick={handleSwapTranslatorLangs}
-                className="w-9 h-9 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-cyan-300 flex items-center justify-center shrink-0 active:scale-95 transition-all"
+                className="w-7 h-7 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-cyan-300 flex items-center justify-center shrink-0 active:scale-95 transition-all"
                 title="Swap Spoken & Listen Languages"
               >
-                <ArrowLeftRight className="w-4 h-4" />
+                <ArrowLeftRight className="w-3 h-3" />
               </button>
 
               <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
-                  Listen / Translate To
+                <label className="block text-[9px] font-bold uppercase tracking-wider text-neutral-400 mb-0.5">
+                  Translate To
                 </label>
                 <select
                   value={listenLang}
                   onChange={(e) => setListenLang(e.target.value as TranslatorLangCode)}
-                  className="w-full min-h-[38px] bg-neutral-900 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-white focus:outline-hidden focus:border-pink-400"
+                  className="w-full min-h-[30px] bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-[11px] font-semibold text-white focus:outline-hidden focus:border-pink-400"
                 >
                   {TRANSLATOR_LANGUAGES.map((lang) => (
                     <option key={lang.code} value={lang.code}>
@@ -2259,19 +2259,19 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               </div>
             </div>
 
-            {/* Live Mic Recognition + Voice Dubbing + Self-Preview Toggles */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-2.5">
+            {/* Compact Mic Recognition + Voice Dubbing + Self-Preview Toggles */}
+            <div className="flex flex-wrap items-center gap-1 pt-1.5">
               <button
                 type="button"
                 onClick={handleToggleSpeechCapture}
-                className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 border transition-all active:scale-95 ${
+                className={`min-h-[30px] px-2.5 py-1 rounded-lg text-[10px] font-black flex items-center gap-1 border transition-all active:scale-95 ${
                   isSpeechCapturing
-                    ? 'bg-rose-600 hover:bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-600/30'
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white border-rose-400 shadow-sm shadow-rose-600/30'
                     : 'bg-cyan-500 hover:bg-cyan-400 text-black border-cyan-300'
                 }`}
               >
-                {isSpeechCapturing ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                <span>{isSpeechCapturing ? 'Stop Mic Translate' : 'Start Mic Translate'}</span>
+                {isSpeechCapturing ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                <span>{isSpeechCapturing ? 'Stop Mic' : 'Start Mic'}</span>
               </button>
 
               <button
@@ -2281,57 +2281,57 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   setVoiceDubbingEnabled(next);
                   if (!next) stopTranslatedVoice();
                 }}
-                className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                className={`min-h-[30px] px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all ${
                   voiceDubbingEnabled
                     ? 'bg-pink-600/25 text-pink-200 border-pink-500/50'
                     : 'bg-neutral-900 text-neutral-400 border-neutral-800'
                 }`}
               >
                 {voiceDubbingEnabled ? (
-                  <Volume2 className="w-3.5 h-3.5 text-pink-400" />
+                  <Volume2 className="w-3 h-3 text-pink-400" />
                 ) : (
-                  <VolumeX className="w-3.5 h-3.5" />
+                  <VolumeX className="w-3 h-3" />
                 )}
-                <span>Voice Dub {voiceDubbingEnabled ? 'On' : 'Off'}</span>
+                <span>Dub {voiceDubbingEnabled ? 'On' : 'Off'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setHearSelfPreview((v) => !v)}
-                className={`min-h-[38px] px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 border transition-all ${
+                className={`min-h-[30px] px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all ${
                   hearSelfPreview
                     ? 'bg-purple-600/30 text-purple-200 border-purple-400/50'
                     : 'bg-neutral-900 text-neutral-400 border-neutral-800'
                 }`}
                 title="Play voice dubbing locally when you speak so you can preview the translation"
               >
-                <Captions className="w-3.5 h-3.5" />
-                <span>Self Dub {hearSelfPreview ? 'On' : 'Off'}</span>
+                <Captions className="w-3 h-3" />
+                <span>Self {hearSelfPreview ? 'On' : 'Off'}</span>
               </button>
             </div>
 
             {speechStatusMsg && (
-              <p className="text-[11px] text-cyan-300 font-semibold mt-2 flex items-center gap-1.5">
+              <p className="text-[10px] text-cyan-300 font-semibold mt-1.5 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
                 <span>{speechStatusMsg}</span>
               </p>
             )}
 
             {/* Quick Speak & Translate Fallback / Manual Broadcast Input */}
-            <form onSubmit={handleSendManualVoiceTranslate} className="mt-2.5 flex items-center gap-1.5">
+            <form onSubmit={handleSendManualVoiceTranslate} className="mt-1.5 flex items-center gap-1">
               <input
                 type="text"
                 value={manualTranslateInput}
                 onChange={(e) => setManualTranslateInput(sanitizeInputLive(e.target.value, 280))}
-                placeholder={`Type in ${spokenLangDef.label} to translate & dub to ${listenLangDef.label}...`}
-                className="flex-1 min-h-[38px] bg-neutral-900 text-xs text-white placeholder-neutral-500 px-3 py-1.5 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-cyan-400"
+                placeholder={`Type in ${spokenLangDef.label} → ${listenLangDef.label}...`}
+                className="flex-1 min-h-[30px] bg-neutral-900 text-[11px] text-white placeholder-neutral-500 px-2.5 py-1 rounded-lg border border-neutral-700 focus:outline-hidden focus:border-cyan-400"
               />
               <button
                 type="submit"
                 disabled={!manualTranslateInput.trim()}
-                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 disabled:opacity-40 text-white text-xs font-black flex items-center gap-1 shrink-0 active:scale-95 transition-all"
+                className="min-h-[30px] px-2.5 py-1 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 disabled:opacity-40 text-white text-[10px] font-black flex items-center gap-1 shrink-0 active:scale-95 transition-all"
               >
-                <Volume2 className="w-3.5 h-3.5" />
+                <Volume2 className="w-3 h-3" />
                 <span>Speak</span>
               </button>
             </form>
@@ -2339,32 +2339,32 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         )}
 
         {/* ========================================================= */}
-        {/* LIVE TRANSLATED SUBTITLES OVERLAY (REAL-TIME)             */}
+        {/* COMPACT LIVE TRANSLATED SUBTITLES OVERLAY                 */}
         {/* ========================================================= */}
         {isTranslatorEnabled && activeSubtitles.length > 0 && (
-          <div className="relative z-30 px-3 sm:px-4 mb-1.5 flex flex-col items-center gap-1.5 pointer-events-none">
+          <div className="relative z-30 px-2 sm:px-3 mb-1 flex flex-col items-center gap-1 pointer-events-none">
             {activeSubtitles.slice(-2).map((sub) => {
               const srcTag = getTranslatorLanguage(sub.sourceLang).shortTag;
               const tgtTag = getTranslatorLanguage(sub.targetLang).shortTag;
               return (
                 <div
                   key={sub.id}
-                  className="w-full max-w-xl bg-black/80 border border-cyan-400/35 rounded-xl px-3 py-2 shadow-xl text-center"
+                  className="w-full max-w-lg bg-black/75 border border-cyan-400/35 rounded-lg px-2.5 py-1 shadow-lg text-center"
                 >
-                  <div className="flex items-center justify-center gap-1.5 text-[10px] font-bold text-cyan-300 mb-0.5">
-                    <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-200 uppercase font-black">
-                      {srcTag} → {tgtTag}
+                  <div className="flex items-center justify-center gap-1 text-[9px] font-bold text-cyan-300">
+                    <span className="px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-200 uppercase font-black">
+                      {srcTag}→{tgtTag}
                     </span>
                     <span className="text-neutral-200">{sub.senderName}</span>
                     {!sub.isFinal && (
                       <span className="text-amber-300 animate-pulse">listening...</span>
                     )}
                   </div>
-                  <p className="text-xs sm:text-sm font-black text-white leading-snug break-words">
+                  <p className="text-[11px] sm:text-xs font-black text-white leading-tight break-words">
                     {sub.translatedText}
                   </p>
                   {sub.sourceLang !== sub.targetLang && sub.originalText !== sub.translatedText && (
-                    <p className="text-[11px] text-neutral-300 italic mt-0.5 break-words">
+                    <p className="text-[10px] text-neutral-300 italic leading-tight break-words">
                       “{sub.originalText}”
                     </p>
                   )}
@@ -2375,22 +2375,22 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         )}
 
         {/* ========================================================= */}
-        {/* BOTTOM OVERLAY: REAL-TIME CHAT + STUDIO/CO-HOST CONTROLS  */}
+        {/* COMPACT BOTTOM OVERLAY: CHAT + STUDIO/CO-HOST MINI BAR    */}
         {/* ========================================================= */}
-        <div className="relative z-30 p-3 sm:p-4 bg-gradient-to-t from-black via-black/85 to-transparent flex flex-col justify-end pointer-events-auto">
-          {/* Active Host / Co-Host Camera & Audio Controls Toolbar */}
+        <div className="relative z-30 p-2 sm:p-3 bg-gradient-to-t from-black/90 via-black/70 to-transparent flex flex-col justify-end pointer-events-auto">
+          {/* Active Host / Co-Host Compact Camera & Audio Mini-Bar */}
           {(isHostingLive || isCoHostingLive) && (
-            <div className="mb-2.5 flex flex-col gap-2">
+            <div className="mb-1.5 flex flex-col gap-1.5">
               {showFilterStrip && isHostingLive && (
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5">
                   {LIVE_FILTERS.map((preset) => (
                     <button
                       key={preset.id}
                       type="button"
                       onClick={() => handleSelectFilter(preset.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition-all ${
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap border transition-all ${
                         selectedFilter === preset.id
-                          ? 'bg-pink-600 text-white border-pink-400 shadow-md'
+                          ? 'bg-pink-600 text-white border-pink-400 shadow-sm'
                           : 'bg-neutral-900/90 text-neutral-300 border-neutral-700 hover:bg-neutral-800'
                       }`}
                     >
@@ -2400,59 +2400,59 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center justify-between gap-2 flex-wrap bg-neutral-900/85 border border-neutral-800 rounded-2xl p-2 backdrop-blur-md">
-                <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center justify-between gap-1.5 flex-wrap bg-neutral-900/80 border border-neutral-800 rounded-xl p-1.5 backdrop-blur-md">
+                <div className="flex items-center gap-1 flex-wrap">
                   <button
                     type="button"
                     onClick={handleToggleMic}
-                    className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                    className={`min-h-[30px] px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all ${
                       micEnabled
                         ? 'bg-neutral-800 text-white border-neutral-700 hover:bg-neutral-700'
                         : 'bg-rose-600/25 text-rose-300 border-rose-500/50'
                     }`}
                   >
-                    {micEnabled ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
-                    <span>{micEnabled ? 'Mic On' : 'Muted'}</span>
+                    {micEnabled ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
+                    <span>{micEnabled ? 'Mic' : 'Muted'}</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={handleToggleCamera}
-                    className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                    className={`min-h-[30px] px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all ${
                       cameraEnabled
                         ? 'bg-neutral-800 text-white border-neutral-700 hover:bg-neutral-700'
                         : 'bg-rose-600/25 text-rose-300 border-rose-500/50'
                     }`}
                   >
                     {cameraEnabled ? (
-                      <Camera className="w-3.5 h-3.5" />
+                      <Camera className="w-3 h-3" />
                     ) : (
-                      <CameraOff className="w-3.5 h-3.5" />
+                      <CameraOff className="w-3 h-3" />
                     )}
-                    <span>{cameraEnabled ? 'Cam On' : 'Cam Off'}</span>
+                    <span>{cameraEnabled ? 'Cam' : 'Off'}</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={handleSwapCamera}
-                    className="min-h-[38px] px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 text-xs font-bold flex items-center gap-1.5 transition-all"
+                    className="min-h-[30px] px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 text-[10px] font-bold flex items-center gap-1 transition-all"
                     title="Swap Front / Back Camera"
                   >
-                    <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Swap Cam</span>
+                    <RefreshCw className="w-3 h-3 text-cyan-400" />
+                    <span>Flip</span>
                   </button>
 
                   {isHostingLive && (
                     <button
                       type="button"
                       onClick={() => setShowFilterStrip((s) => !s)}
-                      className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                      className={`min-h-[30px] px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all ${
                         showFilterStrip
                           ? 'bg-purple-600/30 text-purple-200 border-purple-500/50'
                           : 'bg-neutral-800 text-neutral-200 border-neutral-700 hover:bg-neutral-700'
                       }`}
                     >
-                      <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+                      <Wand2 className="w-3 h-3 text-purple-400" />
                       <span>{activeHostFilterPreset.label}</span>
                     </button>
                   )}
@@ -2460,15 +2460,15 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   <button
                     type="button"
                     onClick={handleToggleSpeechCapture}
-                    className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                    className={`min-h-[30px] px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all ${
                       isSpeechCapturing
-                        ? 'bg-cyan-500 text-black border-cyan-300 shadow-md shadow-cyan-500/25'
+                        ? 'bg-cyan-500 text-black border-cyan-300 shadow-sm shadow-cyan-500/25'
                         : 'bg-neutral-800 text-cyan-300 border-neutral-700 hover:bg-neutral-700'
                     }`}
                     title="Start or pause live 13-language voice translation"
                   >
-                    <Languages className="w-3.5 h-3.5" />
-                    <span>{isSpeechCapturing ? 'Translating Voice' : 'Voice Translate'}</span>
+                    <Languages className="w-3 h-3" />
+                    <span>{isSpeechCapturing ? 'Translating' : 'Voice AI'}</span>
                   </button>
                 </div>
 
@@ -2476,37 +2476,37 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   <button
                     type="button"
                     onClick={handleLeaveOrRemoveCoHost}
-                    className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-600/25 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1.5 transition-all"
+                    className="min-h-[30px] px-2 py-1 rounded-lg bg-rose-600/25 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-[10px] font-bold flex items-center gap-1 transition-all"
                   >
-                    <UserMinus className="w-3.5 h-3.5" />
-                    <span>{isCoHostingLive ? 'Leave Split-Screen' : 'End Co-Host'}</span>
+                    <UserMinus className="w-3 h-3" />
+                    <span>{isCoHostingLive ? 'Leave' : 'End Co-Host'}</span>
                   </button>
                 )}
               </div>
             </div>
           )}
 
-          {/* Chat Feed + Viewer Co-Host Request & Reaction Shortcuts */}
-          <div className="flex flex-col sm:flex-row items-end justify-between gap-3 mb-2.5">
-            {/* Live Chat Messages */}
+          {/* Compact Chat Feed + Viewer Co-Host Request & Reaction Shortcuts */}
+          <div className="flex flex-col sm:flex-row items-end justify-between gap-2 mb-1.5">
+            {/* Compact Live Chat Messages */}
             <div className="w-full sm:max-w-md">
               <div
                 ref={chatScrollRef}
-                className="max-h-40 sm:max-h-48 overflow-y-auto space-y-1.5 no-scrollbar text-xs pr-2"
+                className="max-h-24 sm:max-h-32 overflow-y-auto space-y-1 no-scrollbar text-[11px] pr-1.5"
               >
                 {chatMessages.map((msg) => (
                   <div
                     key={msg.id}
-                    className={`inline-flex items-start gap-1.5 p-1.5 rounded-xl backdrop-blur-xs max-w-[95%] shadow-xs ${
+                    className={`inline-flex items-start gap-1 p-1 rounded-lg backdrop-blur-xs max-w-[92%] shadow-xs ${
                       msg.isSystem
-                        ? 'bg-neutral-900/85 border border-neutral-700/80 text-neutral-300 text-[11px]'
+                        ? 'bg-neutral-900/80 border border-neutral-700/80 text-neutral-300 text-[10px]'
                         : msg.isGift
                         ? 'bg-amber-500/20 border border-amber-500/40 text-amber-200'
                         : msg.isHost
                         ? 'bg-pink-500/25 border border-pink-500/40 text-pink-100'
                         : msg.isCoHost
                         ? 'bg-cyan-500/20 border border-cyan-500/40 text-cyan-100'
-                        : 'bg-black/55 border border-white/10 text-neutral-100'
+                        : 'bg-black/50 border border-white/10 text-neutral-100'
                     }`}
                   >
                     {!msg.isSystem && (
@@ -2515,15 +2515,15 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                         alt={msg.user}
                         loading="lazy"
                         decoding="async"
-                        className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5"
+                        className="w-4 h-4 rounded-full object-cover shrink-0 mt-0.5"
                         referrerPolicy="no-referrer"
                       />
                     )}
-                    <div className="leading-snug">
-                      <span className="font-bold text-white text-[11px] mr-1.5">{msg.user}</span>
+                    <div className="leading-tight">
+                      <span className="font-bold text-white text-[10px] mr-1">{msg.user}</span>
                       {msg.badge && (
                         <span
-                          className={`text-[9px] uppercase font-black px-1.5 py-0.5 rounded-xs mr-1.5 ${
+                          className={`text-[8px] uppercase font-black px-1 py-0.2 rounded-xs mr-1 ${
                             msg.badge === 'Host' || msg.badge === 'Admin'
                               ? 'bg-pink-500 text-white'
                               : msg.badge === 'Co-Host'
@@ -2534,24 +2534,24 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                           {msg.badge}
                         </span>
                       )}
-                      <span className="text-[11px] text-neutral-200 break-words">{msg.text}</span>
+                      <span className="text-[10px] text-neutral-200 break-words">{msg.text}</span>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Right Quick Action Cluster: Watch Live + Request to Join + Heart/Fire/Wave Reactions */}
-            <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Right Quick Action Cluster: Compact Watch Live + Request to Join + Reactions */}
+            <div className="flex items-center gap-1 flex-wrap">
               {!isHostingLive && !isCoHostingLive && effectiveBroadcast?.isLive && (
                 <button
                   type="button"
                   onClick={handleWatchLive}
-                  className="min-h-[40px] px-3 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-xs font-black flex items-center gap-1.5 shadow-lg shadow-rose-600/25 active:scale-95 transition-all"
+                  className="min-h-[32px] px-2.5 py-1 rounded-lg bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-[11px] font-black flex items-center gap-1 shadow-md shadow-rose-600/25 active:scale-95 transition-all"
                   title="Connect & watch remote host stream live"
                 >
-                  <Play className="w-3.5 h-3.5 fill-white" />
-                  <span>Watch Live</span>
+                  <Play className="w-3 h-3 fill-white" />
+                  <span>Watch</span>
                 </button>
               )}
 
@@ -2560,11 +2560,11 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   type="button"
                   onClick={handleRequestJoinCoHost}
                   disabled={!effectiveBroadcast?.isLive || Boolean(effectiveBroadcast?.coHost)}
-                  className={`min-h-[40px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                  className={`min-h-[32px] px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 border transition-all ${
                     hasPendingCoHostRequest
                       ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/50'
                       : effectiveBroadcast?.isLive && !effectiveBroadcast?.coHost
-                      ? 'bg-cyan-500 hover:bg-cyan-400 text-black border-cyan-400 shadow-lg shadow-cyan-500/25'
+                      ? 'bg-cyan-500 hover:bg-cyan-400 text-black border-cyan-400 shadow-md shadow-cyan-500/25'
                       : 'bg-neutral-900/80 text-neutral-400 border-neutral-800 opacity-70 cursor-not-allowed'
                   }`}
                   title={
@@ -2573,13 +2573,13 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                       : 'Available when a host is broadcasting live'
                   }
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
+                  <UserPlus className="w-3 h-3" />
                   <span>
                     {effectiveBroadcast?.coHost
-                      ? 'Co-Host Busy'
+                      ? 'Busy'
                       : hasPendingCoHostRequest
-                      ? 'Requested...'
-                      : 'Request to Join'}
+                      ? 'Requested'
+                      : 'Join'}
                   </span>
                 </button>
               )}
@@ -2587,59 +2587,59 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleSendReaction('fire')}
-                className="min-h-[40px] min-w-[40px] px-2.5 rounded-xl bg-neutral-900/90 hover:bg-orange-500/25 border border-neutral-700/80 hover:border-orange-500/50 text-sm flex items-center justify-center active:scale-125 transition-all"
+                className="min-h-[32px] min-w-[32px] px-1.5 rounded-lg bg-neutral-900/90 hover:bg-orange-500/25 border border-neutral-700/80 hover:border-orange-500/50 flex items-center justify-center active:scale-125 transition-all"
                 title="Send Fire Reaction"
               >
-                <Flame className="w-4 h-4 text-orange-400" />
+                <Flame className="w-3.5 h-3.5 text-orange-400" />
               </button>
 
               <button
                 type="button"
                 onClick={() => handleSendReaction('wave')}
-                className="min-h-[40px] min-w-[40px] px-2.5 rounded-xl bg-neutral-900/90 hover:bg-sky-500/25 border border-neutral-700/80 hover:border-sky-500/50 text-sm flex items-center justify-center active:scale-125 transition-all"
+                className="min-h-[32px] min-w-[32px] px-1.5 rounded-lg bg-neutral-900/90 hover:bg-sky-500/25 border border-neutral-700/80 hover:border-sky-500/50 flex items-center justify-center active:scale-125 transition-all"
                 title="Send Wave Reaction"
               >
-                <Hand className="w-4 h-4 text-sky-400" />
+                <Hand className="w-3.5 h-3.5 text-sky-400" />
               </button>
             </div>
           </div>
 
-          {/* Bottom Chat Form + Gift + Heart Reaction */}
-          <div className="flex items-center gap-2">
-            <form onSubmit={handleSendComment} className="flex-1 flex items-center gap-1.5">
+          {/* Compact Bottom Chat Form + Gift + Heart Reaction */}
+          <div className="flex items-center gap-1.5">
+            <form onSubmit={handleSendComment} className="flex-1 flex items-center gap-1">
               <input
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(sanitizeInputLive(e.target.value, 280))}
                 placeholder="Say something nice in chat..."
-                className="flex-1 min-h-[44px] bg-neutral-900/90 text-xs text-white placeholder-neutral-500 px-4 py-2.5 rounded-full border border-neutral-700/80 focus:outline-hidden focus:border-pink-500 transition-colors shadow-inner"
+                className="flex-1 min-h-[34px] bg-neutral-900/90 text-[11px] text-white placeholder-neutral-500 px-3 py-1.5 rounded-full border border-neutral-700/80 focus:outline-hidden focus:border-pink-500 transition-colors shadow-inner"
               />
               <button
                 type="submit"
                 disabled={!inputText.trim()}
-                className="w-11 h-11 rounded-full bg-pink-600 disabled:opacity-40 text-white flex items-center justify-center shrink-0 active:scale-95 transition-all shadow-md shadow-pink-600/30"
+                className="w-8 h-8 rounded-full bg-pink-600 disabled:opacity-40 text-white flex items-center justify-center shrink-0 active:scale-95 transition-all shadow-sm shadow-pink-600/30"
                 aria-label="Send comment"
               >
-                <Send className="w-4 h-4" />
+                <Send className="w-3.5 h-3.5" />
               </button>
             </form>
 
             <button
               type="button"
               onClick={() => setIsGiftTrayOpen((o) => !o)}
-              className="w-11 h-11 rounded-full bg-gradient-to-tr from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white flex items-center justify-center shadow-lg shadow-amber-500/25 active:scale-95 transition-transform shrink-0"
+              className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white flex items-center justify-center shadow-md shadow-amber-500/25 active:scale-95 transition-transform shrink-0"
               title="Open Virtual Gifts"
             >
-              <Gift className="w-5 h-5" />
+              <Gift className="w-4 h-4" />
             </button>
 
             <button
               type="button"
               onClick={() => handleSendReaction('heart')}
-              className="w-11 h-11 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-600/30 active:scale-125 transition-transform shrink-0"
+              className="w-8 h-8 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-600/30 active:scale-125 transition-transform shrink-0"
               title="Send Heart Reaction"
             >
-              <Heart className="w-5 h-5 fill-white" />
+              <Heart className="w-4 h-4 fill-white" />
             </button>
           </div>
 

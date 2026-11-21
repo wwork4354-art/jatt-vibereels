@@ -520,28 +520,33 @@ export default function App() {
   // Merge incoming user records without losing local timestamps or newly registered entries
   const mergeUsersList = useCallback(
     (incoming: UserAccount[], base: UserAccount[]): UserAccount[] => {
-      const map = new Map<string, UserAccount>();
-      for (const u of base) {
-        map.set(u.username.toLowerCase(), u);
-      }
+      const result: UserAccount[] = [...base];
       for (const u of incoming) {
-        const key = u.username.toLowerCase();
-        const existing = map.get(key);
-        if (!existing) {
-          map.set(key, u);
+        const keyLower = u.username.toLowerCase();
+        const existingIdx = result.findIndex(
+          (item) => item.id === u.id || item.username.toLowerCase() === keyLower
+        );
+        if (existingIdx === -1) {
+          result.push(u);
         } else {
-          const existingActive = existing.lastActiveAt ? new Date(existing.lastActiveAt).getTime() : 0;
+          const existing = result[existingIdx];
+          const existingActive = existing.lastActiveAt
+            ? new Date(existing.lastActiveAt).getTime()
+            : 0;
           const nextActive = u.lastActiveAt ? new Date(u.lastActiveAt).getTime() : 0;
-          map.set(key, {
+          result[existingIdx] = {
             ...existing,
             ...u,
             phone: u.phone || existing.phone,
             createdAtIso: existing.createdAtIso || u.createdAtIso,
-            lastActiveAt: nextActive >= existingActive ? u.lastActiveAt || existing.lastActiveAt : existing.lastActiveAt,
-          });
+            lastActiveAt:
+              nextActive >= existingActive
+                ? u.lastActiveAt || existing.lastActiveAt
+                : existing.lastActiveAt,
+          };
         }
       }
-      return Array.from(map.values());
+      return result;
     },
     []
   );
@@ -961,17 +966,27 @@ export default function App() {
       void upsertUserProfileInSupabase(sanitizedProfile);
 
       if (currentUser) {
+        const nowIso = new Date().toISOString();
         const updatedCurrentUser: UserAccount = {
           ...currentUser,
           name: sanitizedProfile.name,
           username: sanitizedProfile.username,
           bio: sanitizedProfile.bio,
           avatar: sanitizedProfile.avatar,
+          createdAtIso: currentUser.createdAtIso || nowIso,
+          lastActiveAt: nowIso,
+          isOnline: true,
         };
         updateCurrentUser(updatedCurrentUser);
-        const updatedUsers = users.map((u) =>
-          u.id === currentUser.id ? updatedCurrentUser : u
+        const matchIdx = users.findIndex(
+          (u) =>
+            u.id === currentUser.id ||
+            u.username.toLowerCase() === currentUser.username.toLowerCase()
         );
+        const updatedUsers =
+          matchIdx >= 0
+            ? users.map((u, idx) => (idx === matchIdx ? updatedCurrentUser : u))
+            : [updatedCurrentUser, ...users];
         updateUsers(updatedUsers);
         void syncRegisteredUserToCloud(updatedCurrentUser);
       } else {
@@ -2944,8 +2959,12 @@ export default function App() {
             onLoginSuccess={handleLoginSuccess}
             registeredUsers={users}
             onRegisterUser={(newUser) => {
-              updateUsers([newUser, ...users]);
-              void syncRegisteredUserToCloud(newUser);
+              const deduped = users.filter(
+                (u) =>
+                  u.id !== newUser.id &&
+                  u.username.toLowerCase() !== newUser.username.toLowerCase()
+              );
+              updateUsers([newUser, ...deduped]);
               showToast(`Registered successfully as @${newUser.username}!`);
             }}
             onUpgradeUserPassword={(userId, passwordHash) => {

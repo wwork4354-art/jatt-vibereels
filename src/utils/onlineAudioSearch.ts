@@ -133,20 +133,21 @@ export async function searchOnlineSongs(
     }
   }
 
-  // Tier 2: Public Invidious instances
+  // Tier 2: Public Invidious instances (raced in parallel for fast worldwide multi-language results)
   const invidiousUrls = [
     `https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
     `https://invidious.nerdvpn.de/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
     `https://yewtu.be/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
   ];
 
-  for (const endpoint of invidiousUrls) {
-    if (signal?.aborted) return [];
-    try {
-      const res = await fetchWithTimeout(endpoint, 5500, signal);
-      if (!res.ok) continue;
-      const list = await res.json();
-      if (Array.isArray(list) && list.length > 0) {
+  try {
+    const invidiousResult = await Promise.any(
+      invidiousUrls.map(async (endpoint) => {
+        if (signal?.aborted) throw new Error('aborted');
+        const res = await fetchWithTimeout(endpoint, 4200, signal);
+        if (!res.ok) throw new Error('bad status');
+        const list = await res.json();
+        if (!Array.isArray(list) || list.length === 0) throw new Error('empty');
         const mapped: OnlineSongResult[] = list
           .filter((item: any) => item?.videoId && (item.type === 'video' || !item.type))
           .slice(0, 10)
@@ -163,49 +164,54 @@ export async function searchOnlineSongs(
               thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
             };
           });
-        if (mapped.length > 0) return mapped;
-      }
-    } catch (err) {
-      if (signal?.aborted) throw err;
-    }
+        if (mapped.length === 0) throw new Error('empty');
+        return mapped;
+      })
+    );
+    if (invidiousResult.length > 0) return invidiousResult;
+  } catch (err) {
+    if (signal?.aborted) throw err;
   }
 
-  // Tier 3: Public Piped music search instances
+  // Tier 3: Public Piped music & video search instances (raced in parallel)
   const pipedUrls = [
-    `https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=music_songs`,
+    `https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=all`,
     `https://pipedapi.adminforge.de/search?q=${encodeURIComponent(query)}&filter=all`,
   ];
 
-  for (const endpoint of pipedUrls) {
-    if (signal?.aborted) return [];
-    try {
-      const res = await fetchWithTimeout(endpoint, 5500, signal);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const items = Array.isArray(data?.items) ? data.items : [];
-      const mapped: OnlineSongResult[] = items
-        .filter((it: any) => typeof it?.url === 'string' && it.url.includes('v='))
-        .slice(0, 10)
-        .map((it: any) => {
-          const match = (it.url as string).match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-          const vidId = match ? match[1] : '';
-          const secs = typeof it.duration === 'number' && it.duration > 0 ? it.duration : undefined;
-          return {
-            id: `yt-song-${vidId}`,
-            videoId: vidId,
-            title: decodeHtmlEntities(it.title || 'Online Track'),
-            artist: decodeHtmlEntities(it.uploaderName || 'YouTube Audio'),
-            durationSeconds: secs,
-            durationLabel: formatSongDuration(secs),
-            thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
-          };
-        })
-        .filter((r: OnlineSongResult) => Boolean(r.videoId));
-
-      if (mapped.length > 0) return mapped;
-    } catch (err) {
-      if (signal?.aborted) throw err;
-    }
+  try {
+    const pipedResult = await Promise.any(
+      pipedUrls.map(async (endpoint) => {
+        if (signal?.aborted) throw new Error('aborted');
+        const res = await fetchWithTimeout(endpoint, 4200, signal);
+        if (!res.ok) throw new Error('bad status');
+        const data = await res.json();
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const mapped: OnlineSongResult[] = items
+          .filter((it: any) => typeof it?.url === 'string' && it.url.includes('v='))
+          .slice(0, 10)
+          .map((it: any) => {
+            const match = (it.url as string).match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+            const vidId = match ? match[1] : '';
+            const secs = typeof it.duration === 'number' && it.duration > 0 ? it.duration : undefined;
+            return {
+              id: `yt-song-${vidId}`,
+              videoId: vidId,
+              title: decodeHtmlEntities(it.title || 'Online Track'),
+              artist: decodeHtmlEntities(it.uploaderName || 'YouTube Audio'),
+              durationSeconds: secs,
+              durationLabel: formatSongDuration(secs),
+              thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
+            };
+          })
+          .filter((r: OnlineSongResult) => Boolean(r.videoId));
+        if (mapped.length === 0) throw new Error('empty');
+        return mapped;
+      })
+    );
+    if (pipedResult.length > 0) return pipedResult;
+  } catch (err) {
+    if (signal?.aborted) throw err;
   }
 
   return [];
@@ -213,7 +219,7 @@ export async function searchOnlineSongs(
 
 /**
  * Resolves a direct playable HTML5 audio-only stream URL for an online YouTube track
- * via public Piped / Invidious audio stream endpoints (with graceful fallback to null).
+ * via parallel Piped / Invidious endpoints (fast 2.4s timeout, graceful fallback to null).
  */
 export async function resolveOnlineAudioStreamUrl(
   videoId: string,
@@ -224,46 +230,40 @@ export async function resolveOnlineAudioStreamUrl(
     `https://pipedapi.adminforge.de/streams/${encodeURIComponent(videoId)}`,
   ];
 
-  for (const url of pipedStreamEndpoints) {
-    if (signal?.aborted) return null;
-    try {
-      const res = await fetchWithTimeout(url, 4500, signal);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const audioStreams: any[] = Array.isArray(data?.audioStreams) ? data.audioStreams : [];
-      const preferred =
-        audioStreams.find((s) => typeof s?.mimeType === 'string' && s.mimeType.includes('audio/mp4') && s.url) ||
-        audioStreams.find((s) => typeof s?.url === 'string' && s.url.startsWith('http'));
-      if (preferred?.url) {
-        return preferred.url as string;
-      }
-    } catch {
-      // try next mirror
-    }
-  }
-
   const invidiousStreamEndpoints = [
     `https://inv.nadeko.net/api/v1/videos/${encodeURIComponent(videoId)}`,
     `https://invidious.nerdvpn.de/api/v1/videos/${encodeURIComponent(videoId)}`,
   ];
 
-  for (const url of invidiousStreamEndpoints) {
-    if (signal?.aborted) return null;
-    try {
-      const res = await fetchWithTimeout(url, 4500, signal);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const formats: any[] = Array.isArray(data?.adaptiveFormats) ? data.adaptiveFormats : [];
-      const audioFmt =
-        formats.find((f) => typeof f?.type === 'string' && f.type.startsWith('audio/mp4') && f.url) ||
-        formats.find((f) => typeof f?.type === 'string' && f.type.startsWith('audio/') && f.url);
-      if (audioFmt?.url) {
-        return audioFmt.url as string;
-      }
-    } catch {
-      // try next mirror
-    }
-  }
+  const pipedPromises = pipedStreamEndpoints.map(async (url) => {
+    if (signal?.aborted) throw new Error('aborted');
+    const res = await fetchWithTimeout(url, 2400, signal);
+    if (!res.ok) throw new Error('bad status');
+    const data = await res.json();
+    const audioStreams: any[] = Array.isArray(data?.audioStreams) ? data.audioStreams : [];
+    const preferred =
+      audioStreams.find((s) => typeof s?.mimeType === 'string' && s.mimeType.includes('audio/mp4') && s.url) ||
+      audioStreams.find((s) => typeof s?.url === 'string' && s.url.startsWith('http'));
+    if (preferred?.url) return preferred.url as string;
+    throw new Error('no stream');
+  });
 
-  return null;
+  const invidiousPromises = invidiousStreamEndpoints.map(async (url) => {
+    if (signal?.aborted) throw new Error('aborted');
+    const res = await fetchWithTimeout(url, 2400, signal);
+    if (!res.ok) throw new Error('bad status');
+    const data = await res.json();
+    const formats: any[] = Array.isArray(data?.adaptiveFormats) ? data.adaptiveFormats : [];
+    const audioFmt =
+      formats.find((f) => typeof f?.type === 'string' && f.type.startsWith('audio/mp4') && f.url) ||
+      formats.find((f) => typeof f?.type === 'string' && f.type.startsWith('audio/') && f.url);
+    if (audioFmt?.url) return audioFmt.url as string;
+    throw new Error('no stream');
+  });
+
+  try {
+    return await Promise.any([...pipedPromises, ...invidiousPromises]);
+  } catch {
+    return null;
+  }
 }

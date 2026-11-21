@@ -167,7 +167,7 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
   onShowToast,
 }) => {
   const isOnline = useOnlineStatus();
-  const isMainAdmin = isMainAdminAccount(currentUser);
+  const isMainAdmin = Boolean(currentUser && isMainAdminAccount(currentUser));
   const [activeSubTab, setActiveSubTab] = useState<ProfileSubTab>(
     initialSubTab || 'videos'
   );
@@ -222,7 +222,10 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
   }, [initialSubTab]);
 
   React.useEffect(() => {
-    if (!isMainAdmin) return;
+    if (!isMainAdmin) {
+      setIsRegisteredUsersOpen(false);
+      return;
+    }
     setAdminPinLockout(getLockoutStatus('admin_pin'));
     if (isAdminUnlocked) return;
     const timer = window.setInterval(() => {

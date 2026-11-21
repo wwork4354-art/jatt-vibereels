@@ -170,12 +170,15 @@ export function clearPersistentAuthToken(): void {
 }
 
 /**
- * Strictly restricts Admin privileges & Admin Dashboard visibility to the main Admin account.
+ * Strictly restricts Admin privileges & Admin Dashboard / Registered App Users Tracker
+ * exclusively to the logged-in Main Admin account (@jatt_vibereels_admin, @admin, or wwork4354@gmail.com).
  */
 export function isMainAdminAccount(user: UserAccount | null | undefined): boolean {
-  if (!user || user.role !== 'admin') return false;
+  if (!user || typeof user !== 'object') return false;
+  if (user.role !== 'admin') return false;
   const emailLower = (user.email || '').trim().toLowerCase();
   const usernameLower = (user.username || '').trim().toLowerCase().replace(/^@+/, '');
+  if (!emailLower && !usernameLower) return false;
   return (
     emailLower === MAIN_ADMIN_EMAIL ||
     usernameLower === MAIN_ADMIN_USERNAME ||

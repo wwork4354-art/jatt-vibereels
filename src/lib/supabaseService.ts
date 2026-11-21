@@ -1228,14 +1228,28 @@ export async function upsertUserProfileInSupabase(
       if (schemaCapabilities.profilesHasFullName) {
         basePayload.full_name = safeProfile.name;
       }
+      if (schemaCapabilities.profilesHasCreatedAt) {
+        basePayload.created_at = new Date().toISOString();
+      }
 
-      let { error } = await supabase.from('profiles').upsert(basePayload);
+      let { error } = await supabase
+        .from('profiles')
+        .upsert(basePayload, { onConflict: 'id' });
       if (error && isMissingProfileColumnError(error)) {
         schemaCapabilities.profilesHasFullName = false;
         schemaCapabilities.profilesHasCreatedAt = false;
         delete basePayload.full_name;
-        const retry = await supabase.from('profiles').upsert(basePayload);
+        delete basePayload.created_at;
+        const retry = await supabase
+          .from('profiles')
+          .upsert(basePayload, { onConflict: 'id' });
         error = retry.error;
+      }
+      if (error && !isMissingRelationError(error)) {
+        const retryByUsername = await supabase
+          .from('profiles')
+          .upsert(basePayload, { onConflict: 'username' });
+        error = retryByUsername.error;
       }
 
       if (error && isMissingRelationError(error)) {
@@ -2158,7 +2172,7 @@ export async function syncRegisteredUserToCloud(user: UserAccount): Promise<void
 
     let { error } = await supabase
       .from('profiles')
-      .upsert(payload, { onConflict: 'username' });
+      .upsert(payload, { onConflict: 'id' });
 
     if (error && isMissingProfileColumnError(error)) {
       schemaCapabilities.profilesHasFullName = false;
@@ -2167,8 +2181,15 @@ export async function syncRegisteredUserToCloud(user: UserAccount): Promise<void
       delete payload.created_at;
       const retry = await supabase
         .from('profiles')
-        .upsert(payload, { onConflict: 'username' });
+        .upsert(payload, { onConflict: 'id' });
       error = retry.error;
+    }
+
+    if (error && !isMissingRelationError(error)) {
+      const retryByUsername = await supabase
+        .from('profiles')
+        .upsert(payload, { onConflict: 'username' });
+      error = retryByUsername.error;
     }
 
     if (error && isMissingRelationError(error)) {

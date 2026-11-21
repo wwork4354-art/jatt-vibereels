@@ -124,12 +124,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsLoading(true);
     try {
       const term = sanitizeText(usernameInput, 120).toLowerCase().replace(/^@+/, '');
-      const foundUser = registeredUsers.find(
+      let foundUser = registeredUsers.find(
         (u) =>
           u.username.toLowerCase() === term ||
           u.email.toLowerCase() === term ||
           (u.phone && u.phone.toLowerCase() === term)
       );
+      if (!foundUser && term === MAIN_ADMIN_ALT_USERNAME) {
+        foundUser = registeredUsers.find(
+          (u) =>
+            u.role === 'admin' &&
+            (u.email.toLowerCase() === MAIN_ADMIN_EMAIL ||
+              u.username.toLowerCase() === MAIN_ADMIN_USERNAME)
+        );
+      }
 
       if (!foundUser) {
         const nextLock = recordFailedAttempt('login');
@@ -265,7 +273,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setErrorMsg('Please choose a valid @username (at least 3 letters, numbers, or _).');
       return;
     }
-    if (cleanUsername === MAIN_ADMIN_USERNAME || cleanEmail === MAIN_ADMIN_EMAIL) {
+    if (
+      cleanUsername === MAIN_ADMIN_USERNAME ||
+      cleanUsername === MAIN_ADMIN_ALT_USERNAME ||
+      cleanEmail === MAIN_ADMIN_EMAIL
+    ) {
       setErrorMsg('This reserved handle or email cannot be registered.');
       return;
     }
