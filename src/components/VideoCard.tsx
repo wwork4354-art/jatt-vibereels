@@ -17,6 +17,7 @@ import {
   Trash2,
   Lock,
   Users,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
@@ -43,6 +44,8 @@ interface VideoCardProps {
   isFollowingCreator?: boolean;
   isFollowerCreator?: boolean;
   isMutualFriend?: boolean;
+  controlsSide?: 'left' | 'right';
+  onSwapControlsSide?: () => void;
   onToggleMute: () => void;
   onLikeToggle: (id: string) => void;
   onSaveToggle: (id: string) => void;
@@ -76,6 +79,8 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   isFollowingCreator,
   isFollowerCreator = false,
   isMutualFriend = false,
+  controlsSide = 'left',
+  onSwapControlsSide,
   onToggleMute,
   onLikeToggle,
   onSaveToggle,
@@ -89,6 +94,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   onOpenCreatorProfile,
   onShowToast,
 }) => {
+  const isLeftControls = controlsSide === 'left';
   const cardRootRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const bgAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -778,7 +784,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               className="w-full h-full object-contain gpu-accelerated"
             />
             {isPlaying && (
-              <div className="absolute top-16 left-4 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none">
+              <div
+                className={`absolute top-16 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none ${
+                  isLeftControls ? 'right-4' : 'left-4'
+                }`}
+              >
                 <Music className={`w-3 h-3 text-pink-400 ${isRamSaverMode ? '' : 'animate-pulse'}`} />
                 <span className="text-[10px] font-black text-pink-200 tracking-wide">
                   {video.sound.category === 'naat' ? 'Naat Audio-Visual' : 'Photo + Audio'}
@@ -898,7 +908,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
         }`}
       >
-        {/* Audio Mute / Unmute */}
+        {/* Audio Mute / Unmute + Swap Left/Right Controls Toggle */}
         <div className="flex items-center gap-1.5 sm:gap-2 pointer-events-auto flex-wrap">
           <button
             type="button"
@@ -922,6 +932,36 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               </>
             )}
           </button>
+
+          {onSwapControlsSide && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSwapControlsSide();
+                onShowToast(
+                  isLeftControls
+                    ? 'Controls swapped to Right side'
+                    : 'Controls swapped to Left side'
+                );
+              }}
+              aria-pressed={isLeftControls}
+              aria-label="Swap left and right feed controls"
+              title={
+                isLeftControls
+                  ? 'Controls on Left — tap to switch to Right side'
+                  : 'Controls on Right — tap to switch to Left side'
+              }
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-xs font-semibold active:scale-95 transition-all cursor-pointer [transform:translateZ(0)] ${
+                isLeftControls
+                  ? 'bg-neutral-900/90 border-white/15 text-white hover:bg-neutral-800'
+                  : 'bg-pink-600/25 border-pink-400/55 text-pink-200 hover:bg-pink-600/35'
+              }`}
+            >
+              <ArrowLeftRight className="w-3.5 h-3.5 text-pink-400" />
+              <span className="text-[11px]">Swap</span>
+            </button>
+          )}
         </div>
 
         {/* Live View Counter + Delete Post Button (own posts) */}
@@ -1029,8 +1069,12 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         </div>
       )}
 
-      {/* Right Side Overlay Action Buttons */}
-      <div className="absolute right-3 bottom-24 sm:bottom-20 z-30 flex flex-col items-center gap-4 sm:max-w-md pointer-events-auto [transform:translateZ(0)]">
+      {/* Vertical Overlay Action Buttons (Left Side by default, switchable via Swap toggle) */}
+      <div
+        className={`absolute bottom-24 sm:bottom-20 z-30 flex flex-col items-center gap-4 sm:max-w-md pointer-events-auto transition-all duration-300 ease-out [transform:translateZ(0)] ${
+          isLeftControls ? 'left-3' : 'right-3'
+        }`}
+      >
         {/* Creator Avatar with Follow Button */}
         <div className="relative mb-1 flex flex-col items-center">
           <button
@@ -1270,9 +1314,19 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
         }`}
       >
-        <div className="pointer-events-auto pr-14">
+        <div
+          className={`pointer-events-auto flex flex-col transition-all duration-300 ease-out ${
+            isLeftControls
+              ? 'pl-16 pr-0 right-4 items-end text-right'
+              : 'pr-16 pl-0 items-start text-left'
+          }`}
+        >
           {/* Clickable Creator Handle + Interactive Follow / Following / Friends Pill */}
-          <div className="flex items-center flex-wrap gap-1.5 mb-1">
+          <div
+            className={`flex items-center flex-wrap gap-1.5 mb-1 ${
+              isLeftControls ? 'justify-end' : 'justify-start'
+            }`}
+          >
             <button
               type="button"
               onClick={(e) => {
@@ -1350,7 +1404,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               hasInlineTags;
 
             return (
-              <div className="text-xs text-neutral-100 leading-relaxed drop-shadow-sm mb-2.5">
+              <div
+                className={`text-xs text-neutral-100 leading-relaxed drop-shadow-sm mb-2.5 flex flex-col ${
+                  isLeftControls ? 'items-end text-right' : 'items-start text-left'
+                }`}
+              >
                 {captionExpanded ? (
                   <p>{video.description}</p>
                 ) : (
@@ -1359,7 +1417,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
 
                 {/* Hashtags remain completely hidden by default until user clicks "More" */}
                 {captionExpanded && video.hashtags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
+                  <div
+                    className={`flex flex-wrap gap-1.5 mt-2 ${
+                      isLeftControls ? 'justify-end' : 'justify-start'
+                    }`}
+                  >
                     {video.hashtags.map((tag) => (
                       <button
                         key={tag}
@@ -1394,7 +1456,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           })()}
 
           {/* Sound Ticker Marquee */}
-          <div className="flex items-center gap-2 text-xs text-neutral-200 overflow-hidden max-w-[260px]">
+          <div
+            className={`flex items-center gap-2 text-xs text-neutral-200 overflow-hidden max-w-[260px] ${
+              isLeftControls ? 'justify-end ml-auto text-right' : 'justify-start text-left'
+            }`}
+          >
             <Music className="w-3.5 h-3.5 text-pink-400 shrink-0" />
             {video.sound.category === 'naat' && (
               <span className="px-1.5 py-0.2 rounded-sm bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[9px] font-black uppercase shrink-0">

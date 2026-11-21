@@ -23,9 +23,12 @@ import {
   Copy,
   Send,
   Move,
+  Play,
+  Pause,
+  Globe,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { AudioTrackOption, CreatorProfileData, UserAccount, VideoPost } from '../types';
-import { searchAudioLibrary } from '../data/audioLibrary';
 import { soundEngine } from '../utils/soundEngine';
 import { compressImageFile } from '../utils/imageOptimize';
 import { savePostForOffline } from '../lib/offlineMediaStore';
@@ -66,6 +69,11 @@ import {
   TimelineRenderOptions,
 } from '../utils/proEditorEngine';
 import { ProTimeline } from './ProTimeline';
+import {
+  AttachedOnlineSong,
+  MusicDrawerTab,
+  StudioMusicPickerDrawer,
+} from './StudioMusicPickerDrawer';
 
 interface PhotoVideoEditorModalProps {
   isOpen: boolean;
@@ -186,15 +194,20 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   const [activeStickerId, setActiveStickerId] = useState<string | null>(null);
   const [draggingTarget, setDraggingTarget] = useState<'text' | string | null>(null);
 
-  // Audio / Music Mixer
-  const [audioSearch, setAudioSearch] = useState('');
-  const [audioCategory, setAudioCategory] = useState<'all' | 'naat' | 'song' | 'beat'>('all');
+  // Audio / Music Mixer + CapCut Sound Picker Drawer
+  const [isMusicDrawerOpen, setIsMusicDrawerOpen] = useState(false);
+  const [musicDrawerTab, setMusicDrawerTab] = useState<MusicDrawerTab>('online');
   const [selectedLibraryTrack, setSelectedLibraryTrack] = useState<AudioTrackOption | null>(null);
+  const [selectedOnlineSong, setSelectedOnlineSong] = useState<AttachedOnlineSong | null>(null);
   const [selectedAudioFile, setSelectedAudioFile] = useState<File | null>(null);
   const [selectedAudioPreviewUrl, setSelectedAudioPreviewUrl] = useState<string | null>(null);
   const [previewingAudioId, setPreviewingAudioId] = useState<string | null>(null);
   const [originalVolume, setOriginalVolume] = useState<number>(100);
   const [bgAudioVolume, setBgAudioVolume] = useState<number>(80);
+  const [audioStartOffset, setAudioStartOffset] = useState<number>(0);
+  const [audioFadeIn, setAudioFadeIn] = useState<number>(0);
+  const [audioFadeOut, setAudioFadeOut] = useState<number>(0);
+  const [customAudioDuration, setCustomAudioDuration] = useState<number>(120);
 
   // Export & Post Metadata
   const [exportResolution, setExportResolution] = useState<ExportResolution>('1080p');
@@ -226,9 +239,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     return clips.find((c) => c.id === selectedClipId) || clips[0];
   }, [clips, selectedClipId]);
 
-  const filteredTracks = useMemo(
-    () => searchAudioLibrary(audioSearch, audioCategory),
-    [audioSearch, audioCategory]
+  const hasAttachedMusic = Boolean(
+    selectedAudioFile || selectedLibraryTrack || selectedOnlineSong
   );
 
   const renderOptions: TimelineRenderOptions = useMemo(
@@ -435,12 +447,51 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     };
   }, []);
 
-  // Sync audio volume sliders
+  // Sync preview audio element volume (with Fade-In / Fade-Out envelope) and start offset
   useEffect(() => {
-    if (previewAudioRef.current) {
-      previewAudioRef.current.volume = Math.max(0, Math.min(1, bgAudioVolume / 100));
+    const el = previewAudioRef.current;
+    if (!el || !selectedAudioPreviewUrl || !isOpen) return;
+
+    const fadeInGain =
+      audioFadeIn > 0.05 ? Math.min(1, Math.max(0, playheadTime / audioFadeIn)) : 1;
+    const fadeOutGain =
+      audioFadeOut > 0.05 && totalDuration > audioFadeOut
+        ? Math.min(1, Math.max(0, (totalDuration - playheadTime) / audioFadeOut))
+        : 1;
+    const envelopeVol = (bgAudioVolume / 100) * Math.min(fadeInGain, fadeOutGain);
+    el.volume = Math.max(0, Math.min(1, envelopeVol));
+
+    const maxAudioDur = Number.isFinite(el.duration) && el.duration > 1 ? el.duration : 0;
+    const desiredRawTime = audioStartOffset + playheadTime;
+    const desiredTime = maxAudioDur > 0 ? desiredRawTime % maxAudioDur : desiredRawTime;
+
+    if (Math.abs(el.currentTime - desiredTime) > 0.45 && el.readyState >= 1) {
+      try {
+        el.currentTime = desiredTime;
+      } catch {
+        // ignore seek before ready
+      }
     }
-  }, [bgAudioVolume]);
+
+    if (isPlaying && !isExporting && bgAudioVolume > 1) {
+      if (el.paused) {
+        void el.play().catch(() => {});
+      }
+    } else if (!el.paused) {
+      el.pause();
+    }
+  }, [
+    isOpen,
+    isPlaying,
+    isExporting,
+    playheadTime,
+    totalDuration,
+    bgAudioVolume,
+    audioStartOffset,
+    audioFadeIn,
+    audioFadeOut,
+    selectedAudioPreviewUrl,
+  ]);
 
   // Real-time 60fps Canvas Preview Engine synced to Playhead + Speed Curves + Video Elements
   useEffect(() => {
@@ -575,8 +626,15 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     const next = !isPlaying;
     setIsPlaying(next);
     if (next) {
-      if (selectedAudioFile && previewAudioRef.current) {
-        previewAudioRef.current.volume = bgAudioVolume / 100;
+      if (selectedAudioPreviewUrl && previewAudioRef.current) {
+        try {
+          if (previewAudioRef.current.readyState >= 1) {
+            previewAudioRef.current.currentTime = audioStartOffset + playheadTime;
+          }
+        } catch {
+          // ignore
+        }
+        previewAudioRef.current.volume = Math.max(0, Math.min(1, bgAudioVolume / 100));
         void previewAudioRef.current.play().catch(() => {});
       } else if (selectedLibraryTrack) {
         soundEngine.playPreviewTrack(selectedLibraryTrack.trackType, bgAudioVolume / 100);
@@ -593,6 +651,18 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     const clamped = Math.max(0, Math.min(totalDuration, nextTimeSec));
     playheadRef.current = clamped;
     setPlayheadTime(clamped);
+    if (selectedAudioPreviewUrl && previewAudioRef.current && previewAudioRef.current.readyState >= 1) {
+      try {
+        const dur =
+          Number.isFinite(previewAudioRef.current.duration) && previewAudioRef.current.duration > 1
+            ? previewAudioRef.current.duration
+            : 0;
+        const target = audioStartOffset + clamped;
+        previewAudioRef.current.currentTime = dur > 0 ? target % dur : target;
+      } catch {
+        // ignore
+      }
+    }
     // Select whichever clip lies under the playhead needle
     const hit = spans.find((s) => clamped >= s.timelineStart && clamped <= s.timelineEnd);
     if (hit && hit.clip.id !== selectedClipId) {
@@ -729,8 +799,15 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       }))
     );
     setSelectedLibraryTrack(null);
+    setSelectedOnlineSong(null);
     setSelectedAudioFile(null);
+    if (selectedAudioPreviewUrl && selectedAudioPreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedAudioPreviewUrl);
+    }
     setSelectedAudioPreviewUrl(null);
+    setAudioStartOffset(0);
+    setAudioFadeIn(0);
+    setAudioFadeOut(0);
     soundEngine.stopPreviewTrack();
     setPreviewingAudioId(null);
     setPlayheadTime(0);
@@ -819,6 +896,15 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     window.addEventListener('pointercancel', handleUp);
   };
 
+  const openMusicDrawer = (tab: MusicDrawerTab = 'online') => {
+    setIsPlaying(false);
+    if (previewAudioRef.current) previewAudioRef.current.pause();
+    soundEngine.stopPreviewTrack();
+    setPreviewingAudioId(null);
+    setMusicDrawerTab(tab);
+    setIsMusicDrawerOpen(true);
+  };
+
   const handlePickAudioFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -834,31 +920,87 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     const url = URL.createObjectURL(file);
     soundEngine.stopPreviewTrack();
     setSelectedLibraryTrack(null);
+    setSelectedOnlineSong(null);
     setSelectedAudioFile(file);
     setSelectedAudioPreviewUrl(url);
+    setAudioStartOffset(0);
     setPreviewingAudioId('custom-audio');
-    setTimeout(() => {
-      if (previewAudioRef.current) {
-        previewAudioRef.current.volume = bgAudioVolume / 100;
-        void previewAudioRef.current.play().catch(() => {});
-      }
-    }, 40);
+    setActiveTool('music');
   };
 
-  const handleSelectLibraryTrack = (track: AudioTrackOption) => {
+  const handleAttachDeviceAudioFromDrawer = (
+    file: File,
+    objectUrl: string,
+    durationSec?: number
+  ) => {
+    if (
+      selectedAudioPreviewUrl &&
+      selectedAudioPreviewUrl.startsWith('blob:') &&
+      selectedAudioPreviewUrl !== objectUrl
+    ) {
+      URL.revokeObjectURL(selectedAudioPreviewUrl);
+    }
+    soundEngine.stopPreviewTrack();
+    setSelectedLibraryTrack(null);
+    setSelectedOnlineSong(null);
+    setSelectedAudioFile(file);
+    setSelectedAudioPreviewUrl(objectUrl);
+    setCustomAudioDuration(durationSec && durationSec > 2 ? durationSec : 120);
+    setAudioStartOffset(0);
+    setPreviewingAudioId('custom-audio');
+    setActiveTool('music');
+    setIsPlaying(true);
+  };
+
+  const handleAttachLibraryTrackFromDrawer = (track: AudioTrackOption) => {
     if (previewAudioRef.current) previewAudioRef.current.pause();
-    const isSame = selectedLibraryTrack?.id === track.id;
+    if (selectedAudioPreviewUrl && selectedAudioPreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedAudioPreviewUrl);
+    }
+    setSelectedAudioFile(null);
+    setSelectedOnlineSong(null);
+    setSelectedAudioPreviewUrl(null);
+    setSelectedLibraryTrack(track);
+    setAudioStartOffset(0);
+    setCustomAudioDuration(120);
+    setActiveTool('music');
+    soundEngine.playPreviewTrack(track.trackType, bgAudioVolume / 100);
+    setPreviewingAudioId(track.id);
+    setIsPlaying(true);
+  };
+
+  const handleAttachOnlineSong = (song: AttachedOnlineSong) => {
+    if (previewAudioRef.current) previewAudioRef.current.pause();
+    if (selectedAudioPreviewUrl && selectedAudioPreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedAudioPreviewUrl);
+    }
+    soundEngine.stopPreviewTrack();
+    setSelectedAudioFile(null);
+    setSelectedLibraryTrack(null);
+    setSelectedOnlineSong(song);
+    setSelectedAudioPreviewUrl(song.streamUrl || null);
+    setCustomAudioDuration(song.durationSeconds && song.durationSeconds > 2 ? song.durationSeconds : 180);
+    setAudioStartOffset(0);
+    setPreviewingAudioId(song.id);
+    setActiveTool('music');
+    setIsPlaying(true);
+  };
+
+  const handleRemoveAudioTrack = () => {
+    if (previewAudioRef.current) previewAudioRef.current.pause();
+    if (selectedAudioPreviewUrl && selectedAudioPreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedAudioPreviewUrl);
+    }
+    soundEngine.stopPreviewTrack();
+    setSelectedLibraryTrack(null);
+    setSelectedOnlineSong(null);
     setSelectedAudioFile(null);
     setSelectedAudioPreviewUrl(null);
-    if (isSame) {
-      setSelectedLibraryTrack(null);
-      soundEngine.stopPreviewTrack();
-      setPreviewingAudioId(null);
-    } else {
-      setSelectedLibraryTrack(track);
-      soundEngine.playPreviewTrack(track.trackType, bgAudioVolume / 100);
-      setPreviewingAudioId(track.id);
-    }
+    setPreviewingAudioId(null);
+    setAudioStartOffset(0);
+    setAudioFadeIn(0);
+    setAudioFadeOut(0);
+    onShowToast?.('Removed attached music track');
   };
 
   // High-Def 1080p / 4K Photo Export (for static single-image timelines)
@@ -907,8 +1049,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       clips.length === 1 &&
       clips[0].mediaType === 'image' &&
       (textLayer.text.trim() === '' || textLayer.animation === 'none') &&
-      !selectedAudioFile &&
-      !selectedLibraryTrack;
+      !hasAttachedMusic;
 
     if (isStaticSinglePhoto) {
       const photoFile = await renderProPhotoExport();
@@ -920,8 +1061,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       clips.length === 1 &&
       clips[0].mediaType === 'video' &&
       !hasAnyEdits &&
-      !selectedAudioFile &&
-      !selectedLibraryTrack
+      !hasAttachedMusic
     ) {
       return { file: clips[0].file, posterDataUrl: '', isVideo: true };
     }
@@ -969,12 +1109,14 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
           : null;
       if (!canvasStream) throw new Error('captureStream unsupported');
 
-      // Best-effort attach attached background song or synth stream
+      // Best-effort attach background song (device MP3 / online stream) or synth stream with start offset & Fade-In / Fade-Out
+      const renderDur = Math.max(0.5, totalDuration);
       let audioCtx: AudioContext | null = null;
       let exportAudioEl: HTMLAudioElement | null = null;
       let synthHandle: { stream: MediaStream; stop: () => void } | null = null;
 
       if (selectedAudioPreviewUrl && bgAudioVolume > 1) {
+        let attachedElementAudio = false;
         try {
           const ACtx =
             window.AudioContext ||
@@ -984,19 +1126,81 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
           exportAudioEl = new Audio(selectedAudioPreviewUrl);
           exportAudioEl.crossOrigin = 'anonymous';
           exportAudioEl.loop = true;
-          exportAudioEl.volume = Math.max(0, Math.min(1, bgAudioVolume / 100));
+          if (audioStartOffset > 0) {
+            const targetStart = audioStartOffset;
+            exportAudioEl.addEventListener(
+              'loadedmetadata',
+              () => {
+                if (!exportAudioEl) return;
+                try {
+                  const d =
+                    Number.isFinite(exportAudioEl.duration) && exportAudioEl.duration > 1
+                      ? exportAudioEl.duration
+                      : 0;
+                  exportAudioEl.currentTime = d > 0 ? targetStart % d : targetStart;
+                } catch {
+                  // ignore
+                }
+              },
+              { once: true }
+            );
+          }
+
           const srcNode = audioCtx.createMediaElementSource(exportAudioEl);
+          const gainNode = audioCtx.createGain();
+          const targetVol = Math.max(0.001, Math.min(1, bgAudioVolume / 100));
+          const now = audioCtx.currentTime;
+
+          if (audioFadeIn > 0.05) {
+            gainNode.gain.setValueAtTime(0.001, now);
+            gainNode.gain.linearRampToValueAtTime(targetVol, now + audioFadeIn);
+          } else {
+            gainNode.gain.setValueAtTime(targetVol, now);
+          }
+          if (audioFadeOut > 0.05 && renderDur > audioFadeOut + 0.1) {
+            const fadeOutStart = now + Math.max(audioFadeIn, renderDur - audioFadeOut);
+            gainNode.gain.setValueAtTime(targetVol, fadeOutStart);
+            gainNode.gain.linearRampToValueAtTime(0.001, now + renderDur);
+          }
+
           const dest = audioCtx.createMediaStreamDestination();
-          srcNode.connect(dest);
+          srcNode.connect(gainNode);
+          gainNode.connect(dest);
+
+          await exportAudioEl.play();
           dest.stream.getAudioTracks().forEach((tr) => canvasStream.addTrack(tr));
-          void exportAudioEl.play().catch(() => {});
+          attachedElementAudio = true;
         } catch {
-          // fallback: metadata audio handles feed playback
+          if (exportAudioEl) exportAudioEl.pause();
+          if (audioCtx) {
+            void audioCtx.close().catch(() => {});
+            audioCtx = null;
+          }
         }
-      } else if (selectedLibraryTrack && bgAudioVolume > 1) {
+
+        if (!attachedElementAudio) {
+          synthHandle = soundEngine.createExportAudioStream(
+            selectedLibraryTrack?.trackType || 'punjabi_dhol',
+            bgAudioVolume / 100,
+            {
+              fadeInSec: audioFadeIn,
+              fadeOutSec: audioFadeOut,
+              totalDurationSec: renderDur,
+            }
+          );
+          if (synthHandle) {
+            synthHandle.stream.getAudioTracks().forEach((tr) => canvasStream.addTrack(tr));
+          }
+        }
+      } else if ((selectedLibraryTrack || selectedOnlineSong) && bgAudioVolume > 1) {
         synthHandle = soundEngine.createExportAudioStream(
-          selectedLibraryTrack.trackType,
-          bgAudioVolume / 100
+          selectedLibraryTrack?.trackType || 'punjabi_dhol',
+          bgAudioVolume / 100,
+          {
+            fadeInSec: audioFadeIn,
+            fadeOutSec: audioFadeOut,
+            totalDurationSec: renderDur,
+          }
         );
         if (synthHandle) {
           synthHandle.stream.getAudioTracks().forEach((tr) => canvasStream.addTrack(tr));
@@ -1226,7 +1430,9 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       const userId = creatorProfile?.id || getOrCreateUserProfileId();
 
       const instantAudioUrl = selectedAudioPreviewUrl || undefined;
-      const hasAttachedAudio = Boolean(selectedAudioFile || selectedLibraryTrack);
+      const hasPostAudio = Boolean(
+        selectedAudioFile || selectedLibraryTrack || selectedOnlineSong
+      );
 
       const instantSound: VideoPost['sound'] = selectedAudioFile
         ? {
@@ -1234,6 +1440,17 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             artist: authorName,
             trackType: 'ambient_lofi',
             audioUrl: instantAudioUrl,
+            category: 'song',
+            originalVolume: hasVideoInTimeline ? originalVolume / 100 : 0,
+            bgAudioVolume: bgAudioVolume / 100,
+            hasAttachedAudio: true,
+          }
+        : selectedOnlineSong
+        ? {
+            title: selectedOnlineSong.title,
+            artist: selectedOnlineSong.artist,
+            trackType: 'punjabi_dhol',
+            audioUrl: selectedOnlineSong.streamUrl || undefined,
             category: 'song',
             originalVolume: hasVideoInTimeline ? originalVolume / 100 : 0,
             bgAudioVolume: bgAudioVolume / 100,
@@ -1396,7 +1613,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       })();
 
       onShowToast?.(
-        hasAttachedAudio
+        hasPostAudio
           ? `Published ${exportResolution.toUpperCase()} edit with music to Jatt VibeReels!`
           : `Published ${exportResolution.toUpperCase()} edit to Jatt VibeReels!`
       );
@@ -1412,11 +1629,18 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   const activeSticker = stickers.find((s) => s.id === activeStickerId) || null;
   const currentAudioLabel = selectedAudioFile
     ? selectedAudioFile.name
+    : selectedOnlineSong
+    ? `${selectedOnlineSong.title} · ${selectedOnlineSong.artist}`
     : selectedLibraryTrack
     ? `${selectedLibraryTrack.title} · ${selectedLibraryTrack.artist}`
     : hasVideoInTimeline
-    ? `Original Clip Audio (${originalVolume}%) · Tap to add music`
+    ? `No music attached (${originalVolume}% orig) · Tap to add track`
     : 'No music attached · Tap to add track';
+
+  const maxAudioTrimStart = Math.max(
+    15,
+    Math.floor((selectedOnlineSong?.durationSeconds || customAudioDuration || 120) - 2)
+  );
 
   return (
     <div
@@ -1426,6 +1650,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       <audio
         ref={previewAudioRef}
         src={selectedAudioPreviewUrl || undefined}
+        crossOrigin="anonymous"
+        loop
         onEnded={() => setPreviewingAudioId(null)}
         className="hidden"
       />
@@ -1628,41 +1854,44 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             </div>
 
             {/* Right / Lower Editing Inspector Panel */}
-            <aside className="w-full lg:w-[400px] xl:w-[430px] max-h-[38vh] lg:max-h-none bg-[#0d0d13] border-t lg:border-t-0 lg:border-l border-neutral-800/90 flex flex-col shrink-0 overflow-hidden">
-              {/* Modern Editing Tools Icon Tabs */}
-              <div className="shrink-0 px-2 py-1.5 border-b border-neutral-800/90 flex items-center gap-1 overflow-x-auto no-scrollbar bg-[#111119]">
-                {(
-                  [
-                    { id: 'trim', label: 'Trim & Split', icon: Scissors },
-                    { id: 'speed', label: 'Speed', icon: Gauge },
-                    { id: 'filters', label: 'Filters', icon: Sliders },
-                    { id: 'text', label: 'Text', icon: Type },
-                    { id: 'transitions', label: 'Transitions', icon: ArrowLeftRight },
-                    { id: 'stickers', label: 'Stickers', icon: Smile },
-                    { id: 'music', label: 'Audio', icon: Music },
-                    { id: 'post', label: 'Publish', icon: Sparkles },
-                  ] as const
-                ).map((tab) => {
-                  const Icon = tab.icon;
-                  const active = activeTool === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setActiveTool(tab.id)}
-                      className={`min-h-[44px] px-2.5 py-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 shrink-0 transition-all cursor-pointer ${
-                        active
-                          ? 'bg-pink-600/20 text-white border border-pink-500/60'
-                          : 'text-neutral-400 hover:text-white border border-transparent hover:bg-neutral-900'
-                      }`}
-                    >
-                      <Icon className={`w-4 h-4 ${active ? 'text-pink-400' : ''}`} />
-                      <span className="text-[10px] font-bold leading-none whitespace-nowrap">
-                        {tab.label}
-                      </span>
-                    </button>
-                  );
-                })}
+            <aside className="w-full lg:w-[400px] xl:w-[430px] max-h-[36vh] lg:max-h-none bg-[#0d0d13] border-t lg:border-t-0 lg:border-l border-neutral-800/90 flex flex-col shrink-0 overflow-hidden">
+              {/* Compact Active Tool Inspector Header */}
+              <div className="shrink-0 px-3.5 py-2 border-b border-neutral-800/90 flex items-center justify-between gap-2 bg-[#111119]">
+                <div className="flex items-center gap-2 min-w-0">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                  <span className="text-[11px] font-black uppercase tracking-wider text-neutral-200 truncate">
+                    {activeTool === 'trim'
+                      ? 'Edit & Split'
+                      : activeTool === 'music'
+                      ? 'Audio & Sound Controls'
+                      : activeTool === 'text'
+                      ? 'Text & Captions'
+                      : activeTool === 'stickers'
+                      ? 'Stickers & Emojis'
+                      : activeTool === 'filters'
+                      ? 'Filters & LUTs'
+                      : activeTool === 'speed'
+                      ? 'Speed (0.5x – 2x)'
+                      : activeTool === 'transitions'
+                      ? 'Transitions'
+                      : 'Publish Settings'}
+                  </span>
+                </div>
+                {hasAttachedMusic && activeTool !== 'music' && (
+                  <button
+                    type="button"
+                    onClick={() => openMusicDrawer('online')}
+                    className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/35 text-[10px] font-bold text-emerald-300 flex items-center gap-1 cursor-pointer shrink-0 max-w-[165px]"
+                  >
+                    <Music className="w-3 h-3 shrink-0" />
+                    <span className="truncate">
+                      {selectedOnlineSong?.title ||
+                        selectedLibraryTrack?.title ||
+                        selectedAudioFile?.name ||
+                        'Audio'}
+                    </span>
+                  </button>
+                )}
               </div>
 
               {/* Active Inspector Panel Body */}
@@ -2346,114 +2575,210 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   </div>
                 )}
 
-                {/* 7. AUDIO / MUSIC */}
+                {/* 7. AUDIO / MUSIC TIMELINE CONTROLS (CAPCUT STYLE) */}
                 {activeTool === 'music' && (
-                  <div className="space-y-3">
+                  <div className="space-y-3.5">
                     <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-xs font-black text-white">Audio &amp; Music Track</h4>
+                      <div>
+                        <h4 className="text-xs font-black text-white">Audio Track &amp; Mixer</h4>
+                        <p className="text-[10px] text-neutral-400">
+                          Trim audio start point, mix volumes &amp; set fade curves
+                        </p>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => audioInputRef.current?.click()}
-                        className="min-h-[36px] px-2.5 rounded-xl bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                        onClick={() => openMusicDrawer('online')}
+                        className="min-h-[36px] px-3 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:brightness-110 text-white text-[11px] font-black flex items-center gap-1.5 cursor-pointer shrink-0"
                       >
-                        <FileAudio className="w-3.5 h-3.5" />
-                        <span>Custom MP3</span>
+                        <Search className="w-3.5 h-3.5" />
+                        <span>{hasAttachedMusic ? 'Change Song' : 'Sounds Library'}</span>
                       </button>
                     </div>
 
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Search className="w-3.5 h-3.5 text-pink-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          value={audioSearch}
-                          onChange={(e) => setAudioSearch(sanitizeInputLive(e.target.value, 80))}
-                          placeholder="Search Punjabi songs, naats, beats..."
-                          className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:outline-hidden focus:border-pink-500"
-                        />
-                      </div>
-                      <div className="flex gap-1 text-[10px] font-bold">
-                        {(['all', 'song', 'naat', 'beat'] as const).map((cat) => (
-                          <button
-                            key={cat}
-                            type="button"
-                            onClick={() => setAudioCategory(cat)}
-                            className={`px-2 py-1 rounded-lg border capitalize cursor-pointer ${
-                              audioCategory === cat
-                                ? 'bg-pink-600/25 border-pink-500 text-pink-200'
-                                : 'bg-neutral-900 border-neutral-800 text-neutral-400'
-                            }`}
-                          >
-                            {cat}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="max-h-40 overflow-y-auto space-y-1.5 no-scrollbar">
-                      {filteredTracks.map((track) => {
-                        const selected = selectedLibraryTrack?.id === track.id;
-                        return (
-                          <div
-                            key={track.id}
-                            className={`p-2 rounded-xl border flex items-center justify-between gap-2 ${
-                              selected
-                                ? 'bg-pink-600/20 border-pink-500'
-                                : 'bg-neutral-900 border-neutral-800'
-                            }`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-bold text-white truncate">{track.title}</p>
-                              <p className="text-[10px] text-neutral-400 truncate">
-                                {track.artist} · {track.duration}
-                              </p>
-                            </div>
+                    {!hasAttachedMusic ? (
+                      <button
+                        type="button"
+                        onClick={() => openMusicDrawer('online')}
+                        className="w-full p-4 rounded-2xl border-2 border-dashed border-neutral-700 hover:border-pink-500 bg-neutral-900/60 hover:bg-pink-950/15 text-left flex items-center justify-between gap-3 cursor-pointer transition-all"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-pink-600/20 border border-pink-500/40 text-pink-400 flex items-center justify-center shrink-0">
+                            <Music className="w-5 h-5" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-black text-white">
+                              No music attached · Tap to add track
+                            </p>
+                            <p className="text-[10px] text-neutral-400 mt-0.5">
+                              Search songs worldwide, pick trending beats, or upload MP3
+                            </p>
+                          </div>
+                        </div>
+                        <span className="px-2.5 py-1.5 rounded-lg bg-pink-600 text-white text-[10px] font-black shrink-0">
+                          Browse
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="space-y-3">
+                        {/* Attached Track Card */}
+                        <div className="p-3 rounded-2xl bg-emerald-950/35 border border-emerald-500/40 flex items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
                             <button
                               type="button"
-                              onClick={() => handleSelectLibraryTrack(track)}
-                              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer ${
-                                selected
-                                  ? 'bg-pink-600 text-white'
-                                  : 'bg-neutral-800 text-neutral-200 hover:bg-pink-600'
-                              }`}
+                              onClick={handleTogglePlay}
+                              className="w-9 h-9 rounded-xl bg-emerald-500 text-black flex items-center justify-center shrink-0 cursor-pointer"
+                              aria-label={isPlaying ? 'Pause' : 'Play'}
                             >
-                              {selected ? (
-                                <>
-                                  <Check className="w-3 h-3" />
-                                  <span>
-                                    {previewingAudioId === track.id ? 'Playing' : 'Selected'}
-                                  </span>
-                                </>
+                              {isPlaying ? (
+                                <Pause className="w-4 h-4 fill-black" />
                               ) : (
-                                <span>Use</span>
+                                <Play className="w-4 h-4 fill-black ml-0.5" />
                               )}
                             </button>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-black text-white truncate">
+                                {selectedAudioFile
+                                  ? selectedAudioFile.name
+                                  : selectedOnlineSong
+                                  ? selectedOnlineSong.title
+                                  : selectedLibraryTrack?.title}
+                              </p>
+                              <p className="text-[10px] text-emerald-300 truncate">
+                                {selectedAudioFile
+                                  ? 'Device Audio File'
+                                  : selectedOnlineSong
+                                  ? `${selectedOnlineSong.artist} · ${selectedOnlineSong.durationLabel}`
+                                  : `${selectedLibraryTrack?.artist} · ${selectedLibraryTrack?.mood}`}
+                              </p>
+                            </div>
                           </div>
-                        );
-                      })}
-                    </div>
+                          <button
+                            type="button"
+                            onClick={handleRemoveAudioTrack}
+                            className="w-8 h-8 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 flex items-center justify-center cursor-pointer shrink-0"
+                            title="Remove attached audio"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      {hasVideoInTimeline && (
-                        <div className="space-y-1">
+                        {/* Quick Switch Source Buttons */}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openMusicDrawer('online')}
+                            className="py-1.5 px-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-[10px] font-bold text-neutral-200 flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <Globe className="w-3 h-3 text-pink-400" />
+                            <span>Search Online</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openMusicDrawer('trending')}
+                            className="py-1.5 px-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-[10px] font-bold text-neutral-200 flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            <span>Trending</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openMusicDrawer('device')}
+                            className="py-1.5 px-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-[10px] font-bold text-neutral-200 flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <FileAudio className="w-3 h-3 text-cyan-400" />
+                            <span>My MP3</span>
+                          </button>
+                        </div>
+
+                        {/* Trim / Slide Audio Start Point */}
+                        <div className="bg-neutral-900/75 border border-neutral-800 rounded-2xl p-3 space-y-1.5">
                           <div className="flex justify-between text-[11px]">
-                            <span className="text-neutral-300 font-semibold flex items-center gap-1">
-                              <Volume2 className="w-3 h-3 text-cyan-400" /> Video Vol
+                            <span className="text-neutral-200 font-bold">
+                              Trim / Slide Audio Start Point
                             </span>
-                            <span className="text-cyan-300 font-bold tabular-nums">
-                              {originalVolume}%
+                            <span className="text-emerald-400 font-black tabular-nums">
+                              Starts at {audioStartOffset.toFixed(1)}s
                             </span>
                           </div>
                           <input
                             type="range"
                             min={0}
-                            max={100}
-                            value={originalVolume}
-                            onChange={(e) => setOriginalVolume(Number(e.target.value))}
-                            className="w-full accent-cyan-400 cursor-pointer"
+                            max={maxAudioTrimStart}
+                            step={0.5}
+                            value={audioStartOffset}
+                            onChange={(e) => setAudioStartOffset(Number(e.target.value))}
+                            className="w-full accent-emerald-400 cursor-pointer"
                           />
+                          <div className="flex justify-between text-[9px] text-neutral-500 tabular-nums">
+                            <span>0:00</span>
+                            <span>
+                              Reel spans {audioStartOffset.toFixed(1)}s →{' '}
+                              {(audioStartOffset + totalDuration).toFixed(1)}s
+                            </span>
+                          </div>
                         </div>
-                      )}
+
+                        {/* Fade-In / Fade-Out Curves */}
+                        <div className="grid grid-cols-2 gap-2.5 bg-neutral-900/75 border border-neutral-800 rounded-2xl p-3">
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px]">
+                              <span className="text-neutral-300 font-semibold">Fade In</span>
+                              <span className="text-cyan-300 font-bold tabular-nums">
+                                {audioFadeIn.toFixed(1)}s
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={3}
+                              step={0.2}
+                              value={audioFadeIn}
+                              onChange={(e) => setAudioFadeIn(Number(e.target.value))}
+                              className="w-full accent-cyan-400 cursor-pointer"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px]">
+                              <span className="text-neutral-300 font-semibold">Fade Out</span>
+                              <span className="text-pink-300 font-bold tabular-nums">
+                                {audioFadeOut.toFixed(1)}s
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={3}
+                              step={0.2}
+                              value={audioFadeOut}
+                              onChange={(e) => setAudioFadeOut(Number(e.target.value))}
+                              className="w-full accent-pink-500 cursor-pointer"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Music Volume vs Original Video Volume Sliders */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-neutral-900/75 border border-neutral-800 rounded-2xl p-3">
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-neutral-300 font-semibold flex items-center gap-1">
+                            <Volume2 className="w-3 h-3 text-cyan-400" /> Original Video Vol
+                          </span>
+                          <span className="text-cyan-300 font-bold tabular-nums">
+                            {hasVideoInTimeline ? `${originalVolume}%` : 'Photo'}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          disabled={!hasVideoInTimeline}
+                          value={originalVolume}
+                          onChange={(e) => setOriginalVolume(Number(e.target.value))}
+                          className="w-full accent-cyan-400 cursor-pointer disabled:opacity-40"
+                        />
+                      </div>
                       <div className="space-y-1">
                         <div className="flex justify-between text-[11px]">
                           <span className="text-neutral-300 font-semibold flex items-center gap-1">
@@ -2550,7 +2875,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             selectedClipId={selectedClip?.id || null}
             zoomLevel={zoomLevel}
             audioLabel={currentAudioLabel}
-            hasAttachedMusic={Boolean(selectedAudioFile || selectedLibraryTrack)}
+            hasAttachedMusic={hasAttachedMusic}
+            audioStartOffset={audioStartOffset}
+            audioFadeIn={audioFadeIn}
+            audioFadeOut={audioFadeOut}
             textLayer={textLayer}
             stickers={stickers}
             onTogglePlay={handleTogglePlay}
@@ -2565,9 +2893,80 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
               setActiveTool('transitions');
             }}
             onFocusTrackTool={(tool) => setActiveTool(tool)}
+            onAudioBarClick={() => {
+              if (!hasAttachedMusic) {
+                openMusicDrawer('online');
+              } else {
+                setActiveTool('music');
+              }
+            }}
           />
+
+          {/* Complete CapCut-Style Bottom Toolbar */}
+          <nav
+            aria-label="Pro Studio Tools"
+            className="shrink-0 bg-[#08080c] border-t border-neutral-800/90 px-2 py-1.5 flex items-center justify-start sm:justify-center gap-1 overflow-x-auto no-scrollbar"
+          >
+            {(
+              [
+                { id: 'trim', label: 'Edit/Split', icon: Scissors },
+                { id: 'music', label: 'Audio/Sounds', icon: Music },
+                { id: 'text', label: 'Text/Captions', icon: Type },
+                { id: 'stickers', label: 'Stickers', icon: Smile },
+                { id: 'filters', label: 'Filters & LUTs', icon: Sliders },
+                { id: 'speed', label: 'Speed (0.5x–2x)', icon: Gauge },
+                { id: 'transitions', label: 'Transitions', icon: ArrowLeftRight },
+                { id: 'post', label: 'Publish', icon: Sparkles },
+              ] as const
+            ).map((tool) => {
+              const Icon = tool.icon;
+              const active = activeTool === tool.id;
+              return (
+                <button
+                  key={tool.id}
+                  type="button"
+                  onClick={() => {
+                    if (tool.id === 'music') {
+                      setActiveTool('music');
+                      openMusicDrawer('online');
+                    } else if (tool.id === 'trim' && activeTool === 'trim') {
+                      handleSplitAtPlayhead();
+                    } else {
+                      setActiveTool(tool.id);
+                    }
+                  }}
+                  className={`min-w-[68px] min-h-[48px] px-2.5 py-1.5 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 transition-all cursor-pointer ${
+                    active
+                      ? 'bg-pink-600/20 border border-pink-500/60 text-white'
+                      : 'border border-transparent text-neutral-400 hover:text-white hover:bg-neutral-900'
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 ${active ? 'text-pink-400' : 'text-neutral-300'}`} />
+                  <span className="text-[10px] font-bold leading-none whitespace-nowrap">
+                    {tool.label}
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
         </div>
       )}
+
+      {/* 3-Tab CapCut Music & Sound Picker Drawer */}
+      <StudioMusicPickerDrawer
+        isOpen={isMusicDrawerOpen}
+        onClose={() => setIsMusicDrawerOpen(false)}
+        initialTab={musicDrawerTab}
+        selectedLibraryTrack={selectedLibraryTrack}
+        selectedAudioFile={selectedAudioFile}
+        selectedAudioPreviewUrl={selectedAudioPreviewUrl}
+        selectedOnlineSong={selectedOnlineSong}
+        volume={bgAudioVolume}
+        onAttachLibraryTrack={handleAttachLibraryTrackFromDrawer}
+        onAttachDeviceFile={handleAttachDeviceAudioFromDrawer}
+        onAttachOnlineSong={handleAttachOnlineSong}
+        onShowToast={onShowToast}
+      />
     </div>
   );
 };

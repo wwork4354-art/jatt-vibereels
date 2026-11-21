@@ -29,6 +29,9 @@ interface ProTimelineProps {
   zoomLevel: number; // 1..4
   audioLabel: string;
   hasAttachedMusic: boolean;
+  audioStartOffset?: number;
+  audioFadeIn?: number;
+  audioFadeOut?: number;
   textLayer: EditorTextLayer;
   stickers: EditorStickerLayer[];
   onTogglePlay: () => void;
@@ -40,6 +43,7 @@ interface ProTimelineProps {
   onAddClipClick: () => void;
   onOpenTransitionForClip: (clipId: string) => void;
   onFocusTrackTool: (tool: 'music' | 'text' | 'stickers') => void;
+  onAudioBarClick?: () => void;
 }
 
 function formatTimelineClock(sec: number): string {
@@ -65,7 +69,7 @@ function shortTransitionLabel(tr: ClipTransitionType): string {
   }
 }
 
-export const ProTimeline: React.FC<ProTimelineProps> = ({
+export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
   spans,
   totalDuration,
   playheadTime,
@@ -74,6 +78,9 @@ export const ProTimeline: React.FC<ProTimelineProps> = ({
   zoomLevel,
   audioLabel,
   hasAttachedMusic,
+  audioStartOffset = 0,
+  audioFadeIn = 0,
+  audioFadeOut = 0,
   textLayer,
   stickers,
   onTogglePlay,
@@ -85,6 +92,7 @@ export const ProTimeline: React.FC<ProTimelineProps> = ({
   onAddClipClick,
   onOpenTransitionForClip,
   onFocusTrackTool,
+  onAudioBarClick,
 }) => {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const trackAreaRef = useRef<HTMLDivElement | null>(null);
@@ -419,12 +427,12 @@ export const ProTimeline: React.FC<ProTimelineProps> = ({
             <button
               type="button"
               data-no-scrub="true"
-              onClick={() => onFocusTrackTool('music')}
-              style={{ width: `${Math.max(120, totalDuration * pxPerSec)}px` }}
+              onClick={() => (onAudioBarClick ? onAudioBarClick() : onFocusTrackTool('music'))}
+              style={{ width: `${Math.max(180, totalDuration * pxPerSec)}px` }}
               className={`relative h-8 rounded-lg border px-2.5 flex items-center justify-between gap-2 overflow-hidden cursor-pointer transition-colors text-left ${
                 hasAttachedMusic
                   ? 'bg-emerald-950/60 border-emerald-500/45 hover:border-emerald-400'
-                  : 'bg-neutral-900/70 border-neutral-800 hover:border-neutral-600'
+                  : 'bg-neutral-900/70 border-neutral-800 hover:border-pink-500/50'
               }`}
             >
               {/* Waveform visual strip */}
@@ -442,6 +450,27 @@ export const ProTimeline: React.FC<ProTimelineProps> = ({
               <span className="relative z-10 text-[10px] font-bold text-white truncate">
                 {audioLabel}
               </span>
+              {hasAttachedMusic ? (
+                <div className="relative z-10 flex items-center gap-1 shrink-0">
+                  {audioStartOffset > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-black/60 text-emerald-300 text-[9px] font-black tabular-nums">
+                      @{audioStartOffset.toFixed(1)}s
+                    </span>
+                  )}
+                  {(audioFadeIn > 0 || audioFadeOut > 0) && (
+                    <span className="px-1.5 py-0.5 rounded bg-black/60 text-cyan-300 text-[9px] font-black">
+                      Fade
+                    </span>
+                  )}
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-200 text-[9px] font-bold">
+                    Trim
+                  </span>
+                </div>
+              ) : (
+                <span className="relative z-10 text-[9px] font-black text-pink-300 shrink-0">
+                  + Sounds
+                </span>
+              )}
             </button>
           </div>
 
@@ -511,4 +540,4 @@ export const ProTimeline: React.FC<ProTimelineProps> = ({
       </div>
     </div>
   );
-};
+});

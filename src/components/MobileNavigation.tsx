@@ -21,10 +21,10 @@ import {
   Image as ImageIcon,
   Send,
   Wand2,
-  ArrowUpDown,
   Youtube,
   Sliders,
   Zap,
+  Menu,
 } from 'lucide-react';
 import { useRamSaverMode } from '../lib/ramSaverMode';
 import {
@@ -352,6 +352,22 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
             <Film className="w-2.5 h-2.5 text-cyan-400" />
             <span>Movie Box</span>
           </button>
+
+          <button
+            type="button"
+            onClick={onToggleBottomNav}
+            aria-expanded={isBottomNavOpen}
+            aria-label={isBottomNavOpen ? 'Hide bottom navigation menu' : 'Show bottom navigation menu'}
+            title={isBottomNavOpen ? 'Hide Navigation Bar' : 'Open Bottom Menu'}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 transition-all cursor-pointer border ${
+              isBottomNavOpen
+                ? 'bg-pink-600 border-pink-400 text-white shadow-sm shadow-pink-600/30'
+                : 'bg-neutral-900 border-neutral-700/80 text-neutral-200 hover:text-white'
+            }`}
+          >
+            {isBottomNavOpen ? <X className="w-2.5 h-2.5" /> : <Menu className="w-2.5 h-2.5 text-pink-400" />}
+            <span>{isBottomNavOpen ? 'Hide' : 'Menu'}</span>
+          </button>
         </nav>
       </header>
 
@@ -556,29 +572,6 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
         </div>
       )}
 
-
-      {/* Floating Swap / Toggle Menu Button at Bottom-Right Corner (keeps video scrubber completely clear) */}
-      <button
-        type="button"
-        onClick={onToggleBottomNav}
-        aria-expanded={isBottomNavOpen}
-        aria-label={isBottomNavOpen ? 'Hide bottom navigation menu' : 'Show bottom navigation menu'}
-        title={isBottomNavOpen ? 'Hide Navigation Bar' : 'Swap / Show Navigation Bar'}
-        className={`lg:hidden fixed right-3 bottom-9 z-40 min-w-[44px] min-h-[42px] px-2.5 rounded-2xl border backdrop-blur-md flex items-center justify-center gap-1.5 shadow-xl active:scale-95 transition-[transform,background-color,border-color] duration-200 ease-out cursor-pointer [transform:translateZ(0)] ${
-          isBottomNavOpen
-            ? '-translate-y-11 bg-pink-600/90 border-pink-400/70 text-white shadow-pink-600/35'
-            : 'translate-y-0 bg-neutral-950/85 hover:bg-neutral-900 border-white/20 text-neutral-100'
-        }`}
-      >
-        {isBottomNavOpen ? (
-          <X className="w-4 h-4 shrink-0" />
-        ) : (
-          <ArrowUpDown className="w-4 h-4 text-pink-400 shrink-0" />
-        )}
-        <span className="text-[10px] font-black tracking-wide">
-          {isBottomNavOpen ? 'Hide' : 'Swap'}
-        </span>
-      </button>
 
       {/* Collapsible Mobile Bottom Tab Bar */}
       <nav

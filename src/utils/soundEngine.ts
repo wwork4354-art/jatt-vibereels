@@ -395,7 +395,8 @@ class SoundEngine {
    */
   public createExportAudioStream(
     trackType: string,
-    volumeMultiplier: number = 0.85
+    volumeMultiplier: number = 0.85,
+    fadeOptions?: { fadeInSec?: number; fadeOutSec?: number; totalDurationSec?: number }
   ): { stream: MediaStream; stop: () => void } | null {
     try {
       const AudioContextClass =
@@ -404,7 +405,25 @@ class SoundEngine {
       const exportCtx = new AudioContextClass();
       const dest = exportCtx.createMediaStreamDestination();
       const exportGain = exportCtx.createGain();
-      exportGain.gain.value = 0.42 * Math.max(0, Math.min(1, volumeMultiplier));
+      const targetGain = Math.max(0.001, 0.42 * Math.max(0, Math.min(1, volumeMultiplier)));
+      const now = exportCtx.currentTime;
+      const fadeIn = Math.max(0, fadeOptions?.fadeInSec || 0);
+      const fadeOut = Math.max(0, fadeOptions?.fadeOutSec || 0);
+      const totalDur = Math.max(0.5, fadeOptions?.totalDurationSec || 0);
+
+      if (fadeIn > 0.05) {
+        exportGain.gain.setValueAtTime(0.001, now);
+        exportGain.gain.linearRampToValueAtTime(targetGain, now + fadeIn);
+      } else {
+        exportGain.gain.setValueAtTime(targetGain, now);
+      }
+
+      if (fadeOut > 0.05 && totalDur > fadeOut + 0.1) {
+        const fadeOutStart = now + Math.max(fadeIn, totalDur - fadeOut);
+        exportGain.gain.setValueAtTime(targetGain, fadeOutStart);
+        exportGain.gain.linearRampToValueAtTime(0.001, now + totalDur);
+      }
+
       exportGain.connect(dest);
 
       const stopLoop = this.runSynthesizedLoopOnNode(exportCtx, exportGain, trackType);

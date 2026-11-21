@@ -2,6 +2,42 @@ import { AudioTrackOption } from '../types';
 
 export const CURATED_AUDIO_LIBRARY: AudioTrackOption[] = [
   {
+    id: 'beat-bhangra-drop',
+    title: 'Bhangra Drop',
+    artist: 'Jatt Beat Lab',
+    category: 'beat',
+    duration: '0:32',
+    mood: 'Trending · High-Energy · Bhangra Dhol',
+    trackType: 'punjabi_dhol',
+  },
+  {
+    id: 'beat-lofi-chill',
+    title: 'Lo-Fi Chill',
+    artist: 'Midnight Tape',
+    category: 'beat',
+    duration: '0:42',
+    mood: 'Trending · Aesthetic · Calm Lo-Fi',
+    trackType: 'ambient_lofi',
+  },
+  {
+    id: 'beat-cinematic-bass',
+    title: 'Cinematic Bass',
+    artist: 'Jatt Trailer FX',
+    category: 'beat',
+    duration: '0:45',
+    mood: 'Trending · Deep 808 · Epic Cinematic',
+    trackType: 'cosmic_pulse',
+  },
+  {
+    id: 'beat-phonk-drift',
+    title: 'Phonk Drift',
+    artist: 'Turbo Midnight',
+    category: 'beat',
+    duration: '0:34',
+    mood: 'Trending · Car Edit · Phonk Bass',
+    trackType: 'tokyo_drift',
+  },
+  {
     id: 'naat-hasbi-rabbi',
     title: 'Hasbi Rabbi Jallallah (Serene Naat Vibe)',
     artist: 'Madina Acoustics',

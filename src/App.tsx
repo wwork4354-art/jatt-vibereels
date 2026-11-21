@@ -456,6 +456,26 @@ export default function App() {
   const [isStoriesBarOpen, setIsStoriesBarOpen] = useState(false);
   const [storiesDragOffsetPx, setStoriesDragOffsetPx] = useState<number | null>(null);
   const [isMobileBottomNavOpen, setIsMobileBottomNavOpen] = useState(false);
+  const [feedControlsSide, setFeedControlsSide] = useState<'left' | 'right'>(() => {
+    try {
+      const saved = localStorage.getItem('jatt_feed_controls_side');
+      if (saved === 'left' || saved === 'right') return saved;
+    } catch {
+      // ignore storage failures
+    }
+    return 'left';
+  });
+  const handleToggleFeedControlsSide = useCallback(() => {
+    setFeedControlsSide((prev) => {
+      const next = prev === 'left' ? 'right' : 'left';
+      try {
+        localStorage.setItem('jatt_feed_controls_side', next);
+      } catch {
+        // ignore storage failures
+      }
+      return next;
+    });
+  }, []);
   const [snapReplyTarget, setSnapReplyTarget] = useState<DirectSnapRecipient | null>(null);
   const [followGraphVersion, setFollowGraphVersion] = useState(0);
   const [profileInitialSubTab, setProfileInitialSubTab] = useState<ProfileSubTab | undefined>(
@@ -2810,6 +2830,8 @@ export default function App() {
                             isFollowingCreator={rel.isFollowing || video.creator.isFollowing}
                             isFollowerCreator={rel.isFollower}
                             isMutualFriend={rel.isMutualFriend}
+                            controlsSide={feedControlsSide}
+                            onSwapControlsSide={handleToggleFeedControlsSide}
                             onToggleMute={handleToggleMute}
                             onLikeToggle={handleLikeToggle}
                             onSaveToggle={handleSaveToggle}
