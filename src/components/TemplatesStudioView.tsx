@@ -26,6 +26,9 @@ import {
   Loader2,
   Palette,
   Zap,
+  Crop,
+  RefreshCw,
+  ZoomIn,
 } from 'lucide-react';
 import {
   VideoPost,
@@ -85,6 +88,17 @@ interface LoadedMediaClip {
   durationSec: number;
   imageEl?: HTMLImageElement;
   videoEl?: HTMLVideoElement;
+  cropZoom?: number;
+  cropPanX?: number;
+  cropPanY?: number;
+}
+
+interface SlotWindow {
+  index: number;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  label: string;
 }
 
 const TRANSITION_OPTIONS: { id: TemplateEffectTransition; label: string }[] = [
@@ -99,17 +113,37 @@ function easeOutCubic(x: number): number {
   return 1 - Math.pow(1 - clamped, 3);
 }
 
-function formatTransitionLabel(tr: TemplateEffectTransition): string {
-  switch (tr) {
-    case 'zoom-in':
-      return 'Zoom-In';
-    case 'flash':
-      return 'Flash';
-    case 'shake':
-      return 'Shake';
-    case 'slide':
-      return 'Slide';
+function getTemplateSlotWindows(
+  template: VideoTemplateDef,
+  slotCount: number,
+  speedMultiplier: number
+): { windows: SlotWindow[]; totalDurationSec: number } {
+  const count = Math.max(1, slotCount);
+  const baseDurations =
+    template.slotDurations && template.slotDurations.length >= count
+      ? template.slotDurations.slice(0, count)
+      : Array.from({ length: count }, () =>
+          Number((template.durationSec / count).toFixed(1))
+        );
+
+  const safeSpeed = Math.max(0.5, speedMultiplier || 1);
+  const windows: SlotWindow[] = [];
+  let cursor = 0;
+
+  for (let i = 0; i < count; i++) {
+    const rawDur = Math.max(0.8, baseDurations[i] || template.durationSec / count);
+    const dur = Math.max(0.7, rawDur / safeSpeed);
+    windows.push({
+      index: i,
+      startSec: cursor,
+      endSec: cursor + dur,
+      durationSec: dur,
+      label: template.slotLabels?.[i] || `Slot ${i + 1}`,
+    });
+    cursor += dur;
   }
+
+  return { windows, totalDurationSec: Math.max(3, cursor) };
 }
 
 function drawCoverImageOrVideo(
@@ -140,77 +174,219 @@ function drawCoverImageOrVideo(
   ctx.drawImage(media, dx, dy, drawW, drawH);
 }
 
+// Renders rich, distinct animated visual scenes per shot slot so feed cards look like live reels
 function drawProceduralScene(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
   t: number,
   template: VideoTemplateDef,
-  clipSlot: number
+  clipSlot: number,
+  beatPulse = 0
 ) {
   const [c0, c1, c2] = template.previewColors;
-  const slotMod = ((clipSlot % 4) + 4) % 4;
-  const shift = slotMod * 0.35;
+  const slotMod = ((clipSlot % 5) + 5) % 5;
 
-  const grad = ctx.createLinearGradient(
-    slotMod === 1 ? w : 0,
-    0,
-    w * (0.55 + 0.4 * Math.sin(t * 0.8 + shift)),
-    h
-  );
-  grad.addColorStop(0, slotMod % 2 === 0 ? c0 : c1);
-  grad.addColorStop(0.5, slotMod === 2 ? c2 : slotMod % 2 === 0 ? c1 : c2);
-  grad.addColorStop(1, '#050507');
-  ctx.fillStyle = grad;
+  // Base sky / studio gradient tailored to slot
+  const skyGrad = ctx.createLinearGradient(0, 0, w * 0.25, h);
+  if (slotMod === 0) {
+    skyGrad.addColorStop(0, c0);
+    skyGrad.addColorStop(0.52, c1);
+    skyGrad.addColorStop(1, '#09090d');
+  } else if (slotMod === 1) {
+    skyGrad.addColorStop(0, '#070914');
+    skyGrad.addColorStop(0.45, c0);
+    skyGrad.addColorStop(1, c2);
+  } else if (slotMod === 2) {
+    skyGrad.addColorStop(0, c1);
+    skyGrad.addColorStop(0.55, c0);
+    skyGrad.addColorStop(1, '#050508');
+  } else if (slotMod === 3) {
+    skyGrad.addColorStop(0, c2);
+    skyGrad.addColorStop(0.48, c0);
+    skyGrad.addColorStop(1, '#060609');
+  } else {
+    skyGrad.addColorStop(0, '#090912');
+    skyGrad.addColorStop(0.5, c1);
+    skyGrad.addColorStop(1, c0);
+  }
+  ctx.fillStyle = skyGrad;
   ctx.fillRect(0, 0, w, h);
 
-  // Moving bokeh orbs / studio light plates
-  for (let i = 0; i < 5; i++) {
-    const angle = t * (0.55 + i * 0.14) + i * 1.4 + slotMod * 1.25;
-    const cx = w * (0.5 + 0.35 * Math.cos(angle));
-    const cy = h * (0.26 + 0.4 * Math.sin(angle * 0.85));
-    const rad = w * (0.22 + 0.08 * Math.sin(t * 1.7 + i));
-    const orb = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
-    const tint = (i + slotMod) % 2 === 0 ? c2 : c1;
-    orb.addColorStop(0, `${tint}8c`);
-    orb.addColorStop(1, 'transparent');
-    ctx.fillStyle = orb;
-    ctx.beginPath();
-    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  if (slotMod === 0) {
+    // Scene 0: Golden Horizon / Sunset Sun Disc & Silhouetted Ridge + Motion Clouds
+    const sunY = h * (0.37 + 0.02 * Math.sin(t * 1.1));
+    const sunR = w * (0.21 + beatPulse * 0.02);
+    const halo = ctx.createRadialGradient(w * 0.5, sunY, sunR * 0.2, w * 0.5, sunY, sunR * 2.2);
+    halo.addColorStop(0, 'rgba(255, 245, 220, 0.92)');
+    halo.addColorStop(0.32, `${c2}cc`);
+    halo.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, w, h);
 
-  // Stylized geometric silhouette & beat visuals distinct per cut slot
-  ctx.save();
-  ctx.globalAlpha = 0.24;
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = Math.max(1.5, w * 0.004);
-  if (template.transitionStyle === 'neon_flash' || slotMod === 2) {
-    for (let g = 0; g < 6; g++) {
-      const y = h * 0.48 + g * (h * 0.078);
+    ctx.beginPath();
+    ctx.arc(w * 0.5, sunY, sunR * 0.62, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 248, 232, 0.95)';
+    ctx.fill();
+
+    // Parallax mountain & skyline ridge
+    ctx.fillStyle = '#09090f';
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    ctx.lineTo(0, h * 0.56);
+    ctx.lineTo(w * 0.24, h * 0.49);
+    ctx.lineTo(w * 0.46, h * 0.55);
+    ctx.lineTo(w * 0.72, h * 0.46);
+    ctx.lineTo(w, h * 0.54);
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.fill();
+
+    // Subtle foreground portrait silhouette head & shoulders
+    ctx.fillStyle = 'rgba(10, 10, 14, 0.96)';
+    ctx.beginPath();
+    ctx.arc(w * 0.5, h * 0.44, w * 0.095, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(w * 0.5, h * 0.66, w * 0.25, h * 0.16, 0, Math.PI, 0, false);
+    ctx.fill();
+  } else if (slotMod === 1) {
+    // Scene 1: Cyber Night Ride / Perspective Neon Grid Highway + Light Trails
+    const horizonY = h * 0.43;
+    const vanishX = w * (0.5 + 0.06 * Math.sin(t * 1.4));
+    ctx.save();
+    ctx.strokeStyle = c2;
+    ctx.globalAlpha = 0.45 + beatPulse * 0.35;
+    ctx.lineWidth = Math.max(1.2, w * 0.004);
+    for (let i = -5; i <= 5; i++) {
+      ctx.beginPath();
+      ctx.moveTo(vanishX, horizonY);
+      ctx.lineTo(vanishX + i * w * 0.26, h);
+      ctx.stroke();
+    }
+    const scroll = (t * 2.2) % 1;
+    for (let r = 0; r < 7; r++) {
+      const frac = Math.pow((r + scroll) / 7, 1.7);
+      const y = horizonY + frac * (h - horizonY);
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(w, y + ((g % 2 === 0 ? 1 : -1) * w * 0.05));
+      ctx.lineTo(w, y);
       ctx.stroke();
     }
-  } else if (template.transitionStyle === 'spiritual_aura') {
-    const cx = w / 2;
-    const cy = h * 0.42;
-    for (let r = 1; r <= 3; r++) {
-      const radius = w * (0.14 * r + 0.02 * Math.sin(t * 2 + r));
+
+    // Glowing portal diamond
+    const diamScale = 1 + beatPulse * 0.16;
+    ctx.translate(w / 2, h * 0.36);
+    ctx.scale(diamScale, diamScale);
+    ctx.rotate(Math.sin(t * 1.2) * 0.06);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, w * 0.01);
+    ctx.strokeRect(-w * 0.16, -w * 0.16, w * 0.32, w * 0.32);
+    ctx.restore();
+  } else if (slotMod === 2) {
+    // Scene 2: Stage Spotlights + Beat Shockwaves & Sparks
+    ctx.save();
+    for (let b = 0; b < 3; b++) {
+      const angle = (b - 1) * 0.36 + Math.sin(t * 2.1 + b) * 0.18;
+      ctx.save();
+      ctx.translate(w * (0.2 + b * 0.3), -h * 0.04);
+      ctx.rotate(angle);
+      const beam = ctx.createLinearGradient(0, 0, 0, h * 0.85);
+      beam.addColorStop(0, `${b % 2 === 0 ? c2 : c1}aa`);
+      beam.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = beam;
       ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.moveTo(-w * 0.04, 0);
+      ctx.lineTo(w * 0.04, 0);
+      ctx.lineTo(w * 0.24, h * 0.85);
+      ctx.lineTo(-w * 0.24, h * 0.85);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
     }
+
+    // Center shockwave ring pulsing with beat
+    const ringR = w * (0.18 + ((t * 1.3) % 1) * 0.3);
+    ctx.strokeStyle = '#ffffff';
+    ctx.globalAlpha = Math.max(0.1, 0.7 - ((t * 1.3) % 1) * 0.6);
+    ctx.lineWidth = Math.max(2, w * 0.008);
+    ctx.beginPath();
+    ctx.arc(w / 2, h * 0.44, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Floating beat sparks
+    ctx.globalAlpha = 0.85;
+    for (let s = 0; s < 14; s++) {
+      const px = w * ((0.15 + ((s * 0.23 + t * 0.18) % 0.72)));
+      const py = h * (0.16 + ((s * 0.19 - t * 0.25 + 10) % 0.56));
+      ctx.fillStyle = s % 2 === 0 ? '#ffffff' : c2;
+      ctx.beginPath();
+      ctx.arc(px, py, w * (0.008 + beatPulse * 0.006), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  } else if (slotMod === 3) {
+    // Scene 3: Editorial Split-Frame Portrait Card + Optical Prism Flares
+    ctx.save();
+    const cardW = w * 0.62;
+    const cardH = h * 0.48;
+    const cx = w * 0.5;
+    const cy = h * 0.41;
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.sin(t * 1.5) * 0.05);
+    const cardGrad = ctx.createLinearGradient(-cardW / 2, -cardH / 2, cardW / 2, cardH / 2);
+    cardGrad.addColorStop(0, c1);
+    cardGrad.addColorStop(1, c2);
+    ctx.fillStyle = cardGrad;
+    ctx.fillRect(-cardW / 2, -cardH / 2, cardW, cardH);
+
+    // Stylized silhouette inside card
+    ctx.fillStyle = 'rgba(10,10,16,0.88)';
+    ctx.beginPath();
+    ctx.arc(0, -cardH * 0.1, cardW * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(0, cardH * 0.3, cardW * 0.42, cardH * 0.26, 0, Math.PI, 0, false);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = Math.max(2, w * 0.008);
+    ctx.strokeRect(-cardW / 2, -cardH / 2, cardW, cardH);
+    ctx.restore();
   } else {
-    const bars = 11;
-    const barW = w / (bars * 1.85);
-    const startX = (w - bars * barW * 1.4) / 2;
-    for (let b = 0; b < bars; b++) {
-      const bh = h * (0.05 + 0.1 * Math.abs(Math.sin(t * 4.4 + b * 0.65 + slotMod)));
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(startX + b * barW * 1.4, h * 0.46 - bh / 2, barW, bh);
+    // Scene 4: Kinetic Bokeh + Equalizer Wave Field
+    for (let i = 0; i < 6; i++) {
+      const ang = t * (0.7 + i * 0.14) + i * 1.3;
+      const bx = w * (0.5 + 0.34 * Math.cos(ang));
+      const by = h * (0.28 + 0.32 * Math.sin(ang * 0.9));
+      const br = w * (0.18 + 0.05 * Math.sin(t * 2 + i));
+      const orb = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+      orb.addColorStop(0, `${i % 2 === 0 ? c2 : c1}99`);
+      orb.addColorStop(1, 'transparent');
+      ctx.fillStyle = orb;
+      ctx.beginPath();
+      ctx.arc(bx, by, br, 0, Math.PI * 2);
+      ctx.fill();
     }
+    const bars = 13;
+    const bw = w / (bars * 1.9);
+    const sx = (w - bars * bw * 1.45) / 2;
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    for (let b = 0; b < bars; b++) {
+      const bh = h * (0.04 + 0.12 * Math.abs(Math.sin(t * 5.2 + b * 0.6)));
+      ctx.fillRect(sx + b * bw * 1.45, h * 0.44 - bh / 2, bw, bh);
+    }
+  }
+
+  // Subtle film sprocket edge accent on side margins for realistic reel vibe
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+  const notchH = h * 0.018;
+  const notchW = Math.max(3, w * 0.018);
+  const offset = (t * h * 0.12) % (notchH * 2.4);
+  for (let y = -notchH * 2; y < h; y += notchH * 2.4) {
+    ctx.fillRect(w * 0.018, y + offset, notchW, notchH);
+    ctx.fillRect(w - w * 0.018 - notchW, y + offset, notchW, notchH);
   }
   ctx.restore();
 }
@@ -221,13 +397,14 @@ function drawTemplateFrame(
   h: number,
   elapsedSec: number,
   template: VideoTemplateDef,
-  clips: LoadedMediaClip[],
+  slotClips: (LoadedMediaClip | null)[],
+  slotWindows: SlotWindow[],
   overlayText: string,
   secondaryText: string,
   speedMultiplier: number,
   activeTransitions: TemplateEffectTransition[],
   colorGrade: Pick<ColorGradePreset, 'filterCss' | 'tintRgba'>
-) {
+): number {
   ctx.save();
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = '#050507';
@@ -238,34 +415,48 @@ function drawTemplateFrame(
   const beatFraction = beatPos - Math.floor(beatPos);
   const beatPulse = Math.exp(-beatFraction * 5.2);
 
-  const effectiveDuration = Math.max(4, template.durationSec / speedMultiplier);
-  const rawCutInterval =
-    (template.beatCutIntervalBeats * 60) / Math.max(40, template.bpm * speedMultiplier);
-  const cutIntervalSec = Math.max(0.85, Math.min(effectiveDuration / 2, rawCutInterval));
+  // Locate exact active slot window based on elapsedSec
+  let activeSlotIdx = 0;
+  let activeWin = slotWindows[0] || {
+    index: 0,
+    startSec: 0,
+    endSec: 3,
+    durationSec: 3,
+    label: 'Slot 1',
+  };
+  for (let i = 0; i < slotWindows.length; i++) {
+    if (elapsedSec >= slotWindows[i].startSec && elapsedSec < slotWindows[i].endSec) {
+      activeSlotIdx = i;
+      activeWin = slotWindows[i];
+      break;
+    }
+    if (i === slotWindows.length - 1 && elapsedSec >= slotWindows[i].startSec) {
+      activeSlotIdx = i;
+      activeWin = slotWindows[i];
+    }
+  }
 
-  const cutIndex = Math.floor(elapsedSec / cutIntervalSec);
-  const timeInCut = elapsedSec - cutIndex * cutIntervalSec;
-  const clipLocalT = Math.min(1, timeInCut / cutIntervalSec);
-
-  const totalClips = clips.length;
-  const activeClipIdx = totalClips > 0 ? cutIndex % totalClips : cutIndex % 4;
-  const prevClipIdx =
-    totalClips > 0 ? (cutIndex - 1 + totalClips) % totalClips : (cutIndex + 3) % 4;
+  const prevSlotIdx =
+    (activeSlotIdx - 1 + Math.max(1, slotWindows.length)) % Math.max(1, slotWindows.length);
+  const timeInCut = Math.max(0, elapsedSec - activeWin.startSec);
+  const clipLocalT = Math.min(1, timeInCut / Math.max(0.4, activeWin.durationSec));
+  const totalEffectiveDuration =
+    slotWindows.length > 0
+      ? slotWindows[slotWindows.length - 1].endSec
+      : Math.max(4, template.durationSec / speedMultiplier);
 
   const transitionsPool =
     activeTransitions.length > 0 ? activeTransitions : template.transitions;
-  const currentTransition = transitionsPool[cutIndex % transitionsPool.length];
+  const currentTransition = transitionsPool[activeSlotIdx % transitionsPool.length];
   const hasZoom = transitionsPool.includes('zoom-in') || currentTransition === 'zoom-in';
   const hasShake = transitionsPool.includes('shake') || currentTransition === 'shake';
   const hasFlash = transitionsPool.includes('flash') || currentTransition === 'flash';
   const hasSlide = currentTransition === 'slide';
 
-  // Entry transition progress (first 0.28s of each beat cut)
   const transitionWindowSec = 0.28;
-  const inTransition = cutIndex > 0 && timeInCut < transitionWindowSec;
+  const inTransition = activeSlotIdx > 0 && timeInCut < transitionWindowSec;
   const slideEase = inTransition ? easeOutCubic(timeInCut / transitionWindowSec) : 1;
 
-  // Compute kinetic camera transforms (Zoom-In, Shake, Ken Burns)
   let scale = 1.03;
   let tx = 0;
   let ty = 0;
@@ -308,7 +499,6 @@ function drawTemplateFrame(
     tiltRad = Math.sin(elapsedSec * 38) * shakeStrength * 0.018;
   }
 
-  // Render media layer with template Color Grading Filter (+ soft optical blur on blur_glow entry)
   ctx.save();
   try {
     if ('filter' in ctx) {
@@ -341,8 +531,11 @@ function drawTemplateFrame(
       ctx.translate(-w / 2, -h / 2);
     }
 
-    if (totalClips > 0) {
-      const c = clips[slotIdx % totalClips];
+    const c = slotClips[slotIdx] || null;
+    if (c) {
+      const cropZoom = c.cropZoom || 1;
+      const cropOx = (c.cropPanX || 0) * w * 0.3;
+      const cropOy = (c.cropPanY || 0) * h * 0.3;
       if (
         c.mediaType === 'image' &&
         c.imageEl &&
@@ -356,11 +549,14 @@ function drawTemplateFrame(
           c.imageEl.naturalHeight,
           w,
           h,
-          sc,
-          ox,
-          oy
+          sc * cropZoom,
+          ox + cropOx,
+          oy + cropOy
         );
-      } else if (c.mediaType === 'video' && c.videoEl && c.videoEl.videoWidth > 0) {
+        ctx.restore();
+        return;
+      }
+      if (c.mediaType === 'video' && c.videoEl && c.videoEl.videoWidth > 0) {
         drawCoverImageOrVideo(
           ctx,
           c.videoEl,
@@ -368,49 +564,45 @@ function drawTemplateFrame(
           c.videoEl.videoHeight,
           w,
           h,
-          sc,
-          ox,
-          oy
+          sc * cropZoom,
+          ox + cropOx,
+          oy + cropOy
         );
-      } else {
-        drawProceduralScene(ctx, w, h, elapsedSec, template, slotIdx);
+        ctx.restore();
+        return;
       }
-    } else {
-      ctx.save();
-      ctx.translate(w / 2 + ox, h / 2 + oy);
-      ctx.scale(sc, sc);
-      ctx.translate(-w / 2, -h / 2);
-      drawProceduralScene(ctx, w, h, elapsedSec, template, slotIdx);
-      ctx.restore();
     }
+
+    ctx.save();
+    ctx.translate(w / 2 + ox, h / 2 + oy);
+    ctx.scale(sc, sc);
+    ctx.translate(-w / 2, -h / 2);
+    drawProceduralScene(ctx, w, h, elapsedSec, template, slotIdx, beatPulse);
+    ctx.restore();
     ctx.restore();
   };
 
   if (hasSlide && inTransition) {
-    // Outgoing clip slides left while incoming clip slides in from right
     const outX = -slideEase * w;
     const inX = (1 - slideEase) * w;
-    renderSlotContent(prevClipIdx, 1.04, outX, 0, 0, 1);
-    renderSlotContent(activeClipIdx, scale, inX + tx, ty, tiltRad, 1);
+    renderSlotContent(prevSlotIdx, 1.04, outX, 0, 0, 1);
+    renderSlotContent(activeSlotIdx, scale, inX + tx, ty, tiltRad, 1);
 
-    // Subtle crisp vertical seam shadow between sliding clips
     const seamGrad = ctx.createLinearGradient(inX - w * 0.06, 0, inX, 0);
     seamGrad.addColorStop(0, 'rgba(0,0,0,0)');
     seamGrad.addColorStop(1, 'rgba(0,0,0,0.45)');
     ctx.fillStyle = seamGrad;
     ctx.fillRect(inX - w * 0.06, 0, w * 0.06, h);
   } else {
-    renderSlotContent(activeClipIdx, scale, tx, ty, tiltRad, 1);
-    // Gentle micro crossfade only when Slide isn't active and multiple clips exist
-    if (!hasSlide && totalClips > 1 && clipLocalT > 0.88 && !hasFlash) {
-      const nextIdx = (activeClipIdx + 1) % totalClips;
+    renderSlotContent(activeSlotIdx, scale, tx, ty, tiltRad, 1);
+    if (!hasSlide && slotWindows.length > 1 && clipLocalT > 0.88 && !hasFlash) {
+      const nextIdx = (activeSlotIdx + 1) % slotWindows.length;
       const fadeAlpha = (clipLocalT - 0.88) / 0.12;
       renderSlotContent(nextIdx, 1.03, 0, 0, 0, Math.min(1, fadeAlpha));
     }
   }
   ctx.restore();
 
-  // Cross-browser Color Grading tonal wash (ensures vivid grading on iOS WebKit too)
   if (colorGrade.tintRgba) {
     ctx.save();
     ctx.fillStyle = colorGrade.tintRgba;
@@ -418,10 +610,19 @@ function drawTemplateFrame(
     ctx.restore();
   }
 
-  // Blur Glow soft luminous bloom across beat transitions
   if (template.transitionStyle === 'blur_glow') {
-    const glowAlpha = Math.min(0.55, (timeInCut < 0.45 ? (1 - timeInCut / 0.45) * 0.48 : 0.12) + beatPulse * 0.15);
-    const bloom = ctx.createRadialGradient(w / 2, h * 0.42, w * 0.04, w / 2, h * 0.42, w * 0.78);
+    const glowAlpha = Math.min(
+      0.55,
+      (timeInCut < 0.45 ? (1 - timeInCut / 0.45) * 0.48 : 0.12) + beatPulse * 0.15
+    );
+    const bloom = ctx.createRadialGradient(
+      w / 2,
+      h * 0.42,
+      w * 0.04,
+      w / 2,
+      h * 0.42,
+      w * 0.78
+    );
     bloom.addColorStop(0, `rgba(255, 228, 246, ${glowAlpha})`);
     bloom.addColorStop(0.55, `rgba(236, 72, 153, ${glowAlpha * 0.45})`);
     bloom.addColorStop(1, 'rgba(0, 0, 0, 0)');
@@ -429,9 +630,8 @@ function drawTemplateFrame(
     ctx.fillRect(0, 0, w, h);
   }
 
-  // Flash Transition & Beat Strobe
   if (hasFlash) {
-    const cutFlash = cutIndex > 0 ? Math.exp(-timeInCut * 14) * 0.72 : 0;
+    const cutFlash = activeSlotIdx > 0 ? Math.exp(-timeInCut * 14) * 0.72 : 0;
     const beatFlash = currentTransition === 'flash' ? beatPulse * 0.16 : 0;
     const flashAlpha = Math.min(0.82, cutFlash + beatFlash);
     if (flashAlpha > 0.015) {
@@ -443,7 +643,6 @@ function drawTemplateFrame(
     }
   }
 
-  // Template-specific signature frames & lighting
   if (template.category === 'neon_glow' || template.transitionStyle === 'neon_flash') {
     ctx.save();
     ctx.strokeStyle = beatPulse > 0.45 ? '#ec4899' : '#06b6d4';
@@ -457,7 +656,7 @@ function drawTemplateFrame(
     ctx.fillRect(0, 0, w, barH);
     ctx.fillRect(0, h - barH, w, barH);
   } else if (template.transitionStyle === 'lyrics_frame') {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
     ctx.fillRect(0, 0, w, h);
     ctx.save();
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
@@ -505,7 +704,7 @@ function drawTemplateFrame(
     subTitle === template.defaultSecondaryText.trim()
   ) {
     const lineIdx =
-      Math.floor((elapsedSec / effectiveDuration) * template.lyricLines.length) %
+      Math.floor((elapsedSec / totalEffectiveDuration) * template.lyricLines.length) %
       template.lyricLines.length;
     subTitle = template.lyricLines[lineIdx] || subTitle;
   }
@@ -516,7 +715,7 @@ function drawTemplateFrame(
 
   if (mainTitle) {
     ctx.save();
-    ctx.translate(w / 2, template.transitionStyle === 'lyrics_frame' ? h * 0.72 : h * 0.75);
+    ctx.translate(w / 2, template.transitionStyle === 'lyrics_frame' ? h * 0.7 : h * 0.73);
     ctx.scale(titleScale, titleScale);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -534,16 +733,16 @@ function drawTemplateFrame(
     ctx.textBaseline = 'middle';
     ctx.font = `700 ${subFontSize}px "Plus Jakarta Sans", system-ui, sans-serif`;
     ctx.fillStyle = 'rgba(244, 244, 245, 0.94)';
-    const lyricY = template.transitionStyle === 'lyrics_frame' ? h * 0.795 : h * 0.82;
+    const lyricY = template.transitionStyle === 'lyrics_frame' ? h * 0.775 : h * 0.8;
     ctx.fillText(subTitle.slice(0, 48), w / 2, lyricY, w * 0.84);
     ctx.restore();
   }
 
-  // Subtle beat equalizer strip
   if (
     template.category === 'beat_sync' ||
     template.category === 'bhangra_punjabi' ||
-    template.category === 'neon_glow'
+    template.category === 'neon_glow' ||
+    template.category === 'tiktok_viral'
   ) {
     const barCount = 9;
     const bw = Math.max(2, w * 0.008);
@@ -558,18 +757,29 @@ function drawTemplateFrame(
         h *
         (0.01 +
           0.022 * Math.abs(Math.sin(elapsedSec * 6.5 + i * 0.8)) * (0.5 + beatPulse));
-      ctx.fillRect(sx + i * (bw + gap), h * 0.875 - barH / 2, bw, barH);
+      ctx.fillRect(sx + i * (bw + gap), h * 0.865 - barH / 2, bw, barH);
     }
     ctx.restore();
   }
 
   ctx.restore();
+  return activeSlotIdx;
 }
 
 const TemplateAnimatedPreview: React.FC<{ template: VideoTemplateDef }> = React.memo(
   ({ template }) => {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const [isVisible, setIsVisible] = useState(true);
+
+    const previewWindows = useMemo(
+      () =>
+        getTemplateSlotWindows(
+          template,
+          template.requiredClips,
+          template.defaultSpeedMultiplier
+        ).windows,
+      [template]
+    );
 
     useEffect(() => {
       const canvas = canvasRef.current;
@@ -595,11 +805,15 @@ const TemplateAnimatedPreview: React.FC<{ template: VideoTemplateDef }> = React.
       let rafId = 0;
       let lastDraw = 0;
       const startAt = performance.now();
+      const totalDur =
+        previewWindows.length > 0
+          ? previewWindows[previewWindows.length - 1].endSec
+          : template.durationSec;
 
       const tick = (now: number) => {
         if (now - lastDraw >= 33) {
           lastDraw = now;
-          const elapsed = (now - startAt) / 1000;
+          const elapsed = ((now - startAt) / 1000) % Math.max(3, totalDur);
           drawTemplateFrame(
             ctx,
             canvas.width,
@@ -607,6 +821,7 @@ const TemplateAnimatedPreview: React.FC<{ template: VideoTemplateDef }> = React.
             elapsed,
             template,
             [],
+            previewWindows,
             template.defaultOverlayText,
             template.defaultSecondaryText,
             template.defaultSpeedMultiplier,
@@ -622,13 +837,13 @@ const TemplateAnimatedPreview: React.FC<{ template: VideoTemplateDef }> = React.
 
       rafId = requestAnimationFrame(tick);
       return () => cancelAnimationFrame(rafId);
-    }, [template, isVisible]);
+    }, [template, previewWindows, isVisible]);
 
     return (
       <canvas
         ref={canvasRef}
         width={216}
-        height={336}
+        height={360}
         className="w-full h-full object-cover block gpu-accelerated"
       />
     );
@@ -662,8 +877,13 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<TemplateCategory>('all');
   const [activeTemplate, setActiveTemplate] = useState<VideoTemplateDef | null>(null);
 
+  // Per-slot media clips (index 0..requiredClips-1, fixed CapCut tray slots)
+  const [slotClips, setSlotClips] = useState<(LoadedMediaClip | null)[]>([]);
+  const [selectedSlotForAction, setSelectedSlotForAction] = useState<number | null>(null);
+  const [croppingSlotIndex, setCroppingSlotIndex] = useState<number | null>(null);
+  const [trayMode, setTrayMode] = useState<'slots' | 'customize'>('slots');
+
   // Studio customization state
-  const [clips, setClips] = useState<LoadedMediaClip[]>([]);
   const [overlayText, setOverlayText] = useState('');
   const [secondaryText, setSecondaryText] = useState('');
   const [speedMultiplier, setSpeedMultiplier] = useState<number>(1);
@@ -682,24 +902,34 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
   const [allowDownload, setAllowDownload] = useState(true);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(true);
   const [previewProgressPct, setPreviewProgressPct] = useState(0);
+  const [activePlayingSlotIdx, setActivePlayingSlotIdx] = useState(0);
+  const [previewElapsedSec, setPreviewElapsedSec] = useState(0);
   const [targetSlotIndex, setTargetSlotIndex] = useState<number | null>(null);
 
-  // Export progress state
+  // Export sheet & progress state
+  const [isExportSheetOpen, setIsExportSheetOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgressPct, setExportProgressPct] = useState(0);
   const [exportActionLabel, setExportActionLabel] = useState('');
 
+  // Crop drag refs
+  const cropDragRef = useRef<{
+    startX: number;
+    startY: number;
+    origPanX: number;
+    origPanY: number;
+  } | null>(null);
+
   const mediaPickerRef = useRef<HTMLInputElement | null>(null);
   const singleSlotPickerRef = useRef<HTMLInputElement | null>(null);
-  const customAudioPickerRef = useRef<HTMLInputElement | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const customAudioElRef = useRef<HTMLAudioElement | null>(null);
   const exportCancelledRef = useRef(false);
   const activeTemplateRef = useRef<VideoTemplateDef | null>(null);
   const targetSlotIndexRef = useRef<number | null>(null);
   targetSlotIndexRef.current = targetSlotIndex;
-  const clipsRef = useRef<LoadedMediaClip[]>([]);
-  clipsRef.current = clips;
+  const slotClipsRef = useRef<(LoadedMediaClip | null)[]>([]);
+  slotClipsRef.current = slotClips;
 
   const filteredTemplates = useMemo(() => {
     if (selectedCategory === 'all') return VIDEO_TEMPLATES;
@@ -708,22 +938,41 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     );
   }, [selectedCategory]);
 
-  // Compute beat-cut tick positions (%) along the preview timeline bar
-  const beatCutMarkersPct = useMemo(() => {
-    if (!activeTemplate) return [];
-    const effectiveDur = Math.max(4, activeTemplate.durationSec / speedMultiplier);
-    const rawCut =
-      (activeTemplate.beatCutIntervalBeats * 60) /
-      Math.max(40, activeTemplate.bpm * speedMultiplier);
-    const cutSec = Math.max(0.85, Math.min(effectiveDur / 2, rawCut));
-    const markers: number[] = [];
-    for (let t = cutSec; t < effectiveDur - 0.15; t += cutSec) {
-      markers.push((t / effectiveDur) * 100);
-    }
-    return markers;
-  }, [activeTemplate, speedMultiplier]);
+  const { windows: slotWindows, totalDurationSec } = useMemo(() => {
+    if (!activeTemplate) return { windows: [] as SlotWindow[], totalDurationSec: 12 };
+    return getTemplateSlotWindows(
+      activeTemplate,
+      Math.max(activeTemplate.requiredClips, slotClips.length),
+      speedMultiplier
+    );
+  }, [activeTemplate, slotClips.length, speedMultiplier]);
 
-  // Clean up object URLs on unmount or clip removal
+  const beatCutMarkersPct = useMemo(() => {
+    if (slotWindows.length <= 1 || totalDurationSec <= 0) return [];
+    return slotWindows.slice(1).map((win) => (win.startSec / totalDurationSec) * 100);
+  }, [slotWindows, totalDurationSec]);
+
+  const filledSlotsCount = useMemo(
+    () => slotClips.filter((c): c is LoadedMediaClip => c !== null).length,
+    [slotClips]
+  );
+
+  const allSlotsFilled = useMemo(() => {
+    if (!activeTemplate) return false;
+    return filledSlotsCount >= activeTemplate.requiredClips;
+  }, [activeTemplate, filledSlotsCount]);
+
+  const currentSongLabel = useMemo(() => {
+    if (customAudioFile) {
+      return customAudioFile.name.replace(/\.[^/.]+$/, '');
+    }
+    if (selectedOnlineSong) {
+      return selectedOnlineSong.title;
+    }
+    return selectedAudioTrack?.title || 'Template Beat';
+  }, [customAudioFile, selectedOnlineSong, selectedAudioTrack]);
+
+  // Clean up object URLs on unmount
   useEffect(() => {
     return () => {
       soundEngine.stopPreviewTrack();
@@ -731,8 +980,10 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
         customAudioElRef.current.pause();
         customAudioElRef.current = null;
       }
-      for (const c of clipsRef.current) {
+      for (const c of slotClipsRef.current) {
+        if (!c) continue;
         try {
+          c.videoEl?.pause();
           URL.revokeObjectURL(c.url);
         } catch {
           // ignore
@@ -775,7 +1026,8 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
 
   const initializeTemplateEditor = useCallback(
     (tpl: VideoTemplateDef) => {
-      for (const c of clipsRef.current) {
+      for (const c of slotClipsRef.current) {
+        if (!c) continue;
         try {
           c.videoEl?.pause();
           URL.revokeObjectURL(c.url);
@@ -783,8 +1035,14 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
           // ignore
         }
       }
-      clipsRef.current = [];
-      setClips([]);
+      const initialSlots = Array.from({ length: tpl.requiredClips }, () => null);
+      slotClipsRef.current = initialSlots;
+      setSlotClips(initialSlots);
+      setSelectedSlotForAction(null);
+      setCroppingSlotIndex(null);
+      setTrayMode('slots');
+      setIsExportSheetOpen(false);
+
       activeTemplateRef.current = tpl;
       setActiveTemplate(tpl);
       setOverlayText(tpl.defaultOverlayText);
@@ -809,6 +1067,9 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
       setAllowDownload(true);
       setIsAudioMuted(false);
       setIsPreviewPlaying(true);
+      setPreviewProgressPct(0);
+      setActivePlayingSlotIdx(0);
+      setPreviewElapsedSec(0);
 
       const defaultTrack =
         CURATED_AUDIO_LIBRARY.find((a) => a.id === tpl.defaultAudioTrackId) ||
@@ -821,23 +1082,16 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     [customAudioUrl, startPreviewAudio]
   );
 
-  // One-Tap "Use Template": opens the interactive CapCut Multi-Photo/Video Slot Picker & Studio
   const handleUseTemplate = (tpl: VideoTemplateDef) => {
     initializeTemplateEditor(tpl);
-    onShowToast(
-      `Opened "${tpl.name}" — select your ${tpl.requiredClips} photos/videos in Step 1!`
-    );
-  };
-
-  // Tap preview thumbnail directly to inspect live demo studio first before picking files
-  const handlePreviewTemplateFirst = (tpl: VideoTemplateDef) => {
-    initializeTemplateEditor(tpl);
+    onShowToast(`Tap + on each slot below to add ${tpl.requiredClips} clips`);
   };
 
   const handleCloseEditor = () => {
     exportCancelledRef.current = true;
     stopPreviewAudio();
-    for (const c of clipsRef.current) {
+    for (const c of slotClipsRef.current) {
+      if (!c) continue;
       try {
         c.videoEl?.pause();
         URL.revokeObjectURL(c.url);
@@ -845,8 +1099,11 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
         // ignore
       }
     }
-    clipsRef.current = [];
-    setClips([]);
+    slotClipsRef.current = [];
+    setSlotClips([]);
+    setSelectedSlotForAction(null);
+    setCroppingSlotIndex(null);
+    setIsExportSheetOpen(false);
     activeTemplateRef.current = null;
     setActiveTemplate(null);
     setSelectedOnlineSong(null);
@@ -882,6 +1139,9 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
         name: file.name,
         durationSec: 3,
         imageEl: img,
+        cropZoom: 1,
+        cropPanX: 0,
+        cropPanY: 0,
       };
     }
 
@@ -907,84 +1167,96 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
       name: file.name,
       durationSec: Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 4,
       videoEl: vid,
+      cropZoom: 1,
+      cropPanX: 0,
+      cropPanY: 0,
     };
   };
 
-  // Handle selecting 1 to 5 photos or videos from device gallery
+  // Batch-select multiple photos/videos into empty slots first
   const handlePickGalleryFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = Array.from(e.target.files || []);
     e.target.value = '';
     const tpl = activeTemplateRef.current || activeTemplate;
     if (fileList.length === 0 || !tpl) return;
 
-    const existingCount = clipsRef.current.length;
-    const remainingSlots = Math.max(0, tpl.maxClips - existingCount);
-    if (remainingSlots <= 0) {
-      onShowToast(`Maximum ${tpl.maxClips} clips reached for this template.`);
+    const currentSlots = [...slotClipsRef.current];
+    const emptyIndices: number[] = [];
+    for (let i = 0; i < currentSlots.length; i++) {
+      if (!currentSlots[i]) emptyIndices.push(i);
+    }
+
+    if (emptyIndices.length === 0) {
+      onShowToast('All slots are already filled. Tap any slot to Replace or Crop.');
       return;
     }
 
-    if (fileList.length > remainingSlots) {
-      onShowToast(`Using first ${remainingSlots} clips (max ${tpl.maxClips} photos/videos per template).`);
+    const toProcess = fileList.slice(0, emptyIndices.length);
+    let filled = 0;
+
+    for (let i = 0; i < toProcess.length; i++) {
+      const item = await loadSingleMediaFile(toProcess[i]);
+      if (item) {
+        currentSlots[emptyIndices[i]] = item;
+        filled += 1;
+      }
     }
 
-    const toProcess = fileList.slice(0, remainingSlots);
-    const loaded: LoadedMediaClip[] = [];
-
-    for (const file of toProcess) {
-      const item = await loadSingleMediaFile(file);
-      if (item) loaded.push(item);
-    }
-
-    if (loaded.length > 0) {
-      setClips((prev) => [...prev, ...loaded]);
+    if (filled > 0) {
+      setSlotClips(currentSlots);
+      setSelectedSlotForAction(null);
       setIsPreviewPlaying(true);
-      setPreviewProgressPct(0);
-      startPreviewAudio(selectedAudioTrack, customAudioUrl || selectedOnlineSong?.streamUrl || '', isAudioMuted);
+      startPreviewAudio(
+        selectedAudioTrack,
+        customAudioUrl || selectedOnlineSong?.streamUrl || '',
+        isAudioMuted
+      );
       onShowToast(
-        `Auto-synced ${loaded.length} clip${loaded.length === 1 ? '' : 's'} with "${tpl.name}"!`
+        `Added ${filled} clip${filled === 1 ? '' : 's'} into template slots!`
       );
     }
   };
 
+  // Pick a file specifically for tapped slotIdx
   const handlePickSingleSlotFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     const tpl = activeTemplateRef.current || activeTemplate;
     const slotIdx = targetSlotIndexRef.current;
     setTargetSlotIndex(null);
-    if (!file || !tpl) return;
+    if (!file || !tpl || slotIdx === null) return;
 
     const item = await loadSingleMediaFile(file);
     if (!item) return;
 
-    setClips((prev) => {
+    setSlotClips((prev) => {
       const next = [...prev];
-      if (slotIdx !== null && slotIdx >= 0 && slotIdx < next.length) {
-        const old = next[slotIdx];
-        if (old) {
-          try {
-            old.videoEl?.pause();
-            URL.revokeObjectURL(old.url);
-          } catch {
-            // ignore
-          }
+      const old = next[slotIdx];
+      if (old) {
+        try {
+          old.videoEl?.pause();
+          URL.revokeObjectURL(old.url);
+        } catch {
+          // ignore
         }
-        next[slotIdx] = item;
-        return next;
       }
-      if (next.length >= tpl.maxClips) return next;
-      return [...next, item];
+      next[slotIdx] = item;
+      return next;
     });
+    setSelectedSlotForAction(slotIdx);
     setIsPreviewPlaying(true);
-    setPreviewProgressPct(0);
-    startPreviewAudio(selectedAudioTrack, customAudioUrl || selectedOnlineSong?.streamUrl || '', isAudioMuted);
-    onShowToast(`Added media to Slot ${(slotIdx ?? clipsRef.current.length) + 1} in "${tpl.name}"`);
+    startPreviewAudio(
+      selectedAudioTrack,
+      customAudioUrl || selectedOnlineSong?.streamUrl || '',
+      isAudioMuted
+    );
+    onShowToast(`Slot ${slotIdx + 1} updated`);
   };
 
-  const handleRemoveClip = (clipId: string) => {
-    setClips((prev) => {
-      const target = prev.find((c) => c.id === clipId);
+  const handleClearSlot = (slotIdx: number) => {
+    setSlotClips((prev) => {
+      const next = [...prev];
+      const target = next[slotIdx];
       if (target) {
         try {
           target.videoEl?.pause();
@@ -993,61 +1265,48 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
           // ignore
         }
       }
-      return prev.filter((c) => c.id !== clipId);
+      next[slotIdx] = null;
+      return next;
     });
+    setSelectedSlotForAction(null);
   };
 
-  const handleMoveClip = (index: number, direction: -1 | 1) => {
-    setClips((prev) => {
+  const handleMoveSlot = (index: number, direction: -1 | 1) => {
+    setSlotClips((prev) => {
       const nextIdx = index + direction;
       if (nextIdx < 0 || nextIdx >= prev.length) return prev;
       const copy = [...prev];
-      const [item] = copy.splice(index, 1);
-      copy.splice(nextIdx, 0, item);
+      const tmp = copy[index];
+      copy[index] = copy[nextIdx];
+      copy[nextIdx] = tmp;
       return copy;
     });
+    setSelectedSlotForAction((prev) => (prev === index ? index + direction : prev));
+  };
+
+  const handleUpdateSlotCrop = (
+    slotIdx: number,
+    patch: Partial<Pick<LoadedMediaClip, 'cropZoom' | 'cropPanX' | 'cropPanY'>>
+  ) => {
+    setSlotClips((prev) =>
+      prev.map((c, idx) => (idx === slotIdx && c ? { ...c, ...patch } : c))
+    );
   };
 
   const handleToggleTransition = (tr: TemplateEffectTransition) => {
     setActiveTransitions((prev) => {
       if (prev.includes(tr)) {
-        if (prev.length === 1) return prev; // Keep at least 1 active transition
+        if (prev.length === 1) return prev;
         return prev.filter((t) => t !== tr);
       }
       return [...prev, tr];
     });
   };
 
-  const handlePickCustomAudio = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    const check = validateSafeAudioFile(file);
-    if (!check.valid) {
-      onShowToast(
-        check.reason || 'Only safe audio formats (.mp3, .m4a, .wav, .ogg, .aac) are allowed.'
-      );
-      return;
-    }
-    if (customAudioUrl) {
-      try {
-        URL.revokeObjectURL(customAudioUrl);
-      } catch {
-        // ignore
-      }
-    }
-    const url = URL.createObjectURL(file);
-    setCustomAudioFile(file);
-    setCustomAudioUrl(url);
-    if (!isAudioMuted && isPreviewPlaying) {
-      startPreviewAudio(selectedAudioTrack, url, false);
-    }
-    onShowToast(`Attached custom sound: ${file.name}`);
-  };
-
   // Sync video clips play/pause with preview playback state
   useEffect(() => {
-    for (const c of clips) {
+    for (const c of slotClips) {
+      if (!c) continue;
       if (c.videoEl) {
         c.videoEl.playbackRate = speedMultiplier;
         if (isPreviewPlaying && !isExporting) {
@@ -1059,9 +1318,9 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
         }
       }
     }
-  }, [clips, isPreviewPlaying, speedMultiplier, isExporting]);
+  }, [slotClips, isPreviewPlaying, speedMultiplier, isExporting]);
 
-  // Real-time interactive Canvas preview loop inside Editor
+  // Real-time interactive Canvas preview loop inside CapCut Editor
   useEffect(() => {
     if (!activeTemplate || !previewCanvasRef.current) return;
     const canvas = previewCanvasRef.current;
@@ -1071,27 +1330,29 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     let rafId = 0;
     let startAt = performance.now();
     let pausedAtSec = 0;
-    const effectiveDuration = Math.max(4, activeTemplate.durationSec / speedMultiplier);
 
     const drawLoop = (now: number) => {
       const elapsed = isPreviewPlaying ? (now - startAt) / 1000 : pausedAtSec;
       pausedAtSec = elapsed;
-      const loopT = elapsed % effectiveDuration;
-      setPreviewProgressPct((loopT / effectiveDuration) * 100);
+      const loopT = elapsed % totalDurationSec;
+      setPreviewProgressPct((loopT / totalDurationSec) * 100);
+      setPreviewElapsedSec(loopT);
 
-      drawTemplateFrame(
+      const activeIdx = drawTemplateFrame(
         ctx,
         canvas.width,
         canvas.height,
         loopT,
         activeTemplate,
-        clips,
+        slotClips,
+        slotWindows,
         overlayText,
         secondaryText,
         speedMultiplier,
         activeTransitions,
         selectedColorGrade
       );
+      setActivePlayingSlotIdx(activeIdx);
 
       if (isPreviewPlaying) {
         rafId = requestAnimationFrame(drawLoop);
@@ -1108,7 +1369,9 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     return () => cancelAnimationFrame(rafId);
   }, [
     activeTemplate,
-    clips,
+    slotClips,
+    slotWindows,
+    totalDurationSec,
     overlayText,
     secondaryText,
     speedMultiplier,
@@ -1117,7 +1380,7 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     isPreviewPlaying,
   ]);
 
-  // Render full 720x1280 video blob + poster snapshot via offscreen canvas captureStream
+  // Render full 720x1280 video blob + poster snapshot
   const renderTemplateToVideoBlob = async (): Promise<{
     blob: Blob;
     posterDataUrl: string;
@@ -1130,14 +1393,10 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     const ctx = renderCanvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D context unavailable');
 
-    const totalSec = Math.max(
-      4,
-      Math.min(25, Math.round(activeTemplate.durationSec / speedMultiplier))
-    );
+    const totalSec = Math.max(4, Math.min(25, Math.round(totalDurationSec * 10) / 10));
 
-    // Prepare video clips from start
-    for (const c of clips) {
-      if (c.videoEl) {
+    for (const c of slotClips) {
+      if (c?.videoEl) {
         try {
           c.videoEl.currentTime = 0;
           c.videoEl.playbackRate = speedMultiplier;
@@ -1148,14 +1407,14 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
       }
     }
 
-    // Draw first frame immediately and grab fallback poster
     drawTemplateFrame(
       ctx,
       720,
       1280,
       0,
       activeTemplate,
-      clips,
+      slotClips,
+      slotWindows,
       overlayText,
       secondaryText,
       speedMultiplier,
@@ -1189,13 +1448,14 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     let audioCtx: AudioContext | null = null;
     let exportAudioEl: HTMLAudioElement | null = null;
     let synthExportHandle: { stream: MediaStream; stop: () => void } | null = null;
-    if (!isAudioMuted && customAudioUrl) {
+    const activeAudioSrc = customAudioUrl || selectedOnlineSong?.streamUrl || '';
+    if (!isAudioMuted && activeAudioSrc) {
       try {
         const AudioCtx =
           window.AudioContext ||
           (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         audioCtx = new AudioCtx();
-        exportAudioEl = new Audio(customAudioUrl);
+        exportAudioEl = new Audio(activeAudioSrc);
         exportAudioEl.crossOrigin = 'anonymous';
         exportAudioEl.loop = true;
         const srcNode = audioCtx.createMediaElementSource(exportAudioEl);
@@ -1253,7 +1513,8 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
           1280,
           elapsed,
           activeTemplate,
-          clips,
+          slotClips,
+          slotWindows,
           overlayText,
           secondaryText,
           speedMultiplier,
@@ -1306,11 +1567,24 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     };
   };
 
+  const handleOpenExportSheet = () => {
+    if (!activeTemplate) return;
+    if (filledSlotsCount === 0) {
+      onShowToast('Add at least 1 photo or video slot before exporting.');
+      const firstEmpty = slotClips.findIndex((c) => c === null);
+      if (firstEmpty >= 0) {
+        setTargetSlotIndex(firstEmpty);
+        singleSlotPickerRef.current?.click();
+      }
+      return;
+    }
+    setIsExportSheetOpen(true);
+  };
+
   const handleSaveToGallery = async () => {
     if (!activeTemplate || isExporting) return;
-    if (clips.length < activeTemplate.minClips) {
-      onShowToast('Please choose 1 to 5 photos or videos from your device first.');
-      mediaPickerRef.current?.click();
+    if (filledSlotsCount < activeTemplate.minClips) {
+      onShowToast(`Please fill at least ${activeTemplate.minClips} slot first.`);
       return;
     }
 
@@ -1318,7 +1592,7 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     setIsPreviewPlaying(false);
     setIsExporting(true);
     setExportProgressPct(0);
-    setExportActionLabel('Rendering HD Video for Gallery...');
+    setExportActionLabel('Rendering 9:16 HD Video...');
 
     try {
       const { blob, mimeType } = await renderTemplateToVideoBlob();
@@ -1338,7 +1612,8 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
       document.body.removeChild(a);
       window.setTimeout(() => URL.revokeObjectURL(dlUrl), 10_000);
 
-      onShowToast('Template reel exported to your device downloads!');
+      setIsExportSheetOpen(false);
+      onShowToast('Synced template video exported to your device!');
     } catch (err) {
       console.error('Template export failed:', err);
       onShowToast('Could not render template video on this device.');
@@ -1351,9 +1626,8 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
 
   const handlePostToFeed = async () => {
     if (!activeTemplate || isExporting) return;
-    if (clips.length < activeTemplate.minClips) {
-      onShowToast('Pick 1 to 5 photos or videos from your device before posting.');
-      mediaPickerRef.current?.click();
+    if (filledSlotsCount < activeTemplate.minClips) {
+      onShowToast(`Please fill at least ${activeTemplate.minClips} slot before posting.`);
       return;
     }
 
@@ -1539,9 +1813,12 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
     }
   };
 
+  const croppingClip =
+    croppingSlotIndex !== null ? slotClips[croppingSlotIndex] || null : null;
+
   return (
     <div className="w-full h-full bg-neutral-950 text-white flex flex-col overflow-hidden">
-      {/* Unconditional Hidden File Inputs so one-tap "Use Template" works straight from Gallery */}
+      {/* Unconditional Hidden File Inputs for Gallery Picking */}
       <input
         ref={mediaPickerRef}
         type="file"
@@ -1557,41 +1834,31 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
         className="hidden"
         onChange={handlePickSingleSlotFile}
       />
-      <input
-        ref={customAudioPickerRef}
-        type="file"
-        accept=".mp3,.m4a,.wav,.ogg,.aac,audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/aac"
-        className="hidden"
-        onChange={handlePickCustomAudio}
-      />
 
       {activeTemplate ? (
         /* =================================================================
-           INTERACTIVE TEMPLATE EDITOR STUDIO
+           CAPCUT-STYLE BOTTOM CLIP-SLOT TRAY EDITOR SCREEN
            ================================================================= */
-        <>
-          {/* Top Editor Header */}
-          <div className="shrink-0 flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 border-b border-neutral-800/80 bg-neutral-950/95">
-            <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-neutral-950">
+          {/* Compact Top Header */}
+          <header className="shrink-0 flex items-center justify-between gap-2 px-3 sm:px-5 py-2 border-b border-neutral-800/80 bg-neutral-950/95">
+            <div className="flex items-center gap-2 min-w-0">
               <button
                 type="button"
                 onClick={handleCloseEditor}
-                className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 flex items-center justify-center gap-1.5 text-xs font-bold text-neutral-200 cursor-pointer"
+                className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 flex items-center justify-center gap-1.5 text-xs font-bold text-neutral-200 cursor-pointer shrink-0"
+                aria-label="Back to templates"
               >
                 <ArrowLeft className="w-4 h-4" />
                 <span className="hidden sm:inline">Templates</span>
               </button>
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-pink-400 shrink-0" />
-                  <h2 className="text-sm font-black tracking-tight truncate">
-                    {activeTemplate.name}
-                  </h2>
-                </div>
+                <h2 className="text-sm font-black tracking-tight truncate text-white">
+                  {activeTemplate.name}
+                </h2>
                 <p className="text-[11px] text-neutral-400 truncate tabular-nums">
-                  {activeTemplate.requiredClips} Clips • {formatTemplateDuration(activeTemplate.durationSec)} ·{' '}
-                  {activeTemplate.bpm} BPM · {clips.length}/{activeTemplate.requiredClips} Selected ·{' '}
-                  {selectedColorGrade.name}
+                  {activeTemplate.requiredClips} Clips • {formatTemplateDuration(totalDurationSec)} •{' '}
+                  {activeTemplate.aspectRatio}
                 </p>
               </div>
             </div>
@@ -1605,337 +1872,378 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                   if (nextMuted) {
                     stopPreviewAudio();
                   } else if (isPreviewPlaying) {
-                    startPreviewAudio(selectedAudioTrack, customAudioUrl, false);
+                    startPreviewAudio(
+                      selectedAudioTrack,
+                      customAudioUrl || selectedOnlineSong?.streamUrl || '',
+                      false
+                    );
                   }
                 }}
-                className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border flex items-center justify-center text-xs font-bold cursor-pointer ${
+                className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border flex items-center justify-center cursor-pointer ${
                   isAudioMuted
                     ? 'bg-neutral-900 border-neutral-800 text-neutral-400'
-                    : 'bg-pink-500/15 border-pink-500/40 text-pink-300'
+                    : 'bg-neutral-900 border-cyan-500/40 text-cyan-300'
                 }`}
-                title={isAudioMuted ? 'Unmute beat' : 'Mute beat'}
+                title={isAudioMuted ? 'Unmute audio' : 'Mute audio'}
+                aria-label={isAudioMuted ? 'Unmute audio' : 'Mute audio'}
               >
                 {isAudioMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
               </button>
+
+              <button
+                type="button"
+                onClick={handleOpenExportSheet}
+                className={`min-h-[44px] px-3.5 sm:px-4 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all whitespace-nowrap shrink-0 ${
+                  allSlotsFilled
+                    ? 'bg-gradient-to-r from-cyan-400 via-teal-400 to-emerald-400 text-neutral-950 shadow-lg shadow-cyan-500/25 hover:brightness-105'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700'
+                }`}
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Video</span>
+              </button>
             </div>
-          </div>
+          </header>
 
-          {/* Studio Workspace */}
-          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar p-3 sm:p-5 pb-28">
-            <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              {/* Left: Live 9:16 Canvas Preview */}
-              <div className="lg:col-span-5 flex flex-col items-center gap-3 lg:sticky lg:top-4">
-                <div className="relative w-full max-w-[270px] sm:max-w-[300px] aspect-[9/16] rounded-3xl overflow-hidden border border-neutral-800 bg-black shadow-2xl gpu-accelerated">
-                  <canvas
-                    ref={previewCanvasRef}
-                    width={360}
-                    height={640}
-                    className="w-full h-full object-cover block"
+          {/* Top / Center: Live 9:16 Preview Stage */}
+          <main className="flex-1 min-h-0 flex flex-col items-center justify-center px-3 py-2.5 sm:py-4 bg-gradient-to-b from-neutral-950 via-neutral-900/35 to-neutral-950 overflow-hidden">
+            <div className="relative h-full max-h-full aspect-[9/16] max-w-[290px] sm:max-w-[330px] rounded-2xl overflow-hidden border border-neutral-800 bg-black shadow-2xl gpu-accelerated">
+              <canvas
+                ref={previewCanvasRef}
+                width={360}
+                height={640}
+                onClick={() => {
+                  const nextPlaying = !isPreviewPlaying;
+                  setIsPreviewPlaying(nextPlaying);
+                  if (nextPlaying) {
+                    startPreviewAudio(
+                      selectedAudioTrack,
+                      customAudioUrl || selectedOnlineSong?.streamUrl || '',
+                      isAudioMuted
+                    );
+                  } else {
+                    stopPreviewAudio();
+                  }
+                }}
+                className="w-full h-full object-cover block cursor-pointer"
+              />
+
+              {/* Subtle Top Scrim & Active Slot Counter */}
+              <div className="absolute top-0 left-0 right-0 px-3 py-2 bg-gradient-to-b from-black/75 to-transparent flex items-center justify-between gap-2 pointer-events-none">
+                <span className="text-[11px] font-bold text-white/90 tabular-nums truncate">
+                  Clip {activePlayingSlotIdx + 1}/{slotWindows.length} ·{' '}
+                  {slotWindows[activePlayingSlotIdx]?.label || `Slot ${activePlayingSlotIdx + 1}`}
+                </span>
+                <span className="text-[11px] font-bold text-cyan-300 tabular-nums shrink-0">
+                  {previewElapsedSec.toFixed(1)}s / {totalDurationSec.toFixed(1)}s
+                </span>
+              </div>
+
+              {/* Center Play Indicator when Paused */}
+              {!isPreviewPlaying && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPreviewPlaying(true);
+                    startPreviewAudio(
+                      selectedAudioTrack,
+                      customAudioUrl || selectedOnlineSong?.streamUrl || '',
+                      isAudioMuted
+                    );
+                  }}
+                  className="absolute inset-0 m-auto w-14 h-14 rounded-full bg-black/70 border border-white/25 text-white flex items-center justify-center cursor-pointer"
+                  aria-label="Play preview"
+                >
+                  <Play className="w-6 h-6 fill-white ml-0.5" />
+                </button>
+              )}
+
+              {/* Bottom Controls Overlay */}
+              <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextPlaying = !isPreviewPlaying;
+                    setIsPreviewPlaying(nextPlaying);
+                    if (nextPlaying) {
+                      startPreviewAudio(
+                        selectedAudioTrack,
+                        customAudioUrl || selectedOnlineSong?.streamUrl || '',
+                        isAudioMuted
+                      );
+                    } else {
+                      stopPreviewAudio();
+                    }
+                  }}
+                  className="w-10 h-10 rounded-full bg-black/75 hover:bg-black/90 border border-white/20 text-white flex items-center justify-center cursor-pointer shrink-0"
+                  aria-label={isPreviewPlaying ? 'Pause preview' : 'Play preview'}
+                >
+                  {isPreviewPlaying ? (
+                    <Pause className="w-4 h-4" />
+                  ) : (
+                    <Play className="w-4 h-4 fill-white ml-0.5" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsMusicDrawerOpen(true)}
+                  className="min-h-[38px] px-3 rounded-xl bg-black/80 hover:bg-black border border-white/20 text-[11px] font-bold text-white flex items-center gap-1.5 truncate cursor-pointer"
+                >
+                  <Music className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span className="truncate max-w-[130px]">{currentSongLabel}</span>
+                </button>
+              </div>
+
+              {/* Bottom Beat-Synced Timeline Progress Bar */}
+              <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-white/15">
+                {beatCutMarkersPct.map((pct, i) => (
+                  <span
+                    key={i}
+                    style={{ left: `${pct}%` }}
+                    className="absolute top-0 bottom-0 w-0.5 bg-white/65 z-10 pointer-events-none"
                   />
+                ))}
+                <div
+                  style={{ width: `${Math.min(100, Math.max(0, previewProgressPct))}%` }}
+                  className="h-full bg-gradient-to-r from-cyan-400 via-pink-500 to-amber-400 transition-[width] duration-75"
+                />
+              </div>
+            </div>
+          </main>
 
-                  {/* Top Preview Status Line */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none">
-                    <span className="px-2 py-0.5 rounded-md bg-black/75 text-[10px] font-bold tracking-wide text-cyan-300 border border-white/15">
-                      {activeTemplate.previewBadge}
-                    </span>
-                    {clips.length === 0 && (
-                      <span className="px-2 py-0.5 rounded-md bg-pink-600/90 text-[10px] font-bold text-white">
-                        Demo Preview
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Play/Pause Tap Target */}
+          {/* Bottom CapCut Clip-Slot Tray & Customize Controls */}
+          <section className="shrink-0 bg-neutral-900/95 border-t border-neutral-800 pb-safe">
+            <div className="max-w-4xl mx-auto px-3 sm:px-5 pt-2.5 pb-3 space-y-2.5">
+              {/* Tray Top Controls: Mode Switcher + Change Music + Batch Select */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-neutral-950 border border-neutral-800">
                   <button
                     type="button"
-                    onClick={() => {
-                      const nextPlaying = !isPreviewPlaying;
-                      setIsPreviewPlaying(nextPlaying);
-                      if (nextPlaying) {
-                        startPreviewAudio(selectedAudioTrack, customAudioUrl, isAudioMuted);
-                      } else {
-                        stopPreviewAudio();
-                      }
-                    }}
-                    className="absolute bottom-4 left-3 w-11 h-11 rounded-full bg-black/75 hover:bg-black/90 border border-white/20 text-white flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
-                    aria-label={isPreviewPlaying ? 'Pause preview' : 'Play preview'}
+                    onClick={() => setTrayMode('slots')}
+                    className={`px-3 min-h-[36px] rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                      trayMode === 'slots'
+                        ? 'bg-neutral-800 text-white'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
                   >
-                    {isPreviewPlaying ? (
-                      <Pause className="w-4 h-4" />
-                    ) : (
-                      <Play className="w-4 h-4 fill-white ml-0.5" />
-                    )}
+                    Clips ({filledSlotsCount}/{slotClips.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTrayMode('customize')}
+                    className={`px-3 min-h-[36px] rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                      trayMode === 'customize'
+                        ? 'bg-neutral-800 text-white'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    Text &amp; Style
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsMusicDrawerOpen(true)}
+                    className="min-h-[38px] px-3 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-cyan-500/35 text-xs font-bold text-cyan-300 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <Music className="w-3.5 h-3.5" />
+                    <span>Change Music</span>
                   </button>
 
-                  {/* Quick Pick Clips Overlay CTA when empty */}
-                  {clips.length === 0 && (
+                  {!allSlotsFilled && (
                     <button
                       type="button"
                       onClick={() => mediaPickerRef.current?.click()}
-                      className="absolute bottom-4 right-3 px-3.5 min-h-[44px] rounded-xl bg-white hover:bg-neutral-100 text-neutral-950 text-xs font-black flex items-center gap-1.5 shadow-xl cursor-pointer active:scale-95"
+                      className="min-h-[38px] px-3 rounded-xl bg-pink-600/20 hover:bg-pink-600/30 border border-pink-500/40 text-xs font-bold text-pink-300 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                     >
-                      <Plus className="w-4 h-4 text-pink-600" />
-                      <span>Select {activeTemplate.requiredClips} Clips</span>
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Select All</span>
                     </button>
                   )}
-
-                  {/* Bottom Beat-Synced Timeline Progress Bar */}
-                  <div className="absolute bottom-0 left-0 right-0 h-2 bg-white/15">
-                    {beatCutMarkersPct.map((pct, i) => (
-                      <span
-                        key={i}
-                        style={{ left: `${pct}%` }}
-                        className="absolute top-0 bottom-0 w-0.5 bg-white/60 z-10 pointer-events-none"
-                      />
-                    ))}
-                    <div
-                      style={{ width: `${Math.min(100, Math.max(0, previewProgressPct))}%` }}
-                      className="h-full bg-gradient-to-r from-pink-500 via-rose-500 to-cyan-400 transition-[width] duration-75"
-                    />
-                  </div>
                 </div>
               </div>
 
-              {/* Right: Clip Strip, Transitions/Color Grade, Text & Sound Controls, Export */}
-              <div className="lg:col-span-7 space-y-4">
-                {/* Step 1: CapCut-Style Multi-Photo/Video Slot Picker */}
-                <div className="rounded-2xl bg-neutral-900/80 border border-pink-500/30 p-4 space-y-3 shadow-lg shadow-pink-600/5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
-                        <Film className="w-3.5 h-3.5 text-pink-400" />
-                        <span>
-                          1. CapCut Media Slot Picker ({clips.length}/{activeTemplate.requiredClips} Needed · Max {activeTemplate.maxClips})
-                        </span>
-                      </h3>
-                      <p className="text-[11px] text-neutral-400 mt-0.5">
-                        Tap any slot below to add/replace a photo or video, or pick all clips from your gallery
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={clips.length >= activeTemplate.maxClips}
-                      onClick={() => mediaPickerRef.current?.click()}
-                      className="min-h-[42px] px-3.5 rounded-xl bg-gradient-to-r from-pink-600 to-rose-500 hover:brightness-110 disabled:opacity-45 text-white text-xs font-black flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md shadow-pink-600/20"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>
-                        {clips.length === 0
-                          ? `Select ${activeTemplate.requiredClips} from Gallery`
-                          : 'Add Multiple'}
+              {trayMode === 'slots' ? (
+                <>
+                  {/* Contextual Action Bar when user taps a filled slot */}
+                  {selectedSlotForAction !== null && slotClips[selectedSlotForAction] && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-neutral-950 border border-cyan-500/40">
+                      <span className="text-xs font-bold text-white tabular-nums">
+                        Slot {selectedSlotForAction + 1} ·{' '}
+                        {(slotWindows[selectedSlotForAction]?.durationSec || 2).toFixed(1)}s
                       </span>
-                    </button>
-                  </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetSlotIndex(selectedSlotForAction);
+                            singleSlotPickerRef.current?.click();
+                          }}
+                          className="min-h-[36px] px-3 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Replace</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCroppingSlotIndex(selectedSlotForAction)}
+                          className="min-h-[36px] px-3 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-xs font-bold text-cyan-200 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Crop className="w-3.5 h-3.5" />
+                          <span>Crop</span>
+                        </button>
+                        {slotClips.length > 1 && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={selectedSlotForAction === 0}
+                              onClick={() => handleMoveSlot(selectedSlotForAction, -1)}
+                              className="min-w-[36px] min-h-[36px] rounded-lg bg-neutral-800 text-neutral-200 disabled:opacity-30 flex items-center justify-center cursor-pointer"
+                              aria-label="Swap clip left"
+                            >
+                              <ChevronLeft className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={selectedSlotForAction === slotClips.length - 1}
+                              onClick={() => handleMoveSlot(selectedSlotForAction, 1)}
+                              className="min-w-[36px] min-h-[36px] rounded-lg bg-neutral-800 text-neutral-200 disabled:opacity-30 flex items-center justify-center cursor-pointer"
+                              aria-label="Swap clip right"
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleClearSlot(selectedSlotForAction)}
+                          className="min-w-[36px] min-h-[36px] rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 flex items-center justify-center cursor-pointer"
+                          aria-label="Clear slot"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-                  {/* Interactive Visual Slots Grid (Slot 1..N) */}
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5 pt-1">
-                    {Array.from({
-                      length: Math.min(
-                        activeTemplate.maxClips,
-                        Math.max(activeTemplate.requiredClips, clips.length + (clips.length < activeTemplate.maxClips ? 1 : 0))
-                      ),
-                    }).map((_, slotIdx) => {
-                      const clip = clips[slotIdx];
-                      const slotLabel =
-                        activeTemplate.slotLabels?.[slotIdx] || `Clip ${slotIdx + 1}`;
-                      const cutDur = (
-                        activeTemplate.durationSec /
-                        Math.max(1, activeTemplate.requiredClips) /
-                        speedMultiplier
+                  {/* Numbered CapCut Media Slots Tray */}
+                  <div className="flex items-stretch gap-2.5 overflow-x-auto no-scrollbar pb-1">
+                    {slotClips.map((clip, idx) => {
+                      const winDur = (
+                        slotWindows[idx]?.durationSec ||
+                        activeTemplate.durationSec / activeTemplate.requiredClips
                       ).toFixed(1);
+                      const isPlayingHere = activePlayingSlotIdx === idx;
+                      const isSelected = selectedSlotForAction === idx;
 
                       if (!clip) {
                         return (
                           <button
-                            key={`empty-slot-${slotIdx}`}
+                            key={`tray-empty-${idx}`}
                             type="button"
                             onClick={() => {
-                              setTargetSlotIndex(slotIdx);
+                              setSelectedSlotForAction(null);
+                              setTargetSlotIndex(idx);
                               singleSlotPickerRef.current?.click();
                             }}
-                            className="aspect-[9/14] rounded-xl border-2 border-dashed border-neutral-700 hover:border-pink-500 bg-neutral-950/90 hover:bg-neutral-900 flex flex-col items-center justify-center p-2 text-center gap-1.5 transition-all cursor-pointer group"
+                            className={`w-[78px] sm:w-[92px] aspect-[9/12] shrink-0 rounded-xl border-2 border-dashed flex flex-col items-center justify-between p-2 transition-all cursor-pointer group ${
+                              isPlayingHere
+                                ? 'border-pink-400 bg-pink-500/10'
+                                : 'border-neutral-700 hover:border-cyan-400 bg-neutral-950'
+                            }`}
                           >
-                            <div className="w-8 h-8 rounded-full bg-pink-500/15 border border-pink-500/40 text-pink-400 group-hover:scale-110 transition-transform flex items-center justify-center">
+                            <span className="text-[10px] font-bold text-neutral-400 self-start tabular-nums">
+                              {idx + 1}
+                            </span>
+                            <div className="w-8 h-8 rounded-full bg-neutral-800 group-hover:bg-cyan-500/20 border border-neutral-700 group-hover:border-cyan-400 flex items-center justify-center text-white transition-colors">
                               <Plus className="w-4 h-4" />
                             </div>
-                            <span className="text-[10px] font-black text-white leading-tight line-clamp-1">
-                              {slotLabel}
-                            </span>
-                            <span className="text-[9px] font-bold text-neutral-400 tabular-nums">
-                              ~{cutDur}s
+                            <span className="text-[10px] font-bold text-neutral-200 tabular-nums whitespace-nowrap">
+                              Slot {idx + 1} • {winDur}s
                             </span>
                           </button>
                         );
                       }
 
                       return (
-                        <div
+                        <button
                           key={clip.id}
-                          className="relative rounded-xl overflow-hidden border border-pink-500/50 bg-black flex flex-col"
+                          type="button"
+                          onClick={() =>
+                            setSelectedSlotForAction((prev) => (prev === idx ? null : idx))
+                          }
+                          className={`relative w-[78px] sm:w-[92px] aspect-[9/12] shrink-0 rounded-xl overflow-hidden border-2 bg-black transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-cyan-400 ring-2 ring-cyan-400/40'
+                              : isPlayingHere
+                              ? 'border-pink-500'
+                              : 'border-neutral-700 hover:border-white/50'
+                          }`}
                         >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setTargetSlotIndex(slotIdx);
-                              singleSlotPickerRef.current?.click();
-                            }}
-                            className="aspect-[9/14] w-full bg-neutral-900 relative block cursor-pointer"
-                            title="Tap to replace photo/video in this slot"
-                          >
-                            {clip.mediaType === 'image' ? (
-                              <img
-                                src={clip.url}
-                                alt={clip.name}
-                                loading="lazy"
-                                decoding="async"
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <video
-                                src={clip.url}
-                                muted
-                                playsInline
-                                preload="metadata"
-                                className="w-full h-full object-cover"
-                              />
-                            )}
-                            <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/80 text-[9px] font-black text-white flex items-center gap-0.5">
+                          {clip.mediaType === 'image' ? (
+                            <img
+                              src={clip.url}
+                              alt={`Slot ${idx + 1}`}
+                              style={{
+                                transform: `scale(${clip.cropZoom || 1}) translate(${
+                                  (clip.cropPanX || 0) * 18
+                                }%, ${(clip.cropPanY || 0) * 18}%)`,
+                              }}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <video
+                              src={clip.url}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              style={{
+                                transform: `scale(${clip.cropZoom || 1}) translate(${
+                                  (clip.cropPanX || 0) * 18
+                                }%, ${(clip.cropPanY || 0) * 18}%)`,
+                              }}
+                              className="w-full h-full object-cover"
+                            />
+                          )}
+
+                          <div className="absolute top-1 left-1 right-1 flex items-center justify-between pointer-events-none">
+                            <span className="px-1.5 py-0.5 rounded bg-black/80 text-[9px] font-black text-white flex items-center gap-0.5">
                               {clip.mediaType === 'image' ? (
                                 <ImageIcon className="w-2.5 h-2.5 text-cyan-400" />
                               ) : (
                                 <Film className="w-2.5 h-2.5 text-pink-400" />
                               )}
-                              {slotIdx + 1}
+                              {idx + 1}
                             </span>
-                            <span className="absolute bottom-1 left-1 right-1 px-1.5 py-0.5 rounded bg-black/75 text-[9px] font-bold text-neutral-200 truncate text-center">
-                              {slotLabel}
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveClip(clip.id)}
-                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/85 hover:bg-rose-600 text-white flex items-center justify-center cursor-pointer"
-                            aria-label="Remove clip"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-
-                          <div className="flex items-center justify-between px-1 py-0.5 bg-neutral-900 border-t border-neutral-800">
-                            <button
-                              type="button"
-                              disabled={slotIdx === 0}
-                              onClick={() => handleMoveClip(slotIdx, -1)}
-                              className="min-w-[26px] min-h-[26px] flex items-center justify-center text-neutral-300 disabled:opacity-30 cursor-pointer"
-                              aria-label="Move clip left"
-                            >
-                              <ChevronLeft className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={slotIdx === clips.length - 1}
-                              onClick={() => handleMoveClip(slotIdx, 1)}
-                              className="min-w-[26px] min-h-[26px] flex items-center justify-center text-neutral-300 disabled:opacity-30 cursor-pointer"
-                              aria-label="Move clip right"
-                            >
-                              <ChevronRight className="w-3.5 h-3.5" />
-                            </button>
+                            {(clip.cropZoom && clip.cropZoom > 1.02) ||
+                            clip.cropPanX ||
+                            clip.cropPanY ? (
+                              <span className="p-0.5 rounded bg-cyan-500 text-neutral-950">
+                                <Crop className="w-2.5 h-2.5" />
+                              </span>
+                            ) : null}
                           </div>
-                        </div>
+
+                          <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 bg-gradient-to-t from-black/95 via-black/65 to-transparent text-center pointer-events-none">
+                            <span className="text-[9px] font-bold text-white tabular-nums block whitespace-nowrap">
+                              Slot {idx + 1} • {winDur}s
+                            </span>
+                          </div>
+                        </button>
                       );
                     })}
                   </div>
-                </div>
-
-                {/* Step 2: Beat Cuts, Transitions & Color Grading */}
-                <div className="rounded-2xl bg-neutral-900/75 border border-neutral-800 p-4 space-y-3.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
-                      <Zap className="w-3.5 h-3.5 text-amber-400" />
-                      <span>2. Auto Beat Transitions &amp; Color Grade</span>
-                    </h3>
-                    <span className="text-[11px] font-semibold text-neutral-400 tabular-nums">
-                      {beatCutMarkersPct.length + 1} Beat Cuts
-                    </span>
-                  </div>
-
-                  {/* Transitions Selector (Zoom-In, Flash, Shake, Slide) */}
-                  <div className="space-y-1.5">
-                    <p className="text-[11px] font-bold text-neutral-400">
-                      Beat Transitions (tap to mix)
-                    </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {TRANSITION_OPTIONS.map((opt) => {
-                        const isActive = activeTransitions.includes(opt.id);
-                        return (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => handleToggleTransition(opt.id)}
-                            className={`min-h-[44px] px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                              isActive
-                                ? 'bg-pink-500/20 border-pink-400 text-white'
-                                : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
-                            }`}
-                          >
-                            {isActive && <Check className="w-3.5 h-3.5 text-pink-400 shrink-0" />}
-                            <span>{opt.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Color Grading Selector */}
-                  <div className="space-y-1.5 pt-1">
-                    <p className="text-[11px] font-bold text-neutral-400 flex items-center gap-1.5">
-                      <Palette className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Color Grading Filter</span>
-                    </p>
-                    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
-                      {[
-                        {
-                          id: 'tpl_preset',
-                          name: `${activeTemplate.colorGradeName} (Preset)`,
-                          filterCss: activeTemplate.filterCss,
-                          tintRgba: activeTemplate.colorTintRgba,
-                        },
-                        ...TEMPLATE_COLOR_GRADES.filter(
-                          (g) => g.name !== activeTemplate.colorGradeName
-                        ),
-                      ].map((grade) => {
-                        const selected =
-                          selectedColorGrade.name === grade.name ||
-                          (selectedColorGrade.id === 'tpl_preset' && grade.id === 'tpl_preset');
-                        return (
-                          <button
-                            key={grade.id}
-                            type="button"
-                            onClick={() => setSelectedColorGrade(grade)}
-                            className={`px-3 min-h-[40px] rounded-xl border text-[11px] font-bold whitespace-nowrap shrink-0 cursor-pointer transition-all ${
-                              selected
-                                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
-                                : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
-                            }`}
-                          >
-                            {grade.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Step 3: Text Overlays & Pace */}
-                <div className="rounded-2xl bg-neutral-900/75 border border-neutral-800 p-4 space-y-3">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
-                    <Type className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>3. Customize Text, Lyrics &amp; Velocity</span>
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                </>
+              ) : (
+                /* Customize Text, Transitions, Speed & Color Grade inside Tray */
+                <div className="max-h-52 overflow-y-auto no-scrollbar space-y-3 py-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
-                      <label className="block text-[11px] font-bold text-neutral-400 mb-1">
-                        Main Headline / Hook Text
+                      <label className="block text-[11px] font-bold text-neutral-400 mb-1 flex items-center gap-1">
+                        <Type className="w-3 h-3 text-cyan-400" />
+                        <span>Headline Text</span>
                       </label>
                       <input
                         type="text"
@@ -1943,12 +2251,12 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                         value={overlayText}
                         onChange={(e) => setOverlayText(sanitizeInputLive(e.target.value, 32))}
                         placeholder="e.g. JATT DA SWAG"
-                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-pink-500 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-hidden"
+                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden"
                       />
                     </div>
                     <div>
                       <label className="block text-[11px] font-bold text-neutral-400 mb-1">
-                        Lyrics / Subtitle Line
+                        Lyrics / Subtitle
                       </label>
                       <input
                         type="text"
@@ -1956,231 +2264,130 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                         value={secondaryText}
                         onChange={(e) => setSecondaryText(sanitizeInputLive(e.target.value, 54))}
                         placeholder="Subtitle or poetic line..."
-                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-cyan-500 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-hidden"
+                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-pink-400 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden"
                       />
                     </div>
                   </div>
 
-                  {/* Speed / Beat Pace */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                    <span className="text-[11px] font-bold text-neutral-400 flex items-center gap-1.5">
-                      <Sliders className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Tempo / Slow-Mo</span>
+                  {/* Beat Transitions & Tempo */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-bold text-neutral-400 flex items-center gap-1 mr-1">
+                      <Zap className="w-3 h-3 text-amber-400" />
+                      <span>Effects:</span>
                     </span>
-                    <div className="flex items-center flex-wrap gap-1.5">
-                      {[
-                        { val: 0.65, label: '0.65x Velvet' },
-                        { val: 0.75, label: '0.75x Slow-Mo' },
-                        { val: 1, label: '1x Normal' },
-                        { val: 1.25, label: '1.25x Hype' },
-                      ].map((opt) => (
+                    {TRANSITION_OPTIONS.map((opt) => {
+                      const isActive = activeTransitions.includes(opt.id);
+                      return (
                         <button
-                          key={opt.val}
+                          key={opt.id}
                           type="button"
-                          onClick={() => setSpeedMultiplier(opt.val)}
-                          className={`px-3 min-h-[40px] rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
-                            speedMultiplier === opt.val
-                              ? 'bg-amber-500/20 border-amber-400 text-amber-300'
-                              : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
+                          onClick={() => handleToggleTransition(opt.id)}
+                          className={`px-2.5 min-h-[34px] rounded-lg border text-[11px] font-bold flex items-center gap-1 cursor-pointer ${
+                            isActive
+                              ? 'bg-pink-500/20 border-pink-400 text-white'
+                              : 'bg-neutral-950 border-neutral-800 text-neutral-400'
                           }`}
                         >
-                          {opt.label}
+                          {isActive && <Check className="w-3 h-3 text-pink-400" />}
+                          <span>{opt.label}</span>
                         </button>
-                      ))}
-                    </div>
+                      );
+                    })}
+
+                    <span className="text-[11px] font-bold text-neutral-400 flex items-center gap-1 ml-1">
+                      <Sliders className="w-3 h-3 text-amber-400" />
+                      <span>Speed:</span>
+                    </span>
+                    {[0.65, 0.75, 1, 1.25].map((spd) => (
+                      <button
+                        key={spd}
+                        type="button"
+                        onClick={() => setSpeedMultiplier(spd)}
+                        className={`px-2.5 min-h-[34px] rounded-lg border text-[11px] font-bold cursor-pointer ${
+                          speedMultiplier === spd
+                            ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                            : 'bg-neutral-950 border-neutral-800 text-neutral-400'
+                        }`}
+                      >
+                        {spd}x
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Color Grading */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                    <Palette className="w-3.5 h-3.5 text-cyan-400 shrink-0 mr-1" />
+                    {[
+                      {
+                        id: 'tpl_preset',
+                        name: `${activeTemplate.colorGradeName} (Preset)`,
+                        filterCss: activeTemplate.filterCss,
+                        tintRgba: activeTemplate.colorTintRgba,
+                      },
+                      ...TEMPLATE_COLOR_GRADES.filter(
+                        (g) => g.name !== activeTemplate.colorGradeName
+                      ),
+                    ].map((grade) => {
+                      const selected =
+                        selectedColorGrade.name === grade.name ||
+                        (selectedColorGrade.id === 'tpl_preset' && grade.id === 'tpl_preset');
+                      return (
+                        <button
+                          key={grade.id}
+                          type="button"
+                          onClick={() => setSelectedColorGrade(grade)}
+                          className={`px-2.5 min-h-[34px] rounded-lg border text-[11px] font-bold whitespace-nowrap shrink-0 cursor-pointer ${
+                            selected
+                              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
+                              : 'bg-neutral-950 border-neutral-800 text-neutral-400'
+                          }`}
+                        >
+                          {grade.name}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
+              )}
 
-                {/* Step 4: Audio Track & Privacy */}
-                <div className="rounded-2xl bg-neutral-900/75 border border-neutral-800 p-4 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
-                      <Music className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>4. Background Music &amp; Privacy</span>
-                    </h3>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setIsMusicDrawerOpen(true)}
-                        className="min-h-[38px] px-3 rounded-lg bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 text-[11px] font-black text-white cursor-pointer"
-                      >
-                        Search / Change Song
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => customAudioPickerRef.current?.click()}
-                        className="min-h-[38px] px-3 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-700 text-[11px] font-bold text-cyan-300 cursor-pointer"
-                      >
-                        + MP3
-                      </button>
-                    </div>
-                  </div>
-
-                  {selectedOnlineSong ? (
-                    <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-pink-500/15 border border-pink-500/35 text-xs">
-                      <div className="min-w-0">
-                        <p className="truncate font-black text-white">{selectedOnlineSong.title}</p>
-                        <p className="truncate text-[10px] text-pink-300">
-                          {selectedOnlineSong.artist} · {selectedOnlineSong.durationLabel}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedOnlineSong(null);
-                          if (isPreviewPlaying && !isAudioMuted) {
-                            startPreviewAudio(selectedAudioTrack, customAudioUrl, false);
-                          }
-                        }}
-                        className="text-neutral-300 hover:text-white p-1.5 cursor-pointer shrink-0"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ) : customAudioFile ? (
-                    <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs">
-                      <span className="truncate font-bold text-cyan-200">
-                        Custom Audio: {customAudioFile.name}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCustomAudioFile(null);
-                          setCustomAudioUrl('');
-                          if (isPreviewPlaying && !isAudioMuted) {
-                            startPreviewAudio(selectedAudioTrack, '', false);
-                          }
-                        }}
-                        className="text-neutral-300 hover:text-white p-1.5 cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+              {/* Bottom Export Action Row */}
+              <div className="flex items-center justify-between gap-2.5 pt-1 border-t border-neutral-800/80">
+                <p className="text-[11px] text-neutral-400 truncate">
+                  {allSlotsFilled ? (
+                    <span className="text-emerald-400 font-bold">
+                      All {activeTemplate.requiredClips} slots ready for export
+                    </span>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto no-scrollbar">
-                      {CURATED_AUDIO_LIBRARY.map((track) => {
-                        const active = selectedAudioTrack?.id === track.id;
-                        return (
-                          <button
-                            key={track.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedAudioTrack(track);
-                              setSelectedOnlineSong(null);
-                              if (!isAudioMuted) {
-                                setIsPreviewPlaying(true);
-                                startPreviewAudio(track, '', false);
-                              }
-                            }}
-                            className={`text-left px-3 py-2 min-h-[44px] rounded-xl border transition-all flex items-center justify-between gap-2 cursor-pointer ${
-                              active
-                                ? 'bg-pink-500/15 border-pink-500/50 text-white'
-                                : 'bg-neutral-950 border-neutral-800/80 text-neutral-300 hover:border-neutral-700'
-                            }`}
-                          >
-                            <div className="min-w-0">
-                              <p className="text-[11px] font-bold truncate">{track.title}</p>
-                              <p className="text-[10px] text-neutral-400 truncate">
-                                {track.artist} · {track.duration}
-                              </p>
-                            </div>
-                            {active && <Check className="w-3.5 h-3.5 text-pink-400 shrink-0" />}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <span>
+                      Tap any <strong className="text-white">+</strong> slot to add media (
+                      {activeTemplate.requiredClips - filledSlotsCount} left)
+                    </span>
                   )}
+                </p>
 
-                  {/* Download Privacy */}
-                  <div className="pt-2 border-t border-neutral-800/80 space-y-2">
-                    <p className="text-[11px] font-bold text-neutral-300">
-                      Allow others to download your video?
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setAllowDownload(true)}
-                        className={`min-h-[44px] px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
-                          allowDownload
-                            ? 'bg-emerald-500/15 border-emerald-400 text-emerald-300'
-                            : 'bg-neutral-950 border-neutral-800 text-neutral-400'
-                        }`}
-                      >
-                        <Globe className="w-3.5 h-3.5" />
-                        <span>Yes, Allow Download</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAllowDownload(false)}
-                        className={`min-h-[44px] px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
-                          !allowDownload
-                            ? 'bg-amber-500/15 border-amber-400 text-amber-300'
-                            : 'bg-neutral-950 border-neutral-800 text-neutral-400'
-                        }`}
-                      >
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>No, Keep Private</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Export Progress Bar when Rendering */}
-                {isExporting && (
-                  <div className="rounded-2xl bg-neutral-900 border border-pink-500/40 p-4 space-y-2.5">
-                    <div className="flex items-center justify-between text-xs font-bold">
-                      <span className="flex items-center gap-2 text-pink-300">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        {exportActionLabel}
-                      </span>
-                      <span className="tabular-nums text-white">{exportProgressPct}%</span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden">
-                      <div
-                        style={{ width: `${exportProgressPct}%` }}
-                        className="h-full bg-gradient-to-r from-pink-500 via-rose-500 to-cyan-400 transition-all duration-150"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        exportCancelledRef.current = true;
-                      }}
-                      className="min-h-[36px] text-xs font-bold text-neutral-400 hover:text-white cursor-pointer"
-                    >
-                      Cancel Export
-                    </button>
-                  </div>
-                )}
-
-                {/* Primary Export & Post Action Buttons */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <button
-                    type="button"
-                    disabled={isExporting}
-                    onClick={handleSaveToGallery}
-                    className="min-h-[48px] px-4 rounded-2xl bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-neutral-700 text-white text-xs font-black flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] transition-all"
-                  >
-                    <Download className="w-4 h-4 text-cyan-400" />
-                    <span>Save Video to Gallery</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isExporting}
-                    onClick={handlePostToFeed}
-                    className="min-h-[48px] px-4 rounded-2xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:brightness-110 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-xl shadow-pink-600/25 cursor-pointer active:scale-[0.99] transition-all"
-                  >
-                    <Send className="w-4 h-4" />
-                    <span>Post to Jatt VibeReels</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenExportSheet}
+                  className={`min-h-[44px] px-5 rounded-xl text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-all whitespace-nowrap shrink-0 ${
+                    allSlotsFilled
+                      ? 'bg-gradient-to-r from-cyan-400 via-teal-400 to-emerald-400 text-neutral-950 shadow-lg shadow-cyan-500/30 hover:brightness-105 active:scale-[0.98]'
+                      : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700'
+                  }`}
+                >
+                  <Download className="w-4 h-4" />
+                  <span>
+                    {allSlotsFilled
+                      ? 'Export Video'
+                      : `Export Video (${filledSlotsCount}/${activeTemplate.requiredClips})`}
+                  </span>
+                </button>
               </div>
             </div>
-          </div>
-        </>
+          </section>
+        </div>
       ) : (
         /* =================================================================
-           TRENDING VIDEO & PHOTO TEMPLATES GALLERY
+           SCREEN 1: CAPCUT-STYLE ANIMATED TEMPLATES FEED
            ================================================================= */
         <>
           {/* Header */}
@@ -2203,7 +2410,7 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                     </h1>
                   </div>
                   <p className="text-xs text-neutral-400 truncate">
-                    Create trending reels in one tap · Select 1–5 clips &amp; auto-sync
+                    Tap Use Template, fill each slot with your clips &amp; export in seconds
                   </p>
                 </div>
               </div>
@@ -2231,7 +2438,7 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
             </div>
           </div>
 
-          {/* Templates Grid */}
+          {/* Animated Template Feed Grid */}
           <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar p-4 sm:p-6 pb-28">
             <div className="max-w-6xl mx-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3.5 sm:gap-5">
               {filteredTemplates.map((tpl) => {
@@ -2244,16 +2451,16 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                     key={tpl.id}
                     className="group rounded-2xl bg-neutral-900/90 border border-neutral-800 hover:border-white/30 overflow-hidden flex flex-col transition-all shadow-lg"
                   >
-                    {/* Live Animated 9:14 Template Preview */}
+                    {/* Live Looping 9:16 Visual Preview Reel */}
                     <div
-                      onClick={() => handlePreviewTemplateFirst(tpl)}
-                      className="relative aspect-[9/14] w-full bg-black overflow-hidden cursor-pointer gpu-accelerated"
+                      onClick={() => handleUseTemplate(tpl)}
+                      className="relative aspect-[9/15] w-full bg-black overflow-hidden cursor-pointer gpu-accelerated"
                     >
                       <TemplateAnimatedPreview template={tpl} />
 
-                      {/* Top Category + BPM Header over gradient scrim */}
+                      {/* Top Category + BPM over gradient scrim */}
                       <div className="absolute top-0 left-0 right-0 p-2.5 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between gap-1 pointer-events-none">
-                        <span className="px-2 py-0.5 rounded-md bg-black/75 border border-white/15 text-[10px] font-bold text-white truncate">
+                        <span className="text-[10px] font-bold text-white/95 truncate">
                           {tpl.categoryLabel}
                         </span>
                         <span className="text-[10px] font-bold text-cyan-300 tabular-nums shrink-0">
@@ -2261,32 +2468,21 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                         </span>
                       </div>
 
-                      {/* Subtle Preview Hint Overlay */}
-                      <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/70 border border-white/15 text-[10px] font-bold text-neutral-200 pointer-events-none">
-                        Preview
+                      {/* Bottom-left Clip Count, Duration & Aspect Ratio Tag */}
+                      <div className="absolute bottom-0 left-0 right-0 pt-8 pb-2.5 px-2.5 bg-gradient-to-t from-black/90 via-black/45 to-transparent flex items-end justify-between gap-2 pointer-events-none">
+                        <span className="px-2 py-1 rounded-md bg-black/80 border border-white/15 text-[10px] font-extrabold text-white tabular-nums whitespace-nowrap">
+                          {tpl.requiredClips} Clips • {formattedDuration} • {tpl.aspectRatio}
+                        </span>
                       </div>
                     </div>
 
-                    {/* Card Body: Bold Title, Subtitle Badge (X Clips • 0:XX) & High-Contrast Use Template CTA */}
-                    <div className="p-3 sm:p-3.5 flex flex-col justify-between gap-3 flex-1 bg-neutral-950/60">
-                      <div className="space-y-2">
+                    {/* Card Footer: Title, Sound & Bold "Use Template" Button */}
+                    <div className="p-3 sm:p-3.5 flex flex-col justify-between gap-2.5 flex-1 bg-neutral-950/75">
+                      <div className="space-y-1">
                         <h2 className="text-sm sm:text-base font-black text-white tracking-tight leading-snug line-clamp-1">
                           {tpl.name}
                         </h2>
-
-                        {/* Required Clip Count & Duration Subtitle Badge */}
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-800/95 border border-neutral-700 text-[11px] font-extrabold text-pink-300 tabular-nums">
-                          <Film className="w-3 h-3 text-pink-400 shrink-0" />
-                          <span>
-                            {tpl.requiredClips} Clips • {formattedDuration}
-                          </span>
-                        </div>
-
-                        <p className="text-[11px] text-neutral-400 line-clamp-2 leading-relaxed">
-                          {tpl.tagline}
-                        </p>
-
-                        <p className="text-[10px] text-neutral-400 flex items-center gap-1 truncate pt-0.5">
+                        <p className="text-[11px] text-neutral-400 flex items-center gap-1.5 truncate">
                           <Music className="w-3 h-3 text-cyan-400 shrink-0" />
                           <span className="truncate font-semibold">{trackName}</span>
                         </p>
@@ -2307,6 +2503,247 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
             </div>
           </div>
         </>
+      )}
+
+      {/* Interactive Slot Crop & Framing Modal */}
+      {croppingSlotIndex !== null && croppingClip && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-neutral-900 border border-neutral-800 p-4 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Crop className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-sm font-black text-white">
+                  Crop &amp; Frame Slot {croppingSlotIndex + 1}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCroppingSlotIndex(null)}
+                className="w-9 h-9 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 flex items-center justify-center cursor-pointer"
+                aria-label="Close crop dialog"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Interactive Draggable 9:16 Crop Frame */}
+            <div
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture(e.pointerId);
+                cropDragRef.current = {
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  origPanX: croppingClip.cropPanX || 0,
+                  origPanY: croppingClip.cropPanY || 0,
+                };
+              }}
+              onPointerMove={(e) => {
+                if (!cropDragRef.current) return;
+                const dx = (e.clientX - cropDragRef.current.startX) / 140;
+                const dy = (e.clientY - cropDragRef.current.startY) / 220;
+                const nextX = Math.max(-1, Math.min(1, cropDragRef.current.origPanX + dx));
+                const nextY = Math.max(-1, Math.min(1, cropDragRef.current.origPanY + dy));
+                handleUpdateSlotCrop(croppingSlotIndex, { cropPanX: nextX, cropPanY: nextY });
+              }}
+              onPointerUp={() => {
+                cropDragRef.current = null;
+              }}
+              className="relative mx-auto w-48 aspect-[9/16] rounded-xl overflow-hidden border-2 border-cyan-400 bg-black cursor-move touch-none"
+            >
+              {croppingClip.mediaType === 'image' ? (
+                <img
+                  src={croppingClip.url}
+                  alt="Crop preview"
+                  draggable={false}
+                  style={{
+                    transform: `scale(${croppingClip.cropZoom || 1}) translate(${
+                      (croppingClip.cropPanX || 0) * 30
+                    }%, ${(croppingClip.cropPanY || 0) * 30}%)`,
+                  }}
+                  className="w-full h-full object-cover select-none pointer-events-none"
+                />
+              ) : (
+                <video
+                  src={croppingClip.url}
+                  muted
+                  loop
+                  autoPlay
+                  playsInline
+                  style={{
+                    transform: `scale(${croppingClip.cropZoom || 1}) translate(${
+                      (croppingClip.cropPanX || 0) * 30
+                    }%, ${(croppingClip.cropPanY || 0) * 30}%)`,
+                  }}
+                  className="w-full h-full object-cover select-none pointer-events-none"
+                />
+              )}
+              <div className="absolute inset-x-0 bottom-1.5 text-center pointer-events-none">
+                <span className="px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-neutral-200">
+                  Drag to reposition
+                </span>
+              </div>
+            </div>
+
+            {/* Zoom Slider */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-bold text-neutral-300">
+                <span className="flex items-center gap-1.5">
+                  <ZoomIn className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Zoom</span>
+                </span>
+                <span className="tabular-nums text-cyan-300">
+                  {(croppingClip.cropZoom || 1).toFixed(2)}x
+                </span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={2.2}
+                step={0.05}
+                value={croppingClip.cropZoom || 1}
+                onChange={(e) =>
+                  handleUpdateSlotCrop(croppingSlotIndex, {
+                    cropZoom: Number(e.target.value),
+                  })
+                }
+                className="w-full accent-cyan-400 cursor-pointer"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() =>
+                  handleUpdateSlotCrop(croppingSlotIndex, {
+                    cropZoom: 1,
+                    cropPanX: 0,
+                    cropPanY: 0,
+                  })
+                }
+                className="min-h-[42px] rounded-xl bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-neutral-200 cursor-pointer"
+              >
+                Reset Frame
+              </button>
+              <button
+                type="button"
+                onClick={() => setCroppingSlotIndex(null)}
+                className="min-h-[42px] rounded-xl bg-cyan-400 hover:bg-cyan-300 text-xs font-black text-neutral-950 cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export & Publish Action Sheet Modal */}
+      {isExportSheetOpen && activeTemplate && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl bg-neutral-900 border-t sm:border border-neutral-800 p-5 space-y-4 shadow-2xl pb-safe">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-base font-black text-white">Export Template Reel</h3>
+                <p className="text-xs text-neutral-400 tabular-nums">
+                  {activeTemplate.name} · {filledSlotsCount}/{activeTemplate.requiredClips} Clips ·{' '}
+                  {formatTemplateDuration(totalDurationSec)} · {currentSongLabel}
+                </p>
+              </div>
+              {!isExporting && (
+                <button
+                  type="button"
+                  onClick={() => setIsExportSheetOpen(false)}
+                  className="w-9 h-9 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 flex items-center justify-center cursor-pointer"
+                  aria-label="Close export modal"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Download Privacy Option */}
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-bold text-neutral-400">
+                Allow viewers to download your reel?
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={isExporting}
+                  onClick={() => setAllowDownload(true)}
+                  className={`min-h-[42px] px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
+                    allowDownload
+                      ? 'bg-emerald-500/15 border-emerald-400 text-emerald-300'
+                      : 'bg-neutral-950 border-neutral-800 text-neutral-400'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>Allow Download</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isExporting}
+                  onClick={() => setAllowDownload(false)}
+                  className={`min-h-[42px] px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
+                    !allowDownload
+                      ? 'bg-amber-500/15 border-amber-400 text-amber-300'
+                      : 'bg-neutral-950 border-neutral-800 text-neutral-400'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Keep Private</span>
+                </button>
+              </div>
+            </div>
+
+            {isExporting && (
+              <div className="rounded-xl bg-neutral-950 border border-cyan-500/40 p-3.5 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="flex items-center gap-2 text-cyan-300">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {exportActionLabel}
+                  </span>
+                  <span className="tabular-nums text-white">{exportProgressPct}%</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden">
+                  <div
+                    style={{ width: `${exportProgressPct}%` }}
+                    className="h-full bg-gradient-to-r from-cyan-400 via-pink-500 to-amber-400 transition-all duration-150"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    exportCancelledRef.current = true;
+                  }}
+                  className="text-xs font-bold text-neutral-400 hover:text-white cursor-pointer"
+                >
+                  Cancel Export
+                </button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={isExporting}
+                onClick={handlePostToFeed}
+                className="min-h-[48px] px-4 rounded-xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:brightness-110 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-xl shadow-pink-600/25 cursor-pointer"
+              >
+                <Send className="w-4 h-4" />
+                <span>Post to Jatt VibeReels</span>
+              </button>
+              <button
+                type="button"
+                disabled={isExporting}
+                onClick={handleSaveToGallery}
+                className="min-h-[46px] px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-white text-xs font-black flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-cyan-400" />
+                <span>Save Video to Device Gallery</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Full CapCut Music & Online Song Picker Drawer */}

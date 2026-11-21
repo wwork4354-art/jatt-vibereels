@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Download,
   Eye,
+  EyeOff,
   Trash2,
   Lock,
   Users,
@@ -46,6 +47,8 @@ interface VideoCardProps {
   isMutualFriend?: boolean;
   controlsSide?: 'left' | 'right';
   onSwapControlsSide?: () => void;
+  isCleanScreenMode?: boolean;
+  onToggleCleanScreenMode?: () => void;
   onToggleMute: () => void;
   onLikeToggle: (id: string) => void;
   onSaveToggle: (id: string) => void;
@@ -81,6 +84,8 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   isMutualFriend = false,
   controlsSide = 'left',
   onSwapControlsSide,
+  isCleanScreenMode: controlledCleanMode,
+  onToggleCleanScreenMode,
   onToggleMute,
   onLikeToggle,
   onSaveToggle,
@@ -95,6 +100,15 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   onShowToast,
 }) => {
   const isLeftControls = controlsSide === 'left';
+  const [localCleanMode, setLocalCleanMode] = useState(false);
+  const cleanMode = controlledCleanMode ?? localCleanMode;
+  const handleToggleClean = () => {
+    if (onToggleCleanScreenMode) {
+      onToggleCleanScreenMode();
+    } else {
+      setLocalCleanMode((prev) => !prev);
+    }
+  };
   const cardRootRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const bgAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -783,7 +797,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               }}
               className="w-full h-full object-contain gpu-accelerated"
             />
-            {isPlaying && (
+            {isPlaying && !cleanMode && (
               <div
                 className={`absolute top-16 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none ${
                   isLeftControls ? 'right-4' : 'left-4'
@@ -902,14 +916,18 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         ))}
       </div>
 
-      {/* Top Scrim Bar for Controls */}
+      {/* Top Scrim Bar & Floating Quick-Action Pill (Hide/Show UI + Swap L/R) */}
       <div
-        className={`absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none z-20 flex items-start justify-between px-4 pt-4 sm:mx-auto [transform:translateZ(0)] ${
-          isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
-        }`}
+        className={`absolute top-0 left-0 right-0 h-24 pointer-events-none z-40 flex items-start justify-between px-3 sm:px-4 pt-4 sm:mx-auto transition-all duration-200 [transform:translateZ(0)] ${
+          cleanMode ? 'bg-transparent' : 'bg-gradient-to-b from-black/80 via-black/30 to-transparent'
+        } ${isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'}`}
       >
-        {/* Audio Mute / Unmute + Swap Left/Right Controls Toggle */}
-        <div className="flex items-center gap-1.5 sm:gap-2 pointer-events-auto flex-wrap">
+        {/* Left: Audio Mute / Unmute (hidden in Clean Screen Mode) */}
+        <div
+          className={`flex items-center gap-1.5 transition-all duration-200 [transform:translateZ(0)] ${
+            cleanMode ? 'opacity-0 pointer-events-none scale-95' : 'pointer-events-auto opacity-100'
+          }`}
+        >
           <button
             type="button"
             onClick={(e) => {
@@ -932,61 +950,111 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               </>
             )}
           </button>
-
-          {onSwapControlsSide && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSwapControlsSide();
-                onShowToast(
-                  isLeftControls
-                    ? 'Controls swapped to Right side'
-                    : 'Controls swapped to Left side'
-                );
-              }}
-              aria-pressed={isLeftControls}
-              aria-label="Swap left and right feed controls"
-              title={
-                isLeftControls
-                  ? 'Controls on Left — tap to switch to Right side'
-                  : 'Controls on Right — tap to switch to Left side'
-              }
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-xs font-semibold active:scale-95 transition-all cursor-pointer [transform:translateZ(0)] ${
-                isLeftControls
-                  ? 'bg-neutral-900/90 border-white/15 text-white hover:bg-neutral-800'
-                  : 'bg-pink-600/25 border-pink-400/55 text-pink-200 hover:bg-pink-600/35'
-              }`}
-            >
-              <ArrowLeftRight className="w-3.5 h-3.5 text-pink-400" />
-              <span className="text-[11px]">Swap</span>
-            </button>
-          )}
         </div>
 
-        {/* Live View Counter + Delete Post Button (own posts) */}
+        {/* Center/Right: Floating Quick-Action Pill + Views + Delete */}
         <div className="pointer-events-auto flex items-center gap-1.5">
+          {/* Floating Quick-Action Pill: (1) Hide/Show UI  (2) Swap Left/Right */}
           <div
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white text-[11px] font-bold tabular-nums [transform:translateZ(0)]"
-            title="Total Views"
+            onClick={(e) => e.stopPropagation()}
+            className={`inline-flex items-center rounded-full border backdrop-blur-md shadow-lg transition-all [transform:translateZ(0)] ${
+              cleanMode
+                ? 'bg-neutral-950/65 border-white/25 hover:bg-neutral-900/90'
+                : 'bg-neutral-900/90 border-white/15'
+            }`}
           >
-            <Eye className="w-3.5 h-3.5 text-cyan-400" />
-            <span>{formatCount(video.stats.views)}</span>
-          </div>
-
-          {isOwnPost && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                setIsConfirmingDelete(true);
+                handleToggleClean();
+                onShowToast(
+                  cleanMode
+                    ? 'Video controls restored'
+                    : 'Clean Screen Mode — tap Show UI anytime'
+                );
               }}
-              className="p-1.5 rounded-full bg-rose-600/85 hover:bg-rose-500 text-white border border-rose-300/40 shadow-md active:scale-95 transition-all cursor-pointer [transform:translateZ(0)]"
-              title="Delete this uploaded post"
-              aria-label="Delete post"
+              aria-pressed={cleanMode}
+              aria-label={cleanMode ? 'Show video UI' : 'Hide video UI'}
+              title={cleanMode ? 'Show UI controls' : 'Clean Screen Mode (Hide UI)'}
+              className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold transition-colors cursor-pointer ${
+                cleanMode
+                  ? 'text-cyan-300 hover:text-white rounded-full'
+                  : 'text-white hover:text-cyan-300 rounded-l-full'
+              }`}
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              {cleanMode ? (
+                <>
+                  <Eye className="w-3.5 h-3.5 text-cyan-300" />
+                  <span>Show UI</span>
+                </>
+              ) : (
+                <>
+                  <EyeOff className="w-3.5 h-3.5 text-cyan-300" />
+                  <span>Hide UI</span>
+                </>
+              )}
             </button>
+
+            {onSwapControlsSide && !cleanMode && (
+              <>
+                <span className="w-px h-3.5 bg-white/15" aria-hidden="true" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSwapControlsSide();
+                    onShowToast(
+                      isLeftControls
+                        ? 'Controls swapped to Right side'
+                        : 'Controls swapped to Left side'
+                    );
+                  }}
+                  aria-pressed={isLeftControls}
+                  aria-label="Swap left and right feed controls"
+                  title={
+                    isLeftControls
+                      ? 'Controls on Left — tap to switch to Right side'
+                      : 'Controls on Right — tap to switch to Left side'
+                  }
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-r-full text-[11px] font-bold transition-colors cursor-pointer ${
+                    isLeftControls
+                      ? 'text-white hover:text-pink-300'
+                      : 'text-pink-300 hover:text-white'
+                  }`}
+                >
+                  <ArrowLeftRight className="w-3.5 h-3.5 text-pink-400" />
+                  <span>Swap</span>
+                </button>
+              </>
+            )}
+          </div>
+
+          {!cleanMode && (
+            <>
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white text-[11px] font-bold tabular-nums [transform:translateZ(0)]"
+                title="Total Views"
+              >
+                <Eye className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{formatCount(video.stats.views)}</span>
+              </div>
+
+              {isOwnPost && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsConfirmingDelete(true);
+                  }}
+                  className="p-1.5 rounded-full bg-rose-600/85 hover:bg-rose-500 text-white border border-rose-300/40 shadow-md active:scale-95 transition-all cursor-pointer [transform:translateZ(0)]"
+                  title="Delete this uploaded post"
+                  aria-label="Delete post"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1069,11 +1137,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         </div>
       )}
 
-      {/* Vertical Overlay Action Buttons (Left Side by default, switchable via Swap toggle) */}
+      {/* Vertical Overlay Action Buttons (Left Side by default, switchable via Swap toggle, hidden in Clean Screen Mode) */}
       <div
-        className={`absolute bottom-24 sm:bottom-20 z-30 flex flex-col items-center gap-4 sm:max-w-md pointer-events-auto transition-all duration-300 ease-out [transform:translateZ(0)] ${
+        className={`absolute bottom-24 sm:bottom-20 z-30 flex flex-col items-center gap-4 sm:max-w-md transition-all duration-300 ease-out [transform:translateZ(0)] ${
           isLeftControls ? 'left-3' : 'right-3'
-        }`}
+        } ${cleanMode ? 'opacity-0 pointer-events-none scale-95' : 'opacity-100 pointer-events-auto'}`}
       >
         {/* Creator Avatar with Follow Button */}
         <div className="relative mb-1 flex flex-col items-center">
@@ -1308,14 +1376,16 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         </div>
       </div>
 
-      {/* Bottom Information & Caption Scrim */}
+      {/* Bottom Information & Caption Scrim (Hidden cleanly in Clean Screen Mode) */}
       <div
-        className={`absolute bottom-0 left-0 right-0 z-20 pt-16 pb-6 px-4 bg-gradient-to-t from-black/95 via-black/50 to-transparent pointer-events-none flex flex-col justify-end sm:mx-auto ${
+        className={`absolute bottom-0 left-0 right-0 z-20 pt-16 pb-6 px-4 bg-gradient-to-t from-black/95 via-black/50 to-transparent pointer-events-none flex flex-col justify-end sm:mx-auto transition-opacity duration-200 ${
           isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'
-        }`}
+        } ${cleanMode ? 'opacity-0' : 'opacity-100'}`}
       >
         <div
-          className={`pointer-events-auto flex flex-col transition-all duration-300 ease-out ${
+          className={`flex flex-col transition-all duration-300 ease-out ${
+            cleanMode ? 'pointer-events-none' : 'pointer-events-auto'
+          } ${
             isLeftControls
               ? 'pl-16 pr-0 right-4 items-end text-right'
               : 'pr-16 pl-0 items-start text-left'

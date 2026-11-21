@@ -170,6 +170,20 @@ export interface RtcSignalPayload {
   role?: 'host' | 'cohost' | 'viewer';
 }
 
+export interface LiveSpeechCaptionEvent {
+  id: string;
+  roomId: string;
+  senderId: string;
+  senderName: string;
+  senderRole: 'host' | 'cohost' | 'viewer';
+  sourceLang: string;
+  originalText: string;
+  senderTargetLang?: string;
+  senderTranslatedText?: string;
+  isFinal: boolean;
+  timestamp: number;
+}
+
 export type LiveTransportMode = 'supabase' | 'broadcast';
 
 export interface LiveRoomHandlers {
@@ -183,6 +197,7 @@ export interface LiveRoomHandlers {
   onCoHostDecision?: (decision: CoHostDecisionEvent) => void;
   onCoHostLeave?: (roomId: string, coHostPeerId: string) => void;
   onRtcSignal?: (signal: RtcSignalPayload) => void;
+  onSpeechCaption?: (caption: LiveSpeechCaptionEvent) => void;
   onSyncRequested?: (requesterPeerId: string) => void;
   onStatusChange?: (status: 'connecting' | 'connected' | 'reconnecting', mode: LiveTransportMode) => void;
 }
@@ -357,6 +372,9 @@ export class LiveRoomRealtimeClient {
       .on('broadcast', { event: 'rtc:signal' }, ({ payload }) => {
         this.handleIncomingEnvelope('rtc:signal', payload);
       })
+      .on('broadcast', { event: 'speech:caption' }, ({ payload }) => {
+        this.handleIncomingEnvelope('speech:caption', payload);
+      })
       .on('broadcast', { event: 'broadcast:sync_request' }, ({ payload }) => {
         this.handleIncomingEnvelope('broadcast:sync_request', payload);
       })
@@ -529,6 +547,10 @@ export class LiveRoomRealtimeClient {
         }
         break;
       }
+      case 'speech:caption': {
+        this.handlers.onSpeechCaption?.(payload as LiveSpeechCaptionEvent);
+        break;
+      }
       case 'broadcast:sync_request': {
         const requesterPeerId = typeof data.requesterPeerId === 'string' ? data.requesterPeerId : '';
         if (requesterPeerId && requesterPeerId !== this.peerId) {
@@ -648,6 +670,11 @@ export class LiveRoomRealtimeClient {
   public sendRtcSignal(signal: RtcSignalPayload) {
     this.markSeen(signal.id);
     this.sendRaw('rtc:signal', signal as unknown as Record<string, unknown>);
+  }
+
+  public sendSpeechCaption(caption: LiveSpeechCaptionEvent) {
+    this.markSeen(caption.id);
+    this.sendRaw('speech:caption', caption as unknown as Record<string, unknown>);
   }
 
   public disconnect() {

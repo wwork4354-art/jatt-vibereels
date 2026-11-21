@@ -98,6 +98,7 @@ export interface VideoTemplateDef {
   previewColors: [string, string, string];
   previewBadge: string;
   slotLabels?: string[];
+  slotDurations?: number[];
 }
 
 export function formatTemplateDuration(durationSec: number): string {
@@ -148,6 +149,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     previewColors: ['#190b28', '#ec4899', '#06b6d4'],
     previewBadge: 'TikTok Velocity',
     slotLabels: ['Intro Shot', 'Beat Drop 1', 'Beat Drop 2', 'Outro Climax'],
+    slotDurations: [3.5, 2.0, 4.5, 4.0],
   },
   {
     id: 'tpl-capcut-3d-zoom',
@@ -179,6 +181,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     previewColors: ['#091529', '#06b6d4', '#8b5cf6'],
     previewBadge: '3D Zoom Photo',
     slotLabels: ['Portrait 1', 'Portrait 2', 'Pose 3', 'Hero Shot'],
+    slotDurations: [3.5, 3.5, 4.0, 4.0],
   },
   {
     id: 'tpl-blur-glow-transition',
@@ -210,6 +213,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     previewColors: ['#250e24', '#db2777', '#a855f7'],
     previewBadge: 'Blur Glow · 0.75x',
     slotLabels: ['Photo / Clip 1', 'Glow Reveal', 'Final Aesthetic'],
+    slotDurations: [4.5, 5.0, 5.5],
   },
   {
     id: 'tpl-punjabi-beat-flash',
@@ -246,6 +250,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     previewColors: ['#2b1305', '#f59e0b', '#e11d48'],
     previewBadge: 'Beat Flash · 132 BPM',
     slotLabels: ['Entry Pose', 'Dhol Flash 1', 'Bass Drop', 'Swag Finale'],
+    slotDurations: [3.5, 2.5, 4.5, 4.5],
   },
   {
     id: 'tpl-slow-mo-shake',
@@ -277,6 +282,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     previewColors: ['#1d0c16', '#e11d48', '#f59e0b'],
     previewBadge: '0.65x Slow-Mo Shake',
     slotLabels: ['Slow-Mo Opener', 'Beat Shake Cut', 'Climax Zoom'],
+    slotDurations: [5.0, 5.5, 5.5],
   },
   {
     id: 'tpl-punjabi-attitude-zoom',
@@ -312,6 +318,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     hashtags: ['punjabibeatdrop', 'jattswag', 'bhangra', 'vibereels'],
     previewColors: ['#291306', '#d97706', '#e11d48'],
     previewBadge: 'Beat Drop · 0.75x',
+    slotDurations: [4.5, 5.0, 5.5],
   },
   {
     id: 'tpl-neon-bass-shake',
@@ -342,6 +349,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     hashtags: ['neonnightride', 'cyberedit', 'phonk', 'vibereels'],
     previewColors: ['#090d24', '#0891b2', '#c026d3'],
     previewBadge: 'Neon Glow · Flash',
+    slotDurations: [3.5, 3.5, 4.0, 4.5, 4.5],
   },
   {
     id: 'tpl-cinematic-drone-zoom',
@@ -407,6 +415,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     hashtags: ['bhangraflashsync', 'punjabivibe', 'dholbeat', 'vibereels'],
     previewColors: ['#2a1205', '#ea580c', '#f59e0b'],
     previewBadge: 'Flash · 132 BPM',
+    slotDurations: [3.5, 4.0, 4.0, 4.5],
   },
   {
     id: 'tpl-slowmo-beat-sync',
@@ -480,7 +489,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     category: 'neon_glow',
     categories: ['neon_glow', 'beat_sync'],
     categoryLabel: 'Neon Glow',
-    durationSec: 12,
+    durationSec: 9,
     bpm: 128,
     beatCutIntervalBeats: 2,
     requiredClips: 4,
@@ -502,6 +511,7 @@ export const VIDEO_TEMPLATES: VideoTemplateDef[] = [
     hashtags: ['neonglow', 'slideedit', 'beatsync', 'vibereels'],
     previewColors: ['#140829', '#c026d3', '#06b6d4'],
     previewBadge: 'Neon Slide · Flash',
+    slotDurations: [2.5, 1.5, 3.0, 2.0],
   },
   {
     id: 'tpl-velvet-golden-slowmo',

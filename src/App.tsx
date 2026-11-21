@@ -476,6 +476,10 @@ export default function App() {
       return next;
     });
   }, []);
+  const [isCleanScreenMode, setIsCleanScreenMode] = useState(false);
+  const handleToggleCleanScreenMode = useCallback(() => {
+    setIsCleanScreenMode((prev) => !prev);
+  }, []);
   const [snapReplyTarget, setSnapReplyTarget] = useState<DirectSnapRecipient | null>(null);
   const [followGraphVersion, setFollowGraphVersion] = useState(0);
   const [profileInitialSubTab, setProfileInitialSubTab] = useState<ProfileSubTab | undefined>(
@@ -2836,6 +2840,8 @@ export default function App() {
                             isMutualFriend={rel.isMutualFriend}
                             controlsSide={feedControlsSide}
                             onSwapControlsSide={handleToggleFeedControlsSide}
+                            isCleanScreenMode={isCleanScreenMode}
+                            onToggleCleanScreenMode={handleToggleCleanScreenMode}
                             onToggleMute={handleToggleMute}
                             onLikeToggle={handleLikeToggle}
                             onSaveToggle={handleSaveToggle}

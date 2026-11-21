@@ -31,6 +31,9 @@ import {
   ShieldCheck,
   Wifi,
   Play,
+  Languages,
+  Captions,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { UserAccount, FeedTab } from '../types';
 import { useRamSaverMode, getIsRamSaverMode } from '../lib/ramSaverMode';
@@ -52,10 +55,22 @@ import {
   LiveReactionEvent,
   LiveReactionType,
   LiveRoomRealtimeClient,
+  LiveSpeechCaptionEvent,
   LiveTransportMode,
   LiveWebRtcMesh,
   stopMediaStream,
 } from '../utils/liveRealtimeClient';
+import {
+  createSpeechRecognitionInstance,
+  getTranslatorLanguage,
+  isSpeechRecognitionSupported,
+  speakTranslatedVoice,
+  SpeechRecognitionLike,
+  stopTranslatedVoice,
+  translateLiveText,
+  TRANSLATOR_LANGUAGES,
+  TranslatorLangCode,
+} from '../utils/liveTranslator';
 
 interface LiveStreamMainViewProps {
   currentUser: UserAccount | null;
@@ -99,6 +114,19 @@ interface LiveSummaryStats {
   totalLikes: number;
   totalGifts: number;
   totalDiamonds: number;
+}
+
+interface LiveSubtitleEntry {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderRole: 'host' | 'cohost' | 'viewer';
+  sourceLang: TranslatorLangCode;
+  targetLang: TranslatorLangCode;
+  originalText: string;
+  translatedText: string;
+  isFinal: boolean;
+  timestamp: number;
 }
 
 const FEATURED_WATCH_ROOMS: FeaturedWatchChannel[] = [
@@ -234,6 +262,18 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
 
+  // Live AI 13-Language Voice & Subtitle Translator State
+  const [isTranslatorPanelOpen, setIsTranslatorPanelOpen] = useState(false);
+  const [isTranslatorEnabled, setIsTranslatorEnabled] = useState(true);
+  const [spokenLang, setSpokenLang] = useState<TranslatorLangCode>('pa-IN');
+  const [listenLang, setListenLang] = useState<TranslatorLangCode>('en-US');
+  const [voiceDubbingEnabled, setVoiceDubbingEnabled] = useState(true);
+  const [hearSelfPreview, setHearSelfPreview] = useState(false);
+  const [isSpeechCapturing, setIsSpeechCapturing] = useState(false);
+  const [speechStatusMsg, setSpeechStatusMsg] = useState<string>('');
+  const [manualTranslateInput, setManualTranslateInput] = useState('');
+  const [activeSubtitles, setActiveSubtitles] = useState<LiveSubtitleEntry[]>([]);
+
   const localStreamRef = useRef<MediaStream | null>(null);
   const setupPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const hostVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -243,6 +283,9 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
   const clientRef = useRef<LiveRoomRealtimeClient | null>(null);
   const rtcMeshRef = useRef<LiveWebRtcMesh | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const interimCaptionIdRef = useRef<string>(createEventId('cap'));
+  const isSpeakingTtsRef = useRef(false);
 
   // Refs synced for callbacks without stale closures
   const isHostingRef = useRef(false);
@@ -251,12 +294,27 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   const liveBroadcastsRef = useRef<Record<string, LiveBroadcastState>>(liveBroadcasts);
   const activeBroadcastRef = useRef<LiveBroadcastState | null>(null);
   const coHostRequestsRef = useRef<CoHostRequestEvent[]>([]);
+  const isTranslatorEnabledRef = useRef(isTranslatorEnabled);
+  const spokenLangRef = useRef(spokenLang);
+  const listenLangRef = useRef(listenLang);
+  const voiceDubbingEnabledRef = useRef(voiceDubbingEnabled);
+  const hearSelfPreviewRef = useRef(hearSelfPreview);
+  const isSpeechCapturingRef = useRef(isSpeechCapturing);
+  const isMutedRef = useRef(isMuted);
+
   isHostingRef.current = isHostingLive;
   isCoHostingRef.current = isCoHostingLive;
   selectedRoomIdRef.current = selectedRoomId;
   liveBroadcastsRef.current = liveBroadcasts;
   activeBroadcastRef.current = liveBroadcasts[selectedRoomId] || null;
   coHostRequestsRef.current = coHostRequests;
+  isTranslatorEnabledRef.current = isTranslatorEnabled;
+  spokenLangRef.current = spokenLang;
+  listenLangRef.current = listenLang;
+  voiceDubbingEnabledRef.current = voiceDubbingEnabled;
+  hearSelfPreviewRef.current = hearSelfPreview;
+  isSpeechCapturingRef.current = isSpeechCapturing;
+  isMutedRef.current = isMuted;
 
   const selfName = useMemo(
     () => sanitizeText(currentUser?.name || 'Jatt Creator', 60) || 'Jatt Creator',
@@ -305,6 +363,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   }, [liveBroadcasts, selfPeerId]);
 
   const currentRoomId = effectiveBroadcast?.isLive ? effectiveBroadcast.roomId : selectedWatchRoom.id;
+  const currentRoomIdRef = useRef<string>(currentRoomId);
+  currentRoomIdRef.current = currentRoomId;
 
   // Compute real connected viewer count from Presence
   const activeViewerCount = useMemo(() => {
@@ -341,6 +401,18 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     window.setTimeout(() => {
       setFloatingReactions((prev) => prev.filter((r) => r.id !== item.id));
     }, 2300);
+  }, []);
+
+  const upsertSubtitleEntry = useCallback((entry: LiveSubtitleEntry) => {
+    setActiveSubtitles((prev) => {
+      const idx = prev.findIndex((s) => s.id === entry.id);
+      if (idx !== -1) {
+        const next = [...prev];
+        next[idx] = entry;
+        return next;
+      }
+      return [...prev.slice(-2), entry];
+    });
   }, []);
 
   // Build snapshot of our active broadcast state when hosting
@@ -627,6 +699,45 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         onRtcSignal: (signal) => {
           rtcMeshRef.current?.handleSignal(signal);
         },
+        onSpeechCaption: async (caption) => {
+          if (!isTranslatorEnabledRef.current) return;
+          if (caption.roomId !== currentRoomIdRef.current) return;
+          if (caption.senderId === selfPeerId) return;
+
+          const sourceLang = getTranslatorLanguage(caption.sourceLang).code;
+          const targetLang = listenLangRef.current;
+
+          let translated = caption.originalText;
+          if (caption.senderTargetLang === targetLang && caption.senderTranslatedText) {
+            translated = caption.senderTranslatedText;
+          } else if (sourceLang !== targetLang) {
+            translated = await translateLiveText(caption.originalText, sourceLang, targetLang);
+          }
+
+          upsertSubtitleEntry({
+            id: caption.id,
+            senderId: caption.senderId,
+            senderName: caption.senderName,
+            senderRole: caption.senderRole,
+            sourceLang,
+            targetLang,
+            originalText: caption.originalText,
+            translatedText: translated,
+            isFinal: caption.isFinal,
+            timestamp: Date.now(),
+          });
+
+          if (caption.isFinal && voiceDubbingEnabledRef.current && !isMutedRef.current) {
+            speakTranslatedVoice(translated, targetLang, {
+              onStart: () => {
+                isSpeakingTtsRef.current = true;
+              },
+              onEnd: () => {
+                isSpeakingTtsRef.current = false;
+              },
+            });
+          }
+        },
         onSyncRequested: (requesterPeerId) => {
           if (isHostingRef.current && activeBroadcastRef.current) {
             client.publishBroadcastState(activeBroadcastRef.current);
@@ -668,6 +779,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       if (coHostVideoRef.current) coHostVideoRef.current.srcObject = null;
       stopMediaStream(localStreamRef.current);
       localStreamRef.current = null;
+      stopTranslatedVoice();
       rtcMesh.closeAll();
       client.disconnect();
       clientRef.current = null;
@@ -1116,6 +1228,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     setCoHostRequests([]);
     setBroadcastStartedAt(0);
     setShowFilterStrip(false);
+    setIsSpeechCapturing(false);
+    stopTranslatedVoice();
     onShowToast('Live broadcast ended.');
   };
 
@@ -1319,6 +1433,245 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     }, 3400);
   };
 
+  // =========================================================================
+  // Live 13-Language Voice Recognition, Translation & Voice Dubbing
+  // =========================================================================
+
+  // Expire subtitle lines cleanly after ~9s
+  useEffect(() => {
+    if (activeSubtitles.length === 0) return;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setActiveSubtitles((prev) => prev.filter((s) => now - s.timestamp < 9000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [activeSubtitles.length]);
+
+  const dispatchTranslatedSpeech = useCallback(
+    async (
+      rawPhrase: string,
+      isFinal: boolean,
+      options?: { speakLocalRegardless?: boolean }
+    ) => {
+      const clean = sanitizeText(rawPhrase, 280);
+      if (!clean) return;
+
+      const src = spokenLangRef.current;
+      const tgt = listenLangRef.current;
+      const role: 'host' | 'cohost' | 'viewer' = isHostingRef.current
+        ? 'host'
+        : isCoHostingRef.current
+        ? 'cohost'
+        : 'viewer';
+
+      const captionId = isFinal
+        ? interimCaptionIdRef.current
+        : interimCaptionIdRef.current;
+
+      const translated = isFinal || src === tgt
+        ? await translateLiveText(clean, src, tgt)
+        : clean;
+
+      const payload: LiveSpeechCaptionEvent = {
+        id: captionId,
+        roomId: currentRoomIdRef.current,
+        senderId: selfPeerId,
+        senderName: selfName,
+        senderRole: role,
+        sourceLang: src,
+        originalText: clean,
+        senderTargetLang: tgt,
+        senderTranslatedText: translated,
+        isFinal,
+        timestamp: Date.now(),
+      };
+
+      upsertSubtitleEntry({
+        id: captionId,
+        senderId: selfPeerId,
+        senderName: selfName,
+        senderRole: role,
+        sourceLang: src,
+        targetLang: tgt,
+        originalText: clean,
+        translatedText: translated,
+        isFinal,
+        timestamp: Date.now(),
+      });
+
+      clientRef.current?.sendSpeechCaption(payload);
+
+      if (isFinal) {
+        interimCaptionIdRef.current = createEventId('cap');
+        const shouldSpeakSelf =
+          voiceDubbingEnabledRef.current &&
+          !isMutedRef.current &&
+          (hearSelfPreviewRef.current || Boolean(options?.speakLocalRegardless));
+        if (shouldSpeakSelf) {
+          speakTranslatedVoice(translated, tgt, {
+            onStart: () => {
+              isSpeakingTtsRef.current = true;
+            },
+            onEnd: () => {
+              isSpeakingTtsRef.current = false;
+            },
+          });
+        }
+      }
+    },
+    [selfName, selfPeerId, upsertSubtitleEntry]
+  );
+
+  // Manage live SpeechRecognition loop when user activates Voice Mic Translate
+  useEffect(() => {
+    if (!isSpeechCapturing) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.stop();
+        } catch {
+          // ignore stop race
+        }
+        recognitionRef.current = null;
+      }
+      setSpeechStatusMsg('');
+      return;
+    }
+
+    if (!isSpeechRecognitionSupported()) {
+      setIsSpeechCapturing(false);
+      setSpeechStatusMsg('Voice mic recognition is unsupported here — use Quick Translate below.');
+      onShowToast('Browser voice mic unavailable. Use the Quick Translate box!');
+      return;
+    }
+
+    let cancelled = false;
+    let restartTimer: number | null = null;
+    let lastInterimSentAt = 0;
+
+    const rec = createSpeechRecognitionInstance(spokenLang);
+    if (!rec) {
+      setIsSpeechCapturing(false);
+      return;
+    }
+    recognitionRef.current = rec;
+    const srcDef = getTranslatorLanguage(spokenLang);
+    setSpeechStatusMsg(`Listening in ${srcDef.label} (${srcDef.code})...`);
+
+    rec.onresult = (ev) => {
+      if (cancelled || isSpeakingTtsRef.current) return;
+      let finalChunk = '';
+      let interimChunk = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const res = ev.results[i];
+        const piece = res?.[0]?.transcript || '';
+        if (res.isFinal) {
+          finalChunk += piece + ' ';
+        } else {
+          interimChunk += piece;
+        }
+      }
+
+      if (finalChunk.trim()) {
+        void dispatchTranslatedSpeech(finalChunk.trim(), true);
+      } else if (interimChunk.trim()) {
+        const now = Date.now();
+        if (now - lastInterimSentAt >= 550) {
+          lastInterimSentAt = now;
+          void dispatchTranslatedSpeech(interimChunk.trim(), false);
+        }
+      }
+    };
+
+    rec.onerror = (ev) => {
+      if (cancelled) return;
+      if (
+        ev.error === 'not-allowed' ||
+        ev.error === 'service-not-allowed' ||
+        ev.error === 'audio-capture'
+      ) {
+        cancelled = true;
+        setIsSpeechCapturing(false);
+        setSpeechStatusMsg('Microphone permission required for live voice translation.');
+        onShowToast('Allow microphone permission to use Live Voice Translator.');
+      }
+    };
+
+    rec.onend = () => {
+      if (cancelled || !isSpeechCapturingRef.current) return;
+      restartTimer = window.setTimeout(() => {
+        if (cancelled || !isSpeechCapturingRef.current) return;
+        try {
+          rec.start();
+        } catch {
+          // ignore already-started errors
+        }
+      }, 260);
+    };
+
+    try {
+      rec.start();
+    } catch {
+      setSpeechStatusMsg('Tap Voice Mic again to start listening.');
+    }
+
+    return () => {
+      cancelled = true;
+      if (restartTimer) window.clearTimeout(restartTimer);
+      try {
+        rec.onend = null;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.abort();
+      } catch {
+        // ignore
+      }
+      if (recognitionRef.current === rec) {
+        recognitionRef.current = null;
+      }
+    };
+  }, [dispatchTranslatedSpeech, isSpeechCapturing, onShowToast, spokenLang]);
+
+  const handleToggleSpeechCapture = () => {
+    if (!isTranslatorEnabled) {
+      setIsTranslatorEnabled(true);
+    }
+    if (!isSpeechCapturing && !isSpeechRecognitionSupported()) {
+      setIsTranslatorPanelOpen(true);
+      setSpeechStatusMsg('Voice mic unsupported in this browser — use Quick Translate below.');
+      onShowToast('Use the Quick Translate input inside Live AI Translator.');
+      return;
+    }
+    const next = !isSpeechCapturing;
+    setIsSpeechCapturing(next);
+    const srcDef = getTranslatorLanguage(spokenLang);
+    const tgtDef = getTranslatorLanguage(listenLang);
+    onShowToast(
+      next
+        ? `Live AI Translator ON: ${srcDef.label} → ${tgtDef.label}`
+        : 'Live Voice Capture paused'
+    );
+  };
+
+  const handleSwapTranslatorLangs = () => {
+    const prevSpoken = spokenLang;
+    const prevListen = listenLang;
+    setSpokenLang(prevListen);
+    setListenLang(prevSpoken);
+    const nextSrc = getTranslatorLanguage(prevListen);
+    const nextTgt = getTranslatorLanguage(prevSpoken);
+    onShowToast(`Swapped: Speaking ${nextSrc.label} → Translating to ${nextTgt.label}`);
+  };
+
+  const handleSendManualVoiceTranslate = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = sanitizeText(manualTranslateInput, 280);
+    if (!clean) return;
+    setManualTranslateInput('');
+    if (!isTranslatorEnabled) setIsTranslatorEnabled(true);
+    void dispatchTranslatedSpeech(clean, true, { speakLocalRegardless: true });
+  };
+
   // Determine displayed host metadata
   const displayedHostName = effectiveBroadcast?.isLive
     ? effectiveBroadcast.hostName
@@ -1337,6 +1690,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     isHostingLive ? selectedFilter : effectiveBroadcast?.filter
   );
   const isSplitScreenActive = Boolean(effectiveBroadcast?.isLive && coHostInfo);
+  const spokenLangDef = getTranslatorLanguage(spokenLang);
+  const listenLangDef = getTranslatorLanguage(listenLang);
 
   return (
     <div className="w-full h-full flex flex-col items-center justify-center bg-black overflow-hidden relative select-none">
@@ -1417,6 +1772,25 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               <span>End Live</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => setIsTranslatorPanelOpen((open) => !open)}
+            className={`min-h-[40px] flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-all active:scale-95 ${
+              isSpeechCapturing
+                ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60 shadow-md shadow-cyan-500/20'
+                : isTranslatorPanelOpen
+                ? 'bg-purple-600/30 text-purple-200 border-purple-400/50'
+                : 'bg-neutral-900 text-neutral-200 border-neutral-800 hover:bg-neutral-800'
+            }`}
+            title="Live 13-Language Voice & Subtitle Translator"
+          >
+            <Languages className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span className="hidden md:inline">AI Translator</span>
+            <span className="text-[10px] font-black text-cyan-300">
+              {spokenLangDef.shortTag}↔{listenLangDef.shortTag}
+            </span>
+          </button>
 
           <button
             type="button"
@@ -1790,6 +2164,217 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         </div>
 
         {/* ========================================================= */}
+        {/* LIVE 13-LANGUAGE AI TRANSLATOR PANEL (HOST / CO-HOST / VIEWER) */}
+        {/* ========================================================= */}
+        {isTranslatorPanelOpen && (
+          <div className="relative z-40 mx-3 sm:mx-4 mb-2 bg-neutral-950/95 border border-cyan-500/40 rounded-2xl p-3 sm:p-3.5 shadow-2xl max-h-[54vh] overflow-y-auto pointer-events-auto">
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-neutral-800">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center shrink-0">
+                  <Languages className="w-4 h-4 text-cyan-300" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-black text-white truncate">
+                    Live AI Voice & Subtitle Translator
+                  </p>
+                  <p className="text-[10px] text-cyan-300 font-semibold truncate">
+                    13 Languages · Real-time captions & voice dubbing
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isTranslatorEnabled;
+                    setIsTranslatorEnabled(next);
+                    if (!next) {
+                      setIsSpeechCapturing(false);
+                      stopTranslatedVoice();
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border transition-all ${
+                    isTranslatorEnabled
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                      : 'bg-neutral-800 text-neutral-400 border-neutral-700'
+                  }`}
+                >
+                  {isTranslatorEnabled ? 'Captions On' : 'Off'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTranslatorPanelOpen(false)}
+                  className="w-8 h-8 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-neutral-300 flex items-center justify-center"
+                  aria-label="Close translator"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Dual Language Pickers + Swap */}
+            <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2 pt-2.5">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
+                  My Spoken Language
+                </label>
+                <select
+                  value={spokenLang}
+                  onChange={(e) => setSpokenLang(e.target.value as TranslatorLangCode)}
+                  className="w-full min-h-[38px] bg-neutral-900 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-white focus:outline-hidden focus:border-cyan-400"
+                >
+                  {TRANSLATOR_LANGUAGES.map((lang) => (
+                    <option key={lang.code} value={lang.code}>
+                      {lang.label} ({lang.nativeName})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSwapTranslatorLangs}
+                className="w-9 h-9 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-cyan-300 flex items-center justify-center shrink-0 active:scale-95 transition-all"
+                title="Swap Spoken & Listen Languages"
+              >
+                <ArrowLeftRight className="w-4 h-4" />
+              </button>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
+                  Listen / Translate To
+                </label>
+                <select
+                  value={listenLang}
+                  onChange={(e) => setListenLang(e.target.value as TranslatorLangCode)}
+                  className="w-full min-h-[38px] bg-neutral-900 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-white focus:outline-hidden focus:border-pink-400"
+                >
+                  {TRANSLATOR_LANGUAGES.map((lang) => (
+                    <option key={lang.code} value={lang.code}>
+                      {lang.label} ({lang.nativeName})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Live Mic Recognition + Voice Dubbing + Self-Preview Toggles */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-2.5">
+              <button
+                type="button"
+                onClick={handleToggleSpeechCapture}
+                className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 border transition-all active:scale-95 ${
+                  isSpeechCapturing
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-600/30'
+                    : 'bg-cyan-500 hover:bg-cyan-400 text-black border-cyan-300'
+                }`}
+              >
+                {isSpeechCapturing ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                <span>{isSpeechCapturing ? 'Stop Mic Translate' : 'Start Mic Translate'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !voiceDubbingEnabled;
+                  setVoiceDubbingEnabled(next);
+                  if (!next) stopTranslatedVoice();
+                }}
+                className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                  voiceDubbingEnabled
+                    ? 'bg-pink-600/25 text-pink-200 border-pink-500/50'
+                    : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+                }`}
+              >
+                {voiceDubbingEnabled ? (
+                  <Volume2 className="w-3.5 h-3.5 text-pink-400" />
+                ) : (
+                  <VolumeX className="w-3.5 h-3.5" />
+                )}
+                <span>Voice Dub {voiceDubbingEnabled ? 'On' : 'Off'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setHearSelfPreview((v) => !v)}
+                className={`min-h-[38px] px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 border transition-all ${
+                  hearSelfPreview
+                    ? 'bg-purple-600/30 text-purple-200 border-purple-400/50'
+                    : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+                }`}
+                title="Play voice dubbing locally when you speak so you can preview the translation"
+              >
+                <Captions className="w-3.5 h-3.5" />
+                <span>Self Dub {hearSelfPreview ? 'On' : 'Off'}</span>
+              </button>
+            </div>
+
+            {speechStatusMsg && (
+              <p className="text-[11px] text-cyan-300 font-semibold mt-2 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                <span>{speechStatusMsg}</span>
+              </p>
+            )}
+
+            {/* Quick Speak & Translate Fallback / Manual Broadcast Input */}
+            <form onSubmit={handleSendManualVoiceTranslate} className="mt-2.5 flex items-center gap-1.5">
+              <input
+                type="text"
+                value={manualTranslateInput}
+                onChange={(e) => setManualTranslateInput(sanitizeInputLive(e.target.value, 280))}
+                placeholder={`Type in ${spokenLangDef.label} to translate & dub to ${listenLangDef.label}...`}
+                className="flex-1 min-h-[38px] bg-neutral-900 text-xs text-white placeholder-neutral-500 px-3 py-1.5 rounded-xl border border-neutral-700 focus:outline-hidden focus:border-cyan-400"
+              />
+              <button
+                type="submit"
+                disabled={!manualTranslateInput.trim()}
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 disabled:opacity-40 text-white text-xs font-black flex items-center gap-1 shrink-0 active:scale-95 transition-all"
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+                <span>Speak</span>
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* LIVE TRANSLATED SUBTITLES OVERLAY (REAL-TIME)             */}
+        {/* ========================================================= */}
+        {isTranslatorEnabled && activeSubtitles.length > 0 && (
+          <div className="relative z-30 px-3 sm:px-4 mb-1.5 flex flex-col items-center gap-1.5 pointer-events-none">
+            {activeSubtitles.slice(-2).map((sub) => {
+              const srcTag = getTranslatorLanguage(sub.sourceLang).shortTag;
+              const tgtTag = getTranslatorLanguage(sub.targetLang).shortTag;
+              return (
+                <div
+                  key={sub.id}
+                  className="w-full max-w-xl bg-black/80 border border-cyan-400/35 rounded-xl px-3 py-2 shadow-xl text-center"
+                >
+                  <div className="flex items-center justify-center gap-1.5 text-[10px] font-bold text-cyan-300 mb-0.5">
+                    <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-200 uppercase font-black">
+                      {srcTag} → {tgtTag}
+                    </span>
+                    <span className="text-neutral-200">{sub.senderName}</span>
+                    {!sub.isFinal && (
+                      <span className="text-amber-300 animate-pulse">listening...</span>
+                    )}
+                  </div>
+                  <p className="text-xs sm:text-sm font-black text-white leading-snug break-words">
+                    {sub.translatedText}
+                  </p>
+                  {sub.sourceLang !== sub.targetLang && sub.originalText !== sub.translatedText && (
+                    <p className="text-[11px] text-neutral-300 italic mt-0.5 break-words">
+                      “{sub.originalText}”
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ========================================================= */}
         {/* BOTTOM OVERLAY: REAL-TIME CHAT + STUDIO/CO-HOST CONTROLS  */}
         {/* ========================================================= */}
         <div className="relative z-30 p-3 sm:p-4 bg-gradient-to-t from-black via-black/85 to-transparent flex flex-col justify-end pointer-events-auto">
@@ -1871,6 +2456,20 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                       <span>{activeHostFilterPreset.label}</span>
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={handleToggleSpeechCapture}
+                    className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                      isSpeechCapturing
+                        ? 'bg-cyan-500 text-black border-cyan-300 shadow-md shadow-cyan-500/25'
+                        : 'bg-neutral-800 text-cyan-300 border-neutral-700 hover:bg-neutral-700'
+                    }`}
+                    title="Start or pause live 13-language voice translation"
+                  >
+                    <Languages className="w-3.5 h-3.5" />
+                    <span>{isSpeechCapturing ? 'Translating Voice' : 'Voice Translate'}</span>
+                  </button>
                 </div>
 
                 {(isCoHostingLive || (isHostingLive && coHostInfo)) && (
