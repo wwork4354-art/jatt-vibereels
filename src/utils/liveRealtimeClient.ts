@@ -65,6 +65,7 @@ export interface LivePresenceMember {
   roomId: string;
   joinedAt: number;
   lastSeen: number;
+  activeBroadcast?: LiveBroadcastState | null;
 }
 
 export interface LiveChatEvent {
@@ -186,9 +187,9 @@ export interface LiveRoomHandlers {
   onStatusChange?: (status: 'connecting' | 'connected' | 'reconnecting', mode: LiveTransportMode) => void;
 }
 
-const CHANNEL_NAME = 'live-room';
-const BROADCAST_CHANNEL_NAME = 'jatt_vibereels_live_room_v1';
-const STORAGE_FALLBACK_KEY = 'jatt_vibereels_live_room_evt_v1';
+const CHANNEL_NAME = 'live-rooms';
+const BROADCAST_CHANNEL_NAME = 'jatt_vibereels_live_rooms_v1';
+const STORAGE_FALLBACK_KEY = 'jatt_vibereels_live_rooms_evt_v1';
 
 export function createLivePeerId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -202,9 +203,10 @@ export function createEventId(prefix = 'evt'): string {
 }
 
 /**
- * Unified real-time client for `live-room`:
- * - Uses Supabase Realtime (`supabase.channel('live-room')`) when configured
+ * Unified real-time client for `live-rooms`:
+ * - Uses Supabase Realtime (`supabase.channel('live-rooms')`) when configured
  * - Falls back automatically to browser `BroadcastChannel` + `storage` events when Supabase keys are absent
+ * - Stores active broadcast state in Presence so late-joining devices see all live hosts immediately
  * - Guarantees idempotent event handling via event ID deduplication
  */
 export class LiveRoomRealtimeClient {
@@ -212,9 +214,12 @@ export class LiveRoomRealtimeClient {
   private roomId: string;
   private profile: { name: string; username: string; avatar: string };
   private role: 'host' | 'cohost' | 'viewer' = 'viewer';
+  private activeBroadcast: LiveBroadcastState | null = null;
   private handlers: LiveRoomHandlers;
 
   private supabaseChannel: RealtimeChannel | null = null;
+  private supabaseSubscribed = false;
+  private pendingOutgoing: Array<{ event: string; payload: Record<string, unknown> }> = [];
   private broadcastChannel: BroadcastChannel | null = null;
   private mode: LiveTransportMode = isSupabaseConfigured && supabase ? 'supabase' : 'broadcast';
 
@@ -250,6 +255,18 @@ export class LiveRoomRealtimeClient {
     this.announcePresence();
   }
 
+  public setActiveBroadcast(state: LiveBroadcastState | null) {
+    this.activeBroadcast = state;
+    this.announcePresence();
+  }
+
+  public requestSync() {
+    this.sendRaw('broadcast:sync_request', {
+      id: createEventId('sync'),
+      requesterPeerId: this.peerId,
+    });
+  }
+
   public connect() {
     if (this.disposed) return;
     this.handlers.onStatusChange?.('connecting', this.mode);
@@ -282,6 +299,7 @@ export class LiveRoomRealtimeClient {
       roomId: this.roomId,
       joinedAt: Date.now(),
       lastSeen: Date.now(),
+      activeBroadcast: this.activeBroadcast,
     };
   }
 
@@ -344,13 +362,24 @@ export class LiveRoomRealtimeClient {
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
+          this.supabaseSubscribed = true;
           this.handlers.onStatusChange?.('connected', 'supabase');
           await channel.track(this.buildSelfMember());
+
+          if (this.pendingOutgoing.length > 0) {
+            const queued = [...this.pendingOutgoing];
+            this.pendingOutgoing = [];
+            for (const msg of queued) {
+              channel.send({ type: 'broadcast', event: msg.event, payload: msg.payload });
+            }
+          }
+
           this.sendRaw('broadcast:sync_request', {
             id: createEventId('sync'),
             requesterPeerId: this.peerId,
           });
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          this.supabaseSubscribed = false;
           this.handlers.onStatusChange?.('reconnecting', 'supabase');
         }
       });
@@ -514,6 +543,12 @@ export class LiveRoomRealtimeClient {
     if (this.disposed) return;
 
     if (this.mode === 'supabase' && this.supabaseChannel) {
+      if (!this.supabaseSubscribed) {
+        if (this.pendingOutgoing.length < 40) {
+          this.pendingOutgoing.push({ event, payload });
+        }
+        return;
+      }
       this.supabaseChannel.send({
         type: 'broadcast',
         event,
@@ -545,7 +580,9 @@ export class LiveRoomRealtimeClient {
   public announcePresence() {
     const member = this.buildSelfMember();
     if (this.mode === 'supabase' && this.supabaseChannel) {
-      this.supabaseChannel.track(member).catch(() => {});
+      if (this.supabaseSubscribed) {
+        this.supabaseChannel.track(member).catch(() => {});
+      }
     } else {
       this.peerMap.set(this.peerId, member);
       this.emitLocalPresence();
@@ -572,6 +609,8 @@ export class LiveRoomRealtimeClient {
   }
 
   public publishBroadcastState(state: LiveBroadcastState) {
+    this.activeBroadcast = state.isLive ? state : null;
+    this.announcePresence();
     this.sendRaw('broadcast:state', {
       ...(state as unknown as Record<string, unknown>),
       id: createEventId('bstate'),
@@ -579,6 +618,8 @@ export class LiveRoomRealtimeClient {
   }
 
   public endBroadcast(roomId: string) {
+    this.activeBroadcast = null;
+    this.announcePresence();
     this.sendRaw('broadcast:ended', {
       id: createEventId('bend'),
       roomId,
@@ -648,7 +689,7 @@ export class LiveRoomRealtimeClient {
 }
 
 // ============================================================================
-// Device Camera / Microphone Acquisition (up to 4K / 1080p)
+// Device Camera / Microphone Acquisition (Capped at 720p 30fps for 3GB RAM & Mobile Data)
 // ============================================================================
 
 export interface AcquiredMediaResult {
@@ -688,34 +729,34 @@ export async function acquireLiveCameraStream(options: {
     : false;
 
   const attempts: MediaStreamConstraints[] = [
-    // 1. 4K UHD ideal with 1080p preferred
+    // 1. Capped 720p @ 30fps for smooth 3GB RAM & mobile data WebRTC streaming
     {
       video: {
         facingMode: { ideal: facingMode },
-        width: { ideal: 3840, min: 1280 },
-        height: { ideal: 2160, min: 720 },
-        frameRate: { ideal: 60, min: 24 },
+        width: { ideal: 1280, max: 1280 },
+        height: { ideal: 720, max: 720 },
+        frameRate: { ideal: 30, max: 30 },
       },
       audio: audioConstraints,
     },
-    // 2. Full HD 1080p fallback
+    // 2. 480p 30fps fallback for ultra-constrained cameras
     {
       video: {
         facingMode: { ideal: facingMode },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 },
+        width: { ideal: 854, max: 1280 },
+        height: { ideal: 480, max: 720 },
+        frameRate: { ideal: 30, max: 30 },
       },
       audio: audioConstraints,
     },
     // 3. Standard camera + audio
     {
-      video: { facingMode },
+      video: { facingMode, width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 30 } },
       audio: audioConstraints,
     },
     // 4. Camera-only fallback (in case mic permission/device missing)
     {
-      video: true,
+      video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 30 } },
       audio: false,
     },
   ];
@@ -742,18 +783,24 @@ export async function acquireLiveCameraStream(options: {
   }
 
   const videoTrack = stream.getVideoTracks()[0];
-  const settings = videoTrack?.getSettings?.() || {};
-  const height = settings.height || 720;
-  const fps = settings.frameRate ? Math.round(settings.frameRate) : 30;
-
-  let resolutionLabel = '720p HD';
-  if (height >= 2100) {
-    resolutionLabel = `4K UHD · ${fps}fps`;
-  } else if (height >= 1000) {
-    resolutionLabel = `1080p HD · ${fps}fps`;
-  } else {
-    resolutionLabel = `${height}p · ${fps}fps`;
+  // Strictly enforce max 720p 30fps if hardware delivered a higher profile
+  if (videoTrack && typeof videoTrack.applyConstraints === 'function') {
+    try {
+      await videoTrack.applyConstraints({
+        width: { max: 1280 },
+        height: { max: 720 },
+        frameRate: { max: 30 },
+      });
+    } catch {
+      // ignore if browser locks current track constraints
+    }
   }
+
+  const settings = videoTrack?.getSettings?.() || {};
+  const height = Math.min(720, settings.height || 720);
+  const fps = Math.min(30, settings.frameRate ? Math.round(settings.frameRate) : 30);
+
+  const resolutionLabel = height >= 700 ? `720p · ${fps}fps` : `${height}p · ${fps}fps`;
 
   return {
     stream,
@@ -771,7 +818,10 @@ const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
   ],
+  iceCandidatePoolSize: 4,
 };
 
 export class LiveWebRtcMesh {
@@ -782,18 +832,22 @@ export class LiveWebRtcMesh {
   private onPeerClosed?: (peerId: string) => void;
 
   private peers = new Map<string, RTCPeerConnection>();
+  private remoteMediaStreams = new Map<string, MediaStream>();
   private pendingIce = new Map<string, RTCIceCandidateInit[]>();
   private localStream: MediaStream | null = null;
+  private maxBitrateBps = 1_100_000;
 
   constructor(options: {
     selfPeerId: string;
     roomId: string;
+    maxBitrateBps?: number;
     sendSignal: (signal: RtcSignalPayload) => void;
     onRemoteStream: (peerId: string, stream: MediaStream) => void;
     onPeerClosed?: (peerId: string) => void;
   }) {
     this.selfPeerId = options.selfPeerId;
     this.roomId = options.roomId;
+    if (options.maxBitrateBps) this.maxBitrateBps = options.maxBitrateBps;
     this.sendSignalFn = options.sendSignal;
     this.onRemoteStream = options.onRemoteStream;
     this.onPeerClosed = options.onPeerClosed;
@@ -801,6 +855,23 @@ export class LiveWebRtcMesh {
 
   public setRoomId(roomId: string) {
     this.roomId = roomId;
+  }
+
+  private applySenderCap(pc: RTCPeerConnection) {
+    try {
+      pc.getSenders().forEach((sender) => {
+        if (sender.track?.kind !== 'video') return;
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = this.maxBitrateBps;
+        params.encodings[0].maxFramerate = 30;
+        sender.setParameters(params).catch(() => {});
+      });
+    } catch {
+      // ignore if browser disallows dynamic RTCRtpSender tuning
+    }
   }
 
   public setLocalStream(stream: MediaStream | null) {
@@ -822,13 +893,23 @@ export class LiveWebRtcMesh {
           }
         }
       });
+      this.applySenderCap(pc);
     });
   }
 
   private getOrCreatePeer(remotePeerId: string): RTCPeerConnection {
     const existing = this.peers.get(remotePeerId);
-    if (existing && existing.signalingState !== 'closed') {
+    if (
+      existing &&
+      existing.signalingState !== 'closed' &&
+      existing.connectionState !== 'failed' &&
+      existing.connectionState !== 'closed'
+    ) {
       return existing;
+    }
+
+    if (existing) {
+      this.closePeer(remotePeerId);
     }
 
     const pc = new RTCPeerConnection(RTC_CONFIG);
@@ -841,6 +922,7 @@ export class LiveWebRtcMesh {
           // ignore
         }
       });
+      this.applySenderCap(pc);
     }
 
     pc.onicecandidate = (evt) => {
@@ -857,8 +939,24 @@ export class LiveWebRtcMesh {
     };
 
     pc.ontrack = (evt) => {
-      const remoteStream = evt.streams?.[0] || new MediaStream([evt.track]);
-      this.onRemoteStream(remotePeerId, remoteStream);
+      // Combine audio & video tracks safely into one persistent MediaStream per remote peer
+      let targetStream = this.remoteMediaStreams.get(remotePeerId);
+      if (!targetStream) {
+        targetStream = new MediaStream();
+        this.remoteMediaStreams.set(remotePeerId, targetStream);
+      }
+      const incoming = evt.streams?.[0];
+      if (incoming) {
+        incoming.getTracks().forEach((track) => {
+          if (!targetStream!.getTracks().some((t) => t.id === track.id)) {
+            targetStream!.addTrack(track);
+          }
+        });
+      } else if (evt.track && !targetStream.getTracks().some((t) => t.id === evt.track.id)) {
+        targetStream.addTrack(evt.track);
+      }
+      // Clone container reference so React state updates cleanly when second track (audio/video) arrives
+      this.onRemoteStream(remotePeerId, new MediaStream(targetStream.getTracks()));
     };
 
     pc.onconnectionstatechange = () => {
@@ -871,8 +969,20 @@ export class LiveWebRtcMesh {
     return pc;
   }
 
-  public async initiateCall(remotePeerId: string) {
+  public async initiateCall(remotePeerId: string, forceRestart = false) {
     if (remotePeerId === this.selfPeerId) return;
+    if (forceRestart) {
+      this.closePeer(remotePeerId);
+    }
+    const existing = this.peers.get(remotePeerId);
+    if (
+      existing &&
+      !forceRestart &&
+      (existing.connectionState === 'connected' || existing.signalingState !== 'stable')
+    ) {
+      return;
+    }
+
     const pc = this.getOrCreatePeer(remotePeerId);
     try {
       const offer = await pc.createOffer({
@@ -880,6 +990,7 @@ export class LiveWebRtcMesh {
         offerToReceiveVideo: true,
       });
       await pc.setLocalDescription(offer);
+      this.applySenderCap(pc);
       this.sendSignalFn({
         id: createEventId('offer'),
         roomId: this.roomId,
@@ -904,7 +1015,13 @@ export class LiveWebRtcMesh {
     if (signal.kind === 'ready') {
       // A viewer or co-host announced readiness; host or co-host initiates offer
       if (this.localStream) {
-        await this.initiateCall(signal.fromPeerId);
+        const existing = this.peers.get(signal.fromPeerId);
+        const needFresh =
+          !existing ||
+          existing.connectionState === 'disconnected' ||
+          existing.connectionState === 'failed' ||
+          existing.connectionState === 'closed';
+        await this.initiateCall(signal.fromPeerId, needFresh);
       }
       return;
     }
@@ -922,6 +1039,7 @@ export class LiveWebRtcMesh {
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+        this.applySenderCap(pc);
         this.sendSignalFn({
           id: createEventId('ans'),
           roomId: this.roomId,
@@ -972,6 +1090,7 @@ export class LiveWebRtcMesh {
       }
       this.peers.delete(remotePeerId);
     }
+    this.remoteMediaStreams.delete(remotePeerId);
     this.pendingIce.delete(remotePeerId);
     this.onPeerClosed?.(remotePeerId);
   }
@@ -985,6 +1104,7 @@ export class LiveWebRtcMesh {
       }
     });
     this.peers.clear();
+    this.remoteMediaStreams.clear();
     this.pendingIce.clear();
   }
 }

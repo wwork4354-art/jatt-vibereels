@@ -30,8 +30,10 @@ import {
   Gem,
   ShieldCheck,
   Wifi,
+  Play,
 } from 'lucide-react';
 import { UserAccount, FeedTab } from '../types';
+import { useRamSaverMode, getIsRamSaverMode } from '../lib/ramSaverMode';
 import { soundEngine } from '../utils/soundEngine';
 import { sanitizeInputLive, sanitizeSafeUrl, sanitizeText, sanitizeUsername } from '../utils/security';
 import {
@@ -159,21 +161,23 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   isMuted,
   onToggleMute,
 }) => {
+  const { isRamSaverMode } = useRamSaverMode();
+
   // Stable Peer ID for this session
   const peerIdRef = useRef<string>(createLivePeerId());
   const selfPeerId = peerIdRef.current;
 
-  // Watch room selector (when no creator broadcast is overriding, or switching stages)
-  const [channelIndex, setChannelIndex] = useState(0);
-  const selectedWatchRoom = FEATURED_WATCH_ROOMS[channelIndex];
+  // Room Switcher Selection (can be either an active live creator `live_*` or a Featured Watch Room)
+  const [selectedRoomId, setSelectedRoomId] = useState<string>(FEATURED_WATCH_ROOMS[0].id);
 
   // Real-time connection & room state
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
   const [transportMode, setTransportMode] = useState<LiveTransportMode>('broadcast');
   const [presenceMembers, setPresenceMembers] = useState<LivePresenceMember[]>([]);
 
-  // Active Remote Broadcast State (when watching another host live in `live-room`)
-  const [activeBroadcast, setActiveBroadcast] = useState<LiveBroadcastState | null>(null);
+  // Registry of all active live broadcasts discovered via `supabase.channel('live-rooms')` Presence & broadcast state
+  const [liveBroadcasts, setLiveBroadcasts] = useState<Record<string, LiveBroadcastState>>({});
+  const [needsWatchTap, setNeedsWatchTap] = useState(false);
 
   // Local Creator "Go Live" Setup & Broadcast State
   const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
@@ -184,7 +188,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(true);
   const [selectedFilter, setSelectedFilter] = useState<LiveFilterId>('beauty');
-  const [resolutionLabel, setResolutionLabel] = useState('1080p HD');
+  const [resolutionLabel, setResolutionLabel] = useState('720p · 30fps');
   const [showFilterStrip, setShowFilterStrip] = useState(false);
 
   // Whether THIS user is currently live as Host or Co-Host
@@ -204,12 +208,12 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   const [chatMessages, setChatMessages] = useState<LiveChatEvent[]>([
     {
       id: 'sys-welcome',
-      roomId: selectedWatchRoom.id,
+      roomId: FEATURED_WATCH_ROOMS[0].id,
       senderId: 'system',
       user: 'Jatt VibeReels Live',
       username: 'system',
       avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=JattLiveSys',
-      text: 'Welcome to real-time LIVE chat! Say hello or tap a reaction.',
+      text: 'Welcome to real-time LIVE chat! Tap "Go Live" or switch stages with < >.',
       timestamp: Date.now(),
       isSystem: true,
     },
@@ -242,10 +246,16 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
   // Refs synced for callbacks without stale closures
   const isHostingRef = useRef(false);
+  const isCoHostingRef = useRef(false);
+  const selectedRoomIdRef = useRef<string>(selectedRoomId);
+  const liveBroadcastsRef = useRef<Record<string, LiveBroadcastState>>(liveBroadcasts);
   const activeBroadcastRef = useRef<LiveBroadcastState | null>(null);
   const coHostRequestsRef = useRef<CoHostRequestEvent[]>([]);
   isHostingRef.current = isHostingLive;
-  activeBroadcastRef.current = activeBroadcast;
+  isCoHostingRef.current = isCoHostingLive;
+  selectedRoomIdRef.current = selectedRoomId;
+  liveBroadcastsRef.current = liveBroadcasts;
+  activeBroadcastRef.current = liveBroadcasts[selectedRoomId] || null;
   coHostRequestsRef.current = coHostRequests;
 
   const selfName = useMemo(
@@ -263,8 +273,38 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     [currentUser?.avatar, selfUsername]
   );
 
-  // Current room ID: if a real live broadcast is active, join/host that room ID, otherwise selected stage
-  const currentRoomId = activeBroadcast?.isLive ? activeBroadcast.roomId : selectedWatchRoom.id;
+  // Effective active broadcast & selected fallback watch room
+  const effectiveBroadcast = liveBroadcasts[selectedRoomId] || null;
+  const selectedWatchRoom = useMemo(
+    () => FEATURED_WATCH_ROOMS.find((r) => r.id === selectedRoomId) || FEATURED_WATCH_ROOMS[0],
+    [selectedRoomId]
+  );
+
+  // Unified room switcher entries: Active live creator broadcasts first, then Featured Stages
+  const roomSwitcherEntries = useMemo(() => {
+    const activeEntries = (Object.values(liveBroadcasts) as LiveBroadcastState[])
+      .filter((b) => b.isLive)
+      .sort((a, b) => {
+        if (a.hostPeerId === selfPeerId) return -1;
+        if (b.hostPeerId === selfPeerId) return 1;
+        return (b.startedAt || 0) - (a.startedAt || 0);
+      })
+      .map((b) => ({
+        id: b.roomId,
+        label: b.hostName,
+        isLive: true,
+      }));
+
+    const featuredEntries = FEATURED_WATCH_ROOMS.map((r) => ({
+      id: r.id,
+      label: r.hostName,
+      isLive: false,
+    }));
+
+    return [...activeEntries, ...featuredEntries];
+  }, [liveBroadcasts, selfPeerId]);
+
+  const currentRoomId = effectiveBroadcast?.isLive ? effectiveBroadcast.roomId : selectedWatchRoom.id;
 
   // Compute real connected viewer count from Presence
   const activeViewerCount = useMemo(() => {
@@ -280,7 +320,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     }
   }, [activeViewerCount, peakViewers]);
 
-  // Spawn visual floating reaction particle
+  // Spawn visual floating reaction particle (capped tightly in 3GB RAM Saver mode)
   const spawnFloatingReaction = useCallback((type: LiveReactionType) => {
     const config: Record<LiveReactionType, { emoji: string; color: string }> = {
       heart: { emoji: '❤️', color: '#f43f5e' },
@@ -296,7 +336,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       size: Math.floor(Math.random() * 10) + 22,
     };
 
-    setFloatingReactions((prev) => [...prev.slice(-28), item]);
+    const maxReactions = getIsRamSaverMode() ? 14 : 28;
+    setFloatingReactions((prev) => [...prev.slice(-maxReactions), item]);
     window.setTimeout(() => {
       setFloatingReactions((prev) => prev.filter((r) => r.id !== item.id));
     }, 2300);
@@ -342,11 +383,33 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     ]
   );
 
-  // Initialize LiveRoomRealtimeClient & WebRTC Mesh
+  // Initialize LiveRoomRealtimeClient (`supabase.channel('live-rooms')`) & WebRTC Mesh
   useEffect(() => {
+    const signalReadyToBroadcast = (clientInstance: LiveRoomRealtimeClient, state: LiveBroadcastState) => {
+      if (!state.isLive || state.hostPeerId === selfPeerId) return;
+      clientInstance.sendRtcSignal({
+        id: createEventId('ready'),
+        roomId: state.roomId,
+        fromPeerId: selfPeerId,
+        toPeerId: state.hostPeerId,
+        kind: 'ready',
+        role: isCoHostingRef.current ? 'cohost' : 'viewer',
+      });
+      if (state.coHost && state.coHost.peerId !== selfPeerId) {
+        clientInstance.sendRtcSignal({
+          id: createEventId('ready'),
+          roomId: state.roomId,
+          fromPeerId: selfPeerId,
+          toPeerId: state.coHost.peerId,
+          kind: 'ready',
+          role: 'viewer',
+        });
+      }
+    };
+
     const client = new LiveRoomRealtimeClient({
       peerId: selfPeerId,
-      roomId: selectedWatchRoom.id,
+      roomId: FEATURED_WATCH_ROOMS[0].id,
       profile: {
         name: selfName,
         username: selfUsername,
@@ -359,11 +422,55 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         },
         onPresenceChange: (members) => {
           setPresenceMembers(members);
+
+          // Discover active remote live broadcasts synced via Presence
+          const liveFromPresence = new Map<string, LiveBroadcastState>();
+          const presentHostIds = new Set<string>();
+          members.forEach((m) => {
+            if (m.peerId !== selfPeerId) {
+              presentHostIds.add(m.peerId);
+            }
+            if (m.peerId !== selfPeerId && m.activeBroadcast?.isLive) {
+              liveFromPresence.set(m.activeBroadcast.roomId, m.activeBroadcast);
+            }
+          });
+
+          setLiveBroadcasts((prev) => {
+            const next: Record<string, LiveBroadcastState> = { ...prev };
+            // Retain self broadcast if hosting
+            Object.entries(prev).forEach(([rId, b]) => {
+              if (b.hostPeerId !== selfPeerId) {
+                // Prune remote hosts who disconnected from Presence or turned off activeBroadcast
+                const stillLiveInPresence = liveFromPresence.has(rId);
+                const hostStillInMembersButNotLive = presentHostIds.has(b.hostPeerId) && !stillLiveInPresence;
+                const hostLeftPresence = members.length > 0 && !presentHostIds.has(b.hostPeerId);
+                if (hostStillInMembersButNotLive || hostLeftPresence) {
+                  delete next[rId];
+                }
+              }
+            });
+            liveFromPresence.forEach((b, rId) => {
+              next[rId] = b;
+            });
+            return next;
+          });
+
+          // If viewer is on a featured watch room and a remote live broadcast is present, tune in automatically
+          if (!isHostingRef.current && !isCoHostingRef.current && liveFromPresence.size > 0) {
+            const firstRemote = Array.from(liveFromPresence.values())[0];
+            if (!liveBroadcastsRef.current[selectedRoomIdRef.current]) {
+              setSelectedRoomId(firstRemote.roomId);
+              signalReadyToBroadcast(client, firstRemote);
+            } else if (liveFromPresence.has(selectedRoomIdRef.current)) {
+              const watched = liveFromPresence.get(selectedRoomIdRef.current)!;
+              signalReadyToBroadcast(client, watched);
+            }
+          }
         },
         onChatMessage: (msg) => {
           setChatMessages((prev) => {
             if (prev.some((m) => m.id === msg.id)) return prev;
-            return [...prev.slice(-80), msg];
+            return [...prev.slice(-50), msg];
           });
         },
         onReaction: (reaction) => {
@@ -380,7 +487,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
             giftIcon: gift.giftIcon,
             diamonds: gift.diamonds,
           });
-          for (let i = 0; i < 6; i++) {
+          const burstCount = getIsRamSaverMode() ? 3 : 6;
+          for (let i = 0; i < burstCount; i++) {
             window.setTimeout(() => spawnFloatingReaction('heart'), i * 95);
           }
           window.setTimeout(() => {
@@ -389,51 +497,61 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         },
         onBroadcastState: (state) => {
           if (state.hostPeerId === selfPeerId) return;
-          setActiveBroadcast(state);
-          setTotalLikes((prev) => Math.max(prev, state.totalLikes || 0));
-          setTotalDiamonds((prev) => Math.max(prev, state.totalDiamonds || 0));
 
-          // Signal readiness to host via WebRTC if we aren't already receiving their stream
-          if (state.isLive) {
-            client.sendRtcSignal({
-              id: createEventId('ready'),
-              roomId: state.roomId,
-              fromPeerId: selfPeerId,
-              toPeerId: state.hostPeerId,
-              kind: 'ready',
-              role: 'viewer',
-            });
-            if (state.coHost && state.coHost.peerId !== selfPeerId) {
-              client.sendRtcSignal({
-                id: createEventId('ready'),
-                roomId: state.roomId,
-                fromPeerId: selfPeerId,
-                toPeerId: state.coHost.peerId,
-                kind: 'ready',
-                role: 'viewer',
-              });
+          setLiveBroadcasts((prev) => {
+            if (!state.isLive) {
+              const next = { ...prev };
+              delete next[state.roomId];
+              return next;
+            }
+            return { ...prev, [state.roomId]: state };
+          });
+
+          // Auto-select incoming live broadcast if not already hosting or watching another live room
+          if (state.isLive && !isHostingRef.current && !isCoHostingRef.current) {
+            if (!liveBroadcastsRef.current[selectedRoomIdRef.current]) {
+              setSelectedRoomId(state.roomId);
+            }
+            if (selectedRoomIdRef.current === state.roomId || !liveBroadcastsRef.current[selectedRoomIdRef.current]) {
+              setTotalLikes((prev) => Math.max(prev, state.totalLikes || 0));
+              setTotalDiamonds((prev) => Math.max(prev, state.totalDiamonds || 0));
+              signalReadyToBroadcast(client, state);
             }
           }
         },
-        onBroadcastEnded: (_roomId, hostPeerId) => {
+        onBroadcastEnded: (roomId, hostPeerId) => {
           setRemoteStreams((prev) => {
+            if (!prev[hostPeerId]) return prev;
             const next = { ...prev };
             delete next[hostPeerId];
             return next;
           });
-          setActiveBroadcast((curr) => {
-            if (!curr || curr.hostPeerId !== hostPeerId) return curr;
-            return null;
-          });
-          setIsCoHostingLive((wasCoHost) => {
-            if (wasCoHost) {
-              stopMediaStream(localStreamRef.current);
-              localStreamRef.current = null;
-              setLocalStream(null);
+          rtcMeshRef.current?.closePeer(hostPeerId);
+
+          setLiveBroadcasts((prev) => {
+            const next = { ...prev };
+            if (roomId && next[roomId]) {
+              delete next[roomId];
+            } else {
+              Object.entries(next).forEach(([k, v]) => {
+                if (v.hostPeerId === hostPeerId) delete next[k];
+              });
             }
-            return false;
+            return next;
           });
-          onShowToast('The host ended this Live broadcast.');
+
+          if (selectedRoomIdRef.current === roomId) {
+            setSelectedRoomId(FEATURED_WATCH_ROOMS[0].id);
+            setIsCoHostingLive((wasCoHost) => {
+              if (wasCoHost) {
+                stopMediaStream(localStreamRef.current);
+                localStreamRef.current = null;
+                setLocalStream(null);
+              }
+              return false;
+            });
+            onShowToast('The host ended this Live broadcast.');
+          }
         },
         onCoHostRequest: (req) => {
           if (!isHostingRef.current) return;
@@ -453,7 +571,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
             return;
           }
 
-          // Accepted! Acquire viewer's own camera & mic and join split-screen via WebRTC
+          // Accepted! Acquire viewer's own camera & mic (capped at 720p 30fps) and join split-screen via WebRTC
           onShowToast('Co-Host request accepted! Starting your camera...');
           try {
             const acquired = await acquireLiveCameraStream({
@@ -466,19 +584,21 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
             setFacingMode('user');
             setCameraEnabled(true);
             setMicEnabled(acquired.hasAudio);
+            setResolutionLabel(acquired.resolutionLabel);
             setIsCoHostingLive(true);
             client.setRole('cohost');
             rtcMeshRef.current?.setLocalStream(acquired.stream);
 
-            // Initiate WebRTC offer to host (and any ready viewers)
+            // Initiate WebRTC offer to host
             await rtcMeshRef.current?.initiateCall(decision.hostPeerId);
           } catch (err) {
             const msg = err instanceof Error ? err.message : 'Camera permission needed to co-host.';
             onShowToast(msg);
           }
         },
-        onCoHostLeave: (_roomId, coHostPeerId) => {
+        onCoHostLeave: (roomId, coHostPeerId) => {
           setRemoteStreams((prev) => {
+            if (!prev[coHostPeerId]) return prev;
             const next = { ...prev };
             delete next[coHostPeerId];
             return next;
@@ -493,7 +613,14 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
             client.setRole('viewer');
             onShowToast('You left the Co-Host split screen.');
           } else {
-            setActiveBroadcast((curr) => (curr ? { ...curr, coHost: null } : null));
+            setLiveBroadcasts((prev) => {
+              const existing = prev[roomId];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [roomId]: { ...existing, coHost: null },
+              };
+            });
             onShowToast('Co-Host left the split screen.');
           }
         },
@@ -513,7 +640,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
     const rtcMesh = new LiveWebRtcMesh({
       selfPeerId,
-      roomId: selectedWatchRoom.id,
+      roomId: FEATURED_WATCH_ROOMS[0].id,
+      maxBitrateBps: getIsRamSaverMode() ? 700_000 : 1_100_000,
       sendSignal: (sig) => client.sendRtcSignal(sig),
       onRemoteStream: (remotePeerId, stream) => {
         setRemoteStreams((prev) => ({
@@ -536,6 +664,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     client.connect();
 
     return () => {
+      if (hostVideoRef.current) hostVideoRef.current.srcObject = null;
+      if (coHostVideoRef.current) coHostVideoRef.current.srcObject = null;
       stopMediaStream(localStreamRef.current);
       localStreamRef.current = null;
       rtcMesh.closeAll();
@@ -566,7 +696,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     return () => clearInterval(timer);
   }, [broadcastStartedAt, isHostingLive]);
 
-  // Attach MediaStreams to video elements cleanly
+  // Attach MediaStreams to video elements cleanly with mobile autoplay fallback & RAM-safe cleanup
   useEffect(() => {
     if (setupPreviewVideoRef.current && localStream) {
       setupPreviewVideoRef.current.srcObject = localStream;
@@ -574,7 +704,6 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     }
   }, [isSetupModalOpen, localStream]);
 
-  const effectiveBroadcast = activeBroadcast;
   const hostStreamToShow = useMemo(() => {
     if (isHostingLive) return localStream;
     if (effectiveBroadcast?.isLive) {
@@ -593,19 +722,45 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
   }, [coHostInfo, isCoHostingLive, localStream, remoteStreams, selfPeerId]);
 
   useEffect(() => {
-    if (hostVideoRef.current && hostStreamToShow) {
-      hostVideoRef.current.srcObject = hostStreamToShow;
-      hostVideoRef.current.muted = isHostingLive ? true : isMuted;
-      hostVideoRef.current.play().catch(() => {});
+    const el = hostVideoRef.current;
+    if (!el) return;
+    if (!hostStreamToShow) {
+      el.srcObject = null;
+      return;
     }
+    if (el.srcObject !== hostStreamToShow) {
+      el.srcObject = hostStreamToShow;
+    }
+    el.muted = isHostingLive ? true : isMuted;
+    el.play().catch(() => {
+      // Mobile browser blocked unmuted autoplay -> play muted cleanly and offer Watch Live tap
+      el.muted = true;
+      el.play().catch(() => {});
+      if (!isHostingLive) {
+        setNeedsWatchTap(true);
+      }
+    });
   }, [hostStreamToShow, isHostingLive, isMuted, coHostInfo]);
 
   useEffect(() => {
-    if (coHostVideoRef.current && coHostStreamToShow) {
-      coHostVideoRef.current.srcObject = coHostStreamToShow;
-      coHostVideoRef.current.muted = isCoHostingLive && coHostInfo?.peerId === selfPeerId ? true : isMuted;
-      coHostVideoRef.current.play().catch(() => {});
+    const el = coHostVideoRef.current;
+    if (!el) return;
+    if (!coHostStreamToShow) {
+      el.srcObject = null;
+      return;
     }
+    if (el.srcObject !== coHostStreamToShow) {
+      el.srcObject = coHostStreamToShow;
+    }
+    const isSelfCoHost = isCoHostingLive && coHostInfo?.peerId === selfPeerId;
+    el.muted = isSelfCoHost ? true : isMuted;
+    el.play().catch(() => {
+      el.muted = true;
+      el.play().catch(() => {});
+      if (!isSelfCoHost) {
+        setNeedsWatchTap(true);
+      }
+    });
   }, [coHostStreamToShow, isCoHostingLive, coHostInfo, isMuted, selfPeerId]);
 
   useEffect(() => {
@@ -613,7 +768,96 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       stageFallbackVideoRef.current.muted = isMuted;
       stageFallbackVideoRef.current.play().catch(() => {});
     }
-  }, [channelIndex, effectiveBroadcast?.isLive, hostStreamToShow, isMuted]);
+  }, [selectedRoomId, effectiveBroadcast?.isLive, hostStreamToShow, isMuted]);
+
+  // Switch cleanly between live creator rooms and featured stages
+  const handleSelectRoomById = useCallback(
+    (nextRoomId: string) => {
+      setSelectedRoomId(nextRoomId);
+      setNeedsWatchTap(false);
+      const targetBroadcast = liveBroadcastsRef.current[nextRoomId];
+      if (targetBroadcast?.isLive && targetBroadcast.hostPeerId !== selfPeerId) {
+        setTotalLikes((prev) => Math.max(prev, targetBroadcast.totalLikes || 0));
+        setTotalDiamonds((prev) => Math.max(prev, targetBroadcast.totalDiamonds || 0));
+        clientRef.current?.sendRtcSignal({
+          id: createEventId('ready'),
+          roomId: targetBroadcast.roomId,
+          fromPeerId: selfPeerId,
+          toPeerId: targetBroadcast.hostPeerId,
+          kind: 'ready',
+          role: 'viewer',
+        });
+      }
+    },
+    [selfPeerId]
+  );
+
+  const handleCycleRoom = useCallback(
+    (direction: -1 | 1) => {
+      if (roomSwitcherEntries.length <= 1 || isHostingLive) return;
+      const idx = roomSwitcherEntries.findIndex((r) => r.id === selectedRoomId);
+      const safeIdx = idx === -1 ? 0 : idx;
+      const nextIdx = (safeIdx + direction + roomSwitcherEntries.length) % roomSwitcherEntries.length;
+      handleSelectRoomById(roomSwitcherEntries[nextIdx].id);
+    },
+    [handleSelectRoomById, isHostingLive, roomSwitcherEntries, selectedRoomId]
+  );
+
+  // Explicit "Watch Live" action: initiates/refreshes WebRTC link & unlocks audio playback on user gesture
+  const handleWatchLive = useCallback(() => {
+    if (!effectiveBroadcast?.isLive || isHostingLive) return;
+    setNeedsWatchTap(false);
+
+    if (isMuted) {
+      onToggleMute();
+    }
+
+    clientRef.current?.requestSync();
+    clientRef.current?.sendRtcSignal({
+      id: createEventId('ready'),
+      roomId: effectiveBroadcast.roomId,
+      fromPeerId: selfPeerId,
+      toPeerId: effectiveBroadcast.hostPeerId,
+      kind: 'ready',
+      role: isCoHostingLive ? 'cohost' : 'viewer',
+    });
+
+    if (effectiveBroadcast.coHost && effectiveBroadcast.coHost.peerId !== selfPeerId) {
+      clientRef.current?.sendRtcSignal({
+        id: createEventId('ready'),
+        roomId: effectiveBroadcast.roomId,
+        fromPeerId: selfPeerId,
+        toPeerId: effectiveBroadcast.coHost.peerId,
+        kind: 'ready',
+        role: 'viewer',
+      });
+    }
+
+    if (hostVideoRef.current) {
+      hostVideoRef.current.muted = false;
+      hostVideoRef.current.play().catch(() => {});
+    }
+    if (coHostVideoRef.current && !(isCoHostingLive && coHostInfo?.peerId === selfPeerId)) {
+      coHostVideoRef.current.muted = false;
+      coHostVideoRef.current.play().catch(() => {});
+    }
+
+    onShowToast(
+      hostStreamToShow
+        ? `Watching ${effectiveBroadcast.hostName} LIVE!`
+        : `Connecting to ${effectiveBroadcast.hostName}'s live camera...`
+    );
+  }, [
+    coHostInfo?.peerId,
+    effectiveBroadcast,
+    hostStreamToShow,
+    isCoHostingLive,
+    isHostingLive,
+    isMuted,
+    onShowToast,
+    onToggleMute,
+    selfPeerId,
+  ]);
 
   // Auto-scroll chat panel
   useEffect(() => {
@@ -704,7 +948,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     setBroadcastStartedAt(now);
     setIsHostingLive(true);
     setIsSetupModalOpen(false);
-    setActiveBroadcast(initialState);
+    setSelectedRoomId(roomId);
+    setLiveBroadcasts((prev) => ({ ...prev, [roomId]: initialState }));
     activeBroadcastRef.current = initialState;
 
     clientRef.current?.setRoomId(roomId);
@@ -713,7 +958,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     rtcMeshRef.current?.setLocalStream(localStreamRef.current);
     clientRef.current?.publishBroadcastState(initialState);
 
-    // Connect WebRTC to any peers already watching in the room
+    // Connect WebRTC to all other connected peers on `live-rooms` immediately
     presenceMembers.forEach((m) => {
       if (m.peerId !== selfPeerId) {
         rtcMeshRef.current?.initiateCall(m.peerId);
@@ -731,11 +976,11 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       timestamp: now,
       isSystem: true,
     };
-    setChatMessages((prev) => [...prev.slice(-60), sysMsg]);
+    setChatMessages((prev) => [...prev.slice(-50), sysMsg]);
     clientRef.current?.sendChatMessage(sysMsg);
 
     soundEngine.playLiveStartSound();
-    onShowToast('You are LIVE now!');
+    onShowToast('You are LIVE now (720p · 30fps)!');
   };
 
   const handleSwapCamera = async () => {
@@ -763,8 +1008,11 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       rtcMeshRef.current?.setLocalStream(acquired.stream);
 
       if (isHostingLive && activeBroadcastRef.current) {
-        const updated = buildCurrentBroadcastState({ facingMode: nextFacing, resolutionLabel: acquired.resolutionLabel });
-        setActiveBroadcast(updated);
+        const updated = buildCurrentBroadcastState({
+          facingMode: nextFacing,
+          resolutionLabel: acquired.resolutionLabel,
+        });
+        setLiveBroadcasts((prev) => ({ ...prev, [updated.roomId]: updated }));
         clientRef.current?.publishBroadcastState(updated);
       }
       onShowToast(nextFacing === 'environment' ? 'Switched to Back Camera' : 'Switched to Front Camera');
@@ -782,7 +1030,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
     if (isHostingLive && activeBroadcastRef.current) {
       const updated = buildCurrentBroadcastState({ micEnabled: nextMic });
-      setActiveBroadcast(updated);
+      setLiveBroadcasts((prev) => ({ ...prev, [updated.roomId]: updated }));
       clientRef.current?.publishBroadcastState(updated);
     } else if (isCoHostingLive && activeBroadcastRef.current?.coHost) {
       const updated: LiveBroadcastState = {
@@ -792,7 +1040,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
           micEnabled: nextMic,
         },
       };
-      setActiveBroadcast(updated);
+      setLiveBroadcasts((prev) => ({ ...prev, [updated.roomId]: updated }));
       clientRef.current?.publishBroadcastState(updated);
     }
     onShowToast(nextMic ? 'Microphone On' : 'Microphone Muted');
@@ -807,7 +1055,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
     if (isHostingLive && activeBroadcastRef.current) {
       const updated = buildCurrentBroadcastState({ cameraEnabled: nextCam });
-      setActiveBroadcast(updated);
+      setLiveBroadcasts((prev) => ({ ...prev, [updated.roomId]: updated }));
       clientRef.current?.publishBroadcastState(updated);
     } else if (isCoHostingLive && activeBroadcastRef.current?.coHost) {
       const updated: LiveBroadcastState = {
@@ -817,7 +1065,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
           cameraEnabled: nextCam,
         },
       };
-      setActiveBroadcast(updated);
+      setLiveBroadcasts((prev) => ({ ...prev, [updated.roomId]: updated }));
       clientRef.current?.publishBroadcastState(updated);
     }
     onShowToast(nextCam ? 'Camera On' : 'Camera Paused');
@@ -827,7 +1075,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     setSelectedFilter(filterId);
     if (isHostingLive && activeBroadcastRef.current) {
       const updated = buildCurrentBroadcastState({ filter: filterId });
-      setActiveBroadcast(updated);
+      setLiveBroadcasts((prev) => ({ ...prev, [updated.roomId]: updated }));
       clientRef.current?.publishBroadcastState(updated);
     }
   };
@@ -851,12 +1099,19 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
     clientRef.current?.setRole('viewer');
     rtcMeshRef.current?.closeAll();
 
+    if (hostVideoRef.current) hostVideoRef.current.srcObject = null;
+    if (coHostVideoRef.current) coHostVideoRef.current.srcObject = null;
     stopMediaStream(localStreamRef.current);
     localStreamRef.current = null;
     setLocalStream(null);
     setRemoteStreams({});
     setIsHostingLive(false);
-    setActiveBroadcast(null);
+    setLiveBroadcasts((prev) => {
+      const next = { ...prev };
+      delete next[roomId];
+      return next;
+    });
+    setSelectedRoomId(FEATURED_WATCH_ROOMS[0].id);
     activeBroadcastRef.current = null;
     setCoHostRequests([]);
     setBroadcastStartedAt(0);
@@ -919,7 +1174,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
           facingMode: 'user',
         },
       });
-      setActiveBroadcast(updated);
+      setLiveBroadcasts((prev) => ({ ...prev, [updated.roomId]: updated }));
       clientRef.current?.publishBroadcastState(updated);
       onShowToast(`${req.name} is joining Split-Screen!`);
     } else {
@@ -946,7 +1201,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       onShowToast('Left Co-Host split screen.');
     } else if (isHostingLive && activeBroadcastRef.current) {
       const updated = buildCurrentBroadcastState({ coHost: null });
-      setActiveBroadcast(updated);
+      setLiveBroadcasts((prev) => ({ ...prev, [updated.roomId]: updated }));
       clientRef.current?.publishBroadcastState(updated);
       rtcMeshRef.current?.closePeer(targetCoHostPeerId);
       onShowToast('Removed Co-Host from split screen.');
@@ -1099,30 +1354,41 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
           <span className="sm:hidden">Back</span>
         </button>
 
-        {/* Room Indicator / Stage Switcher */}
-        <div className="flex items-center gap-1.5 bg-neutral-900/85 px-2.5 py-1.5 rounded-full border border-neutral-800 backdrop-blur-md min-w-0">
-          {!effectiveBroadcast?.isLive && (
+        {/* Room Indicator / Stage Switcher (`< Jatt VibeReels Stage >`) */}
+        <div
+          className={`flex items-center gap-1.5 bg-neutral-900/85 px-2.5 py-1.5 rounded-full border border-neutral-800 ${
+            isRamSaverMode ? '' : 'backdrop-blur-md'
+          } min-w-0`}
+        >
+          {!isHostingLive && roomSwitcherEntries.length > 1 && (
             <button
               type="button"
-              onClick={() =>
-                setChannelIndex((prev) => (prev - 1 + FEATURED_WATCH_ROOMS.length) % FEATURED_WATCH_ROOMS.length)
-              }
+              onClick={() => handleCycleRoom(-1)}
               className="p-1 text-neutral-400 hover:text-white transition-colors"
-              title="Previous Stage"
+              title="Previous Live Room / Stage"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
           )}
           <span className="text-xs font-bold text-white flex items-center gap-1.5 truncate">
-            <Radio className="w-3.5 h-3.5 text-rose-500 animate-pulse shrink-0" />
-            <span className="truncate max-w-[120px] sm:max-w-[200px]">{displayedHostName}</span>
+            <Radio
+              className={`w-3.5 h-3.5 shrink-0 ${
+                effectiveBroadcast?.isLive ? 'text-rose-500 animate-pulse' : 'text-pink-400'
+              }`}
+            />
+            <span className="truncate max-w-[110px] sm:max-w-[190px]">{displayedHostName}</span>
+            {effectiveBroadcast?.isLive && (
+              <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider shrink-0">
+                LIVE
+              </span>
+            )}
           </span>
-          {!effectiveBroadcast?.isLive && (
+          {!isHostingLive && roomSwitcherEntries.length > 1 && (
             <button
               type="button"
-              onClick={() => setChannelIndex((prev) => (prev + 1) % FEATURED_WATCH_ROOMS.length)}
+              onClick={() => handleCycleRoom(1)}
               className="p-1 text-neutral-400 hover:text-white transition-colors"
-              title="Next Stage"
+              title="Next Live Room / Stage"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -1287,10 +1553,30 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                     <p className="text-xs text-neutral-400 mt-1">
                       {effectiveBroadcast.cameraEnabled === false
                         ? 'Host paused their camera (audio still live)'
-                        : 'Connecting real-time WebRTC video stream...'}
+                        : 'Live stream active · Connecting WebRTC video (720p 30fps)...'}
                     </p>
                   </div>
+                  {!isHostingLive && effectiveBroadcast.cameraEnabled !== false && (
+                    <button
+                      type="button"
+                      onClick={handleWatchLive}
+                      className="mt-1 min-h-[42px] px-5 py-2 rounded-full bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-xs font-black tracking-wide shadow-lg shadow-rose-600/30 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                      <Play className="w-4 h-4 fill-white" />
+                      <span>Watch Live Stream</span>
+                    </button>
+                  )}
                 </div>
+              )}
+              {!isHostingLive && hostStreamToShow && needsWatchTap && (
+                <button
+                  type="button"
+                  onClick={handleWatchLive}
+                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 min-h-[44px] px-5 py-2.5 rounded-full bg-rose-600/95 hover:bg-rose-500 text-white text-xs font-black shadow-2xl border border-white/25 flex items-center gap-2 active:scale-95 transition-all"
+                >
+                  <Volume2 className="w-4 h-4" />
+                  <span>Watch Live with Audio</span>
+                </button>
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/55 pointer-events-none" />
             </div>
@@ -1300,6 +1586,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               <video
                 ref={stageFallbackVideoRef}
                 src={selectedWatchRoom.videoUrl}
+                preload="metadata"
                 loop
                 autoPlay
                 playsInline
@@ -1396,14 +1683,18 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               <span className="truncate font-semibold">{displayedTitle}</span>
             </div>
 
-            <div className="inline-flex items-center gap-1.5 bg-black/60 border border-white/10 px-2.5 py-1 rounded-full text-[10px] font-semibold text-neutral-300 backdrop-blur-md">
+            <div
+              className={`inline-flex items-center gap-1.5 bg-black/60 border border-white/10 px-2.5 py-1 rounded-full text-[10px] font-semibold text-neutral-300 ${
+                isRamSaverMode ? '' : 'backdrop-blur-md'
+              }`}
+            >
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   connectionStatus === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
                 }`}
               />
               <span>
-                {transportMode === 'supabase' ? 'Supabase Realtime' : 'Live Room Sync'} ·{' '}
+                {transportMode === 'supabase' ? 'Supabase live-rooms' : 'live-rooms Sync'} ·{' '}
                 {connectionStatus === 'connected' ? 'Connected' : 'Syncing'}
               </span>
             </div>
@@ -1651,8 +1942,20 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               </div>
             </div>
 
-            {/* Right Quick Action Cluster: Request to Join + Heart/Fire/Wave Reactions */}
+            {/* Right Quick Action Cluster: Watch Live + Request to Join + Heart/Fire/Wave Reactions */}
             <div className="flex items-center gap-1.5 flex-wrap">
+              {!isHostingLive && !isCoHostingLive && effectiveBroadcast?.isLive && (
+                <button
+                  type="button"
+                  onClick={handleWatchLive}
+                  className="min-h-[40px] px-3 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-xs font-black flex items-center gap-1.5 shadow-lg shadow-rose-600/25 active:scale-95 transition-all"
+                  title="Connect & watch remote host stream live"
+                >
+                  <Play className="w-3.5 h-3.5 fill-white" />
+                  <span>Watch Live</span>
+                </button>
+              )}
+
               {!isHostingLive && !isCoHostingLive && (
                 <button
                   type="button"
