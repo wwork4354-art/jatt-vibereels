@@ -161,7 +161,31 @@ export type FeedTab =
   | 'activity'
   | 'channel';
 
-export type DownloadCategory = 'songs' | 'apps' | 'dramas' | 'movies' | 'cartoons' | 'quran';
+export type ContentStyleTag =
+  | 'Movie'
+  | 'Drama'
+  | 'Song'
+  | 'Cartoon'
+  | 'Realistic'
+  | 'Rhymes'
+  | 'Naat'
+  | 'Tilawat'
+  | 'Program'
+  | 'Talk Show';
+
+export type DownloadCategory =
+  | 'movies'
+  | 'dramas'
+  | 'songs'
+  | 'cartoons'
+  | 'realistic'
+  | 'rhymes'
+  | 'naat'
+  | 'tilawat'
+  | 'quran'
+  | 'programs'
+  | 'talk_shows'
+  | 'apps';
 
 export interface DownloadItem {
   id: string;
@@ -172,6 +196,8 @@ export interface DownloadItem {
   fileSize: string;
   sizeBytes: number;
   durationOrVersion: string;
+  durationSeconds?: number;
+  contentTypeTag?: ContentStyleTag;
   qualityBadge: string;
   thumbnailUrl: string;
   fallbackGradient: string;

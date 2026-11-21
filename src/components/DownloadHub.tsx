@@ -37,12 +37,24 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  Compass,
+  Baby,
+  HeartHandshake,
+  Radio,
+  Mic,
 } from 'lucide-react';
 import Hls from 'hls.js';
-import { DownloadItem, DownloadCategory } from '../types';
+import { DownloadItem, ContentStyleTag } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
 import { soundEngine } from '../utils/soundEngine';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import {
+  parseIso8601DurationToSeconds,
+  formatVideoDuration,
+  classifyVideoContentType,
+  mapStyleTagToCategory,
+  getContentTagBadgeClasses,
+} from '../utils/mediaClassifier';
 import { getIsRamSaverMode, useRamSaverMode } from '../lib/ramSaverMode';
 import {
   LiteYouTubePlayer,
@@ -71,7 +83,18 @@ const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
 const HUB_PAGE_SIZE = 10;
 
 interface GlobalHubTab {
-  id: 'all' | 'world_movies' | 'songs' | 'dramas' | 'cartoons';
+  id:
+    | 'all'
+    | 'movies'
+    | 'dramas'
+    | 'songs'
+    | 'cartoons'
+    | 'realistic'
+    | 'rhymes'
+    | 'naat'
+    | 'tilawat'
+    | 'programs'
+    | 'talk_shows';
   label: string;
   query: string;
 }
@@ -79,14 +102,9 @@ interface GlobalHubTab {
 const GLOBAL_HUB_TABS: GlobalHubTab[] = [
   { id: 'all', label: 'All', query: '' },
   {
-    id: 'world_movies',
-    label: 'World Movies',
+    id: 'movies',
+    label: 'Movies',
     query: 'full movies Hollywood Hindi dubbed Punjabi Korean action adventure HD',
-  },
-  {
-    id: 'songs',
-    label: 'Songs',
-    query: 'Punjabi Hindi latest songs Sidhu Moose Wala Karan Aujla Diljit Arijit official',
   },
   {
     id: 'dramas',
@@ -94,39 +112,80 @@ const GLOBAL_HUB_TABS: GlobalHubTab[] = [
     query: 'Pakistani Indian Turkish Korean full dramas episodes HD',
   },
   {
+    id: 'songs',
+    label: 'Songs',
+    query: 'Punjabi Hindi English Arabic latest official music video songs HD',
+  },
+  {
     id: 'cartoons',
     label: 'Cartoons',
-    query: 'full cartoons anime episodes animated adventure movies kids HD',
+    query: 'full cartoons anime episodes animated adventure kids HD',
+  },
+  {
+    id: 'realistic',
+    label: 'Realistic',
+    query: '4K realistic nature wildlife travel documentary real life tour',
+  },
+  {
+    id: 'rhymes',
+    label: 'Rhymes',
+    query: 'kids nursery rhymes baby songs phonics learning animation HD',
+  },
+  {
+    id: 'naat',
+    label: 'Naat',
+    query: 'beautiful Islamic Naat Sharif Urdu Arabic Punjabi latest studio HD',
+  },
+  {
+    id: 'tilawat',
+    label: 'Tilawat',
+    query: 'heart soothing Quran Tilawat full surah Qari Mishary Sudais HD',
+  },
+  {
+    id: 'programs',
+    label: 'Programs',
+    query: 'worldwide TV programs cooking reality documentary show full episode HD',
+  },
+  {
+    id: 'talk_shows',
+    label: 'Talk Shows',
+    query: 'popular talk show comedy show podcast interview full episode HD',
   },
 ];
 
 const QUICK_MOVIEBOX_CHIPS = [
-  'World Movies',
-  'Songs',
-  'Dramas',
-  'Cartoons',
+  'Hollywood & English',
   'Pakistani Dramas',
   'Turkish Dramas',
-  'Hollywood & English',
+  'Korean Dramas',
+  'Punjabi & Hindi Songs',
+  'Urdu & Punjabi Naat',
+  'Quran Tilawat',
+  'Kids Rhymes',
+  '4K Realistic Nature',
+  'TV Talk Shows',
+  'TV Programs',
 ];
 
 const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
-  'World Movies': [
+  Movies: [
     {
       id: 'yt-R6MlUcmOul8',
       title: 'Tears of Steel - Sci-Fi Action Feature Film 4K',
       subtitle: 'Blender Foundation Cinema',
       category: 'movies',
-      categoryLabel: 'World Movies',
+      categoryLabel: 'Movies',
       fileSize: 'Streaming 4K',
       sizeBytes: 180000000,
-      durationOrVersion: 'Movie 4K',
+      durationOrVersion: '12:14',
+      durationSeconds: 734,
+      contentTypeTag: 'Movie',
       qualityBadge: '4K Stream',
-      thumbnailUrl: 'https://i.ytimg.com/vi/R6MlUcmOul8/hqdefault.jpg',
+      thumbnailUrl: 'https://i.ytimg.com/vi/R6MlUcmOul8/mqdefault.jpg',
       fallbackGradient: 'from-cyan-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
       rating: 4.9,
-      tags: ['World Movies', 'Sci-Fi', '4K'],
+      tags: ['Movies', 'Sci-Fi', '4K'],
       description: 'Clean sci-fi action film in 4K UHD.',
       youtubeId: 'R6MlUcmOul8',
     },
@@ -135,16 +194,18 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       title: 'Sintel - Global Fantasy Adventure Movie HD',
       subtitle: 'Cinema Fantasy Studio',
       category: 'movies',
-      categoryLabel: 'World Movies',
+      categoryLabel: 'Movies',
       fileSize: 'Streaming HD',
       sizeBytes: 125000000,
-      durationOrVersion: 'Movie HD',
+      durationOrVersion: '14:48',
+      durationSeconds: 888,
+      contentTypeTag: 'Movie',
       qualityBadge: '1080p Stream',
-      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/mqdefault.jpg',
       fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
       rating: 4.9,
-      tags: ['World Movies', 'Fantasy', 'HD'],
+      tags: ['Movies', 'Fantasy', 'HD'],
       description: 'Award-winning dramatic fantasy adventure feature.',
       youtubeId: 'eRsGyueVLvQ',
     },
@@ -158,7 +219,9 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       categoryLabel: 'Songs',
       fileSize: 'Streaming HD',
       sizeBytes: 12000000,
-      durationOrVersion: 'Music HD',
+      durationOrVersion: '04:32',
+      durationSeconds: 272,
+      contentTypeTag: 'Song',
       qualityBadge: 'YouTube HD',
       thumbnailUrl: 'https://i.ytimg.com/vi/6MgsHSAcI9k/mqdefault.jpg',
       fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
@@ -176,7 +239,9 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       categoryLabel: 'Songs',
       fileSize: 'Live Stream',
       sizeBytes: 45000000,
-      durationOrVersion: 'LIVE 24/7',
+      durationOrVersion: 'LIVE',
+      durationSeconds: 0,
+      contentTypeTag: 'Song',
       qualityBadge: 'Live Audio HD',
       thumbnailUrl: 'https://i.ytimg.com/vi/jfKfPfyJRdk/mqdefault.jpg',
       fallbackGradient: 'from-rose-950 via-purple-950 to-black',
@@ -196,7 +261,9 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       categoryLabel: 'Cartoons',
       fileSize: 'Streaming HD',
       sizeBytes: 150000000,
-      durationOrVersion: 'Animated HD',
+      durationOrVersion: '09:56',
+      durationSeconds: 596,
+      contentTypeTag: 'Cartoon',
       qualityBadge: 'Cartoon HD',
       thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/mqdefault.jpg',
       fallbackGradient: 'from-amber-950 via-purple-950 to-neutral-950',
@@ -214,7 +281,9 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       categoryLabel: 'Cartoons',
       fileSize: 'Streaming HD',
       sizeBytes: 140000000,
-      durationOrVersion: '60FPS',
+      durationOrVersion: '12:10',
+      durationSeconds: 730,
+      contentTypeTag: 'Cartoon',
       qualityBadge: 'Cartoon HD',
       thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/mqdefault.jpg',
       fallbackGradient: 'from-cyan-950 via-indigo-950 to-neutral-950',
@@ -223,294 +292,6 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       tags: ['Cartoons', 'Anime'],
       description: 'Ultra-crisp 60fps animated feature.',
       youtubeId: 'aqz-KE-bpKQ',
-    },
-  ],
-  'Punjabi & Hindi Songs': [
-    {
-      id: 'yt-6MgsHSAcI9k',
-      title: 'Top Punjabi & Hindi Bass Mix Hits',
-      subtitle: 'Punjabi & Desi Music Global',
-      category: 'songs',
-      categoryLabel: 'Punjabi & Hindi Songs',
-      fileSize: 'Streaming HD',
-      sizeBytes: 12000000,
-      durationOrVersion: 'Music HD',
-      qualityBadge: 'YouTube HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/6MgsHSAcI9k/hqdefault.jpg',
-      fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Punjabi Songs', 'Hindi Songs'],
-      description: 'Non-stop Punjabi & Hindi hit music stream.',
-      youtubeId: '6MgsHSAcI9k',
-    },
-    {
-      id: 'yt-jfKfPfyJRdk',
-      title: '24/7 Chill Beats & Late Night Study Radio',
-      subtitle: 'Global Music Radio Live',
-      category: 'songs',
-      categoryLabel: 'Punjabi & Hindi Songs',
-      fileSize: 'Live Stream',
-      sizeBytes: 45000000,
-      durationOrVersion: 'LIVE 24/7',
-      qualityBadge: 'Live Audio HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
-      fallbackGradient: 'from-rose-950 via-purple-950 to-black',
-      downloadsCount: 'Live',
-      rating: 4.95,
-      tags: ['Music', 'Live Radio'],
-      description: 'Continuous 24/7 music broadcast.',
-      youtubeId: 'jfKfPfyJRdk',
-    },
-  ],
-  'Cartoons & Anime': [
-    {
-      id: 'yt-YE7VzlLtp-4',
-      title: 'Big Buck Bunny - Full Animated Adventure 4K 60fps',
-      subtitle: 'Blender Animation Studio',
-      category: 'cartoons',
-      categoryLabel: 'Cartoons & Anime',
-      fileSize: 'Streaming 4K',
-      sizeBytes: 150000000,
-      durationOrVersion: '4K 60FPS',
-      qualityBadge: '4K Animated',
-      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/hqdefault.jpg',
-      fallbackGradient: 'from-amber-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.95,
-      tags: ['Cartoons', 'Animation', '4K'],
-      description: 'Full family animated comedy adventure in 4K 60fps.',
-      youtubeId: 'YE7VzlLtp-4',
-    },
-    {
-      id: 'yt-aqz-KE-bpKQ',
-      title: 'Cosmos & 3D Animated Showcase 4K 60FPS',
-      subtitle: 'Open Animation Central',
-      category: 'cartoons',
-      categoryLabel: 'Cartoons & Anime',
-      fileSize: 'Streaming 4K',
-      sizeBytes: 140000000,
-      durationOrVersion: '4K 60FPS',
-      qualityBadge: '4K Animated',
-      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
-      fallbackGradient: 'from-cyan-950 via-indigo-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Cartoons', 'Anime', '4K'],
-      description: 'Ultra-crisp 60fps animated feature.',
-      youtubeId: 'aqz-KE-bpKQ',
-    },
-  ],
-  '4K Music Videos': [
-    {
-      id: 'yt-aqz-KE-bpKQ',
-      title: '4K 60FPS Visualizers & Global Bass Showcase',
-      subtitle: '4K Ultra Visuals Hub',
-      category: 'songs',
-      categoryLabel: '4K Music Videos',
-      fileSize: 'Streaming 4K',
-      sizeBytes: 95000000,
-      durationOrVersion: '4K 2160p',
-      qualityBadge: '4K ULTRA HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
-      fallbackGradient: 'from-emerald-950 via-neutral-950 to-black',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['4K Music Videos', '2160p'],
-      description: 'Clean 4K 60FPS music & visual showcase.',
-      youtubeId: 'aqz-KE-bpKQ',
-    },
-    {
-      id: 'yt-jfKfPfyJRdk',
-      title: '24/7 Live Lo-Fi Chill & Global Study Radio',
-      subtitle: 'Lofi Girl Live Stream',
-      category: 'songs',
-      categoryLabel: '4K Music Videos',
-      fileSize: 'Live Stream',
-      sizeBytes: 45000000,
-      durationOrVersion: 'LIVE 24/7',
-      qualityBadge: 'Live HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
-      fallbackGradient: 'from-rose-950 via-purple-950 to-black',
-      downloadsCount: 'Live',
-      rating: 4.95,
-      tags: ['Music Videos', 'Live'],
-      description: 'Continuous 24/7 live music stream.',
-      youtubeId: 'jfKfPfyJRdk',
-    },
-  ],
-  'Hollywood & English': [
-    {
-      id: 'yt-R6MlUcmOul8',
-      title: 'Tears of Steel - English Sci-Fi Action Short Film 4K',
-      subtitle: 'Blender Foundation Studio',
-      category: 'movies',
-      categoryLabel: 'Hollywood & English',
-      fileSize: 'Streaming 4K',
-      sizeBytes: 180000000,
-      durationOrVersion: 'Movie 4K',
-      qualityBadge: '4K Stream',
-      thumbnailUrl: 'https://i.ytimg.com/vi/R6MlUcmOul8/hqdefault.jpg',
-      fallbackGradient: 'from-cyan-950 via-neutral-950 to-black',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Hollywood & English', 'Sci-Fi', '4K'],
-      description: 'Clean English sci-fi action short film in 4K UHD.',
-      youtubeId: 'R6MlUcmOul8',
-    },
-    {
-      id: 'yt-YE7VzlLtp-4',
-      title: 'Big Buck Bunny - Full Family Animated Adventure 4K 60fps',
-      subtitle: 'Blender Foundation',
-      category: 'movies',
-      categoryLabel: 'Hollywood & English',
-      fileSize: 'Streaming 4K',
-      sizeBytes: 150000000,
-      durationOrVersion: '4K 60FPS',
-      qualityBadge: '4K Stream',
-      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/hqdefault.jpg',
-      fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Hollywood & English', 'Family', '4K'],
-      description: 'Award-winning family animated comedy film.',
-      youtubeId: 'YE7VzlLtp-4',
-    },
-  ],
-  'English Dubbed Movies': [
-    {
-      id: 'yt-eRsGyueVLvQ',
-      title: 'Sintel - English Fantasy Adventure Movie HD',
-      subtitle: 'Cinema Fantasy Studio',
-      category: 'movies',
-      categoryLabel: 'English Dubbed',
-      fileSize: 'Streaming HD',
-      sizeBytes: 125000000,
-      durationOrVersion: 'English HD',
-      qualityBadge: 'English Dubbed',
-      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
-      fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['English Dubbed', 'Fantasy', 'HD'],
-      description: 'Full dramatic fantasy adventure feature in English.',
-      youtubeId: 'eRsGyueVLvQ',
-    },
-    {
-      id: 'yt-aqz-KE-bpKQ',
-      title: 'Cosmos & Action Showcase - Open Cinema 4K 60FPS',
-      subtitle: 'Open Movie Channel',
-      category: 'movies',
-      categoryLabel: 'English Dubbed',
-      fileSize: 'Streaming 4K',
-      sizeBytes: 160000000,
-      durationOrVersion: '4K 60FPS',
-      qualityBadge: 'English Dubbed',
-      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
-      fallbackGradient: 'from-indigo-950 via-neutral-950 to-black',
-      downloadsCount: 'YouTube',
-      rating: 4.8,
-      tags: ['English Dubbed', 'Action', '4K'],
-      description: 'High frame-rate cinematic showcase.',
-      youtubeId: 'aqz-KE-bpKQ',
-    },
-  ],
-  'Trending Movies': [
-    {
-      id: 'yt-aqz-KE-bpKQ',
-      title: 'Action Blockbuster Showcase | Open Movie 4K 60fps',
-      subtitle: 'Cinema Central',
-      category: 'movies',
-      categoryLabel: 'YouTube Live',
-      fileSize: 'Streaming HD',
-      sizeBytes: 150000000,
-      durationOrVersion: 'Movie HD',
-      qualityBadge: 'YouTube HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
-      fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Trending Movies', 'HD'],
-      description: 'Big Buck Bunny 4K Open Movie showcase stream.',
-      youtubeId: 'aqz-KE-bpKQ',
-    },
-    {
-      id: 'yt-YE7VzlLtp-4',
-      title: 'Big Buck Bunny - Full Animated Comedy Movie 4K 60fps',
-      subtitle: 'Blender Foundation',
-      category: 'movies',
-      categoryLabel: 'YouTube Live',
-      fileSize: 'Streaming HD',
-      sizeBytes: 150000000,
-      durationOrVersion: '4K 60FPS',
-      qualityBadge: '4K Stream',
-      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/hqdefault.jpg',
-      fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Trending Movies', '4K'],
-      description: 'Full length animated comedy feature.',
-      youtubeId: 'YE7VzlLtp-4',
-    },
-  ],
-  'Punjabi Songs': [
-    {
-      id: 'yt-6MgsHSAcI9k',
-      title: 'Top Punjabi Hit Tracks & Bhangra Bass Mix',
-      subtitle: 'Punjabi Beats Official',
-      category: 'songs',
-      categoryLabel: 'Trending Songs',
-      fileSize: 'Streaming HD',
-      sizeBytes: 12000000,
-      durationOrVersion: 'Audio/Video HD',
-      qualityBadge: 'YouTube HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/6MgsHSAcI9k/hqdefault.jpg',
-      fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Punjabi Songs', 'Trending Songs'],
-      description: 'Non-stop Punjabi music stream.',
-      youtubeId: '6MgsHSAcI9k',
-    },
-  ],
-  'Trending Songs': [
-    {
-      id: 'yt-6MgsHSAcI9k',
-      title: 'Global Top Music Mix & Punjabi Bass Hits HD',
-      subtitle: 'Vibe Music Global',
-      category: 'songs',
-      categoryLabel: 'Trending Songs',
-      fileSize: 'Streaming HD',
-      sizeBytes: 12000000,
-      durationOrVersion: 'Music HD',
-      qualityBadge: 'YouTube HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/6MgsHSAcI9k/hqdefault.jpg',
-      fallbackGradient: 'from-pink-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Trending Songs', 'Music'],
-      description: 'Clean trending global and Punjabi hits.',
-      youtubeId: '6MgsHSAcI9k',
-    },
-  ],
-  'Pakistani Dramas': [
-    {
-      id: 'yt-eRsGyueVLvQ',
-      title: 'Sintel - Award Winning Fantasy Drama Short Film',
-      subtitle: 'Blender Studio',
-      category: 'dramas',
-      categoryLabel: 'Dramas',
-      fileSize: 'Streaming HD',
-      sizeBytes: 85000000,
-      durationOrVersion: 'Drama HD',
-      qualityBadge: 'YouTube HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
-      fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Dramas', 'HD'],
-      description: 'Full dramatic feature stream.',
-      youtubeId: 'eRsGyueVLvQ',
     },
   ],
   Dramas: [
@@ -522,9 +303,11 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       categoryLabel: 'Dramas',
       fileSize: 'Streaming HD',
       sizeBytes: 85000000,
-      durationOrVersion: 'Drama HD',
+      durationOrVersion: '44:15',
+      durationSeconds: 2655,
+      contentTypeTag: 'Drama',
       qualityBadge: 'YouTube HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/mqdefault.jpg',
       fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
       rating: 4.9,
@@ -533,118 +316,180 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       youtubeId: 'eRsGyueVLvQ',
     },
   ],
-  'Viral Videos': [
+  Realistic: [
     {
-      id: 'yt-aqz-KE-bpKQ',
-      title: 'Amazing 4K 60FPS Nature & Viral Shorts Compilation',
-      subtitle: 'Global Viral Hub',
-      category: 'movies',
-      categoryLabel: 'Viral Videos',
+      id: 'yt-LXb3EKWsInQ',
+      title: 'Costa Rica & Alpine Wildlife 4K Realistic Nature Film',
+      subtitle: '4K Nature Realistic Documentary',
+      category: 'realistic',
+      categoryLabel: 'Realistic',
       fileSize: 'Streaming 4K',
-      sizeBytes: 95000000,
-      durationOrVersion: '4K 60FPS',
-      qualityBadge: 'Viral HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
+      sizeBytes: 140000000,
+      durationOrVersion: '05:14',
+      durationSeconds: 314,
+      contentTypeTag: 'Realistic',
+      qualityBadge: '4K HDR Real',
+      thumbnailUrl: 'https://i.ytimg.com/vi/LXb3EKWsInQ/mqdefault.jpg',
       fallbackGradient: 'from-emerald-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Viral Videos', '4K'],
-      description: 'Clean trending viral clips & highlights.',
-      youtubeId: 'aqz-KE-bpKQ',
+      rating: 4.96,
+      tags: ['Realistic', 'Wildlife', '4K Documentary'],
+      description: 'Ultra-realistic 4K wildlife and nature filming.',
+      youtubeId: 'LXb3EKWsInQ',
     },
   ],
-  'Full Movies': [
+  Rhymes: [
+    {
+      id: 'yt-hq3yfQnllfQ',
+      title: 'Classic ABC Phonics & Kids Nursery Rhymes HD',
+      subtitle: 'Kids Learning Studio',
+      category: 'rhymes',
+      categoryLabel: 'Rhymes',
+      fileSize: 'Streaming HD',
+      sizeBytes: 42000000,
+      durationOrVersion: '03:54',
+      durationSeconds: 234,
+      contentTypeTag: 'Rhymes',
+      qualityBadge: 'Kids Rhymes HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/hq3yfQnllfQ/mqdefault.jpg',
+      fallbackGradient: 'from-lime-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.92,
+      tags: ['Rhymes', 'Nursery', 'Kids'],
+      description: 'Educational kids rhymes and joyful learning songs.',
+      youtubeId: 'hq3yfQnllfQ',
+    },
+  ],
+  Naat: [
+    {
+      id: 'yt-8p0Q6X4vKzU',
+      title: 'Mustafa Jaan e Rehmat Pe Lakhon Salam (Studio Naat)',
+      subtitle: 'Islamic Naat Global Studio',
+      category: 'naat',
+      categoryLabel: 'Naat',
+      fileSize: 'Streaming HD',
+      sizeBytes: 18000000,
+      durationOrVersion: '06:42',
+      durationSeconds: 402,
+      contentTypeTag: 'Naat',
+      qualityBadge: 'Studio Acoustic',
+      thumbnailUrl: 'https://i.ytimg.com/vi/8p0Q6X4vKzU/mqdefault.jpg',
+      fallbackGradient: 'from-teal-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.99,
+      tags: ['Naat', 'Hamd', 'Islamic'],
+      description: 'Soulful Islamic Naat Sharif recitation.',
+      youtubeId: '8p0Q6X4vKzU',
+    },
+  ],
+  Tilawat: [
+    {
+      id: 'yt-Vq9s8N4cQ4Q',
+      title: 'Surah Ar-Rahman Full Tilawat - Qari Mishary Alafasy',
+      subtitle: 'Quran Recitation Worldwide',
+      category: 'tilawat',
+      categoryLabel: 'Tilawat',
+      fileSize: 'Streaming HD',
+      sizeBytes: 24000000,
+      durationOrVersion: '16:40',
+      durationSeconds: 1000,
+      contentTypeTag: 'Tilawat',
+      qualityBadge: 'Tilawat 320k',
+      thumbnailUrl: 'https://i.ytimg.com/vi/Vq9s8N4cQ4Q/mqdefault.jpg',
+      fallbackGradient: 'from-green-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.99,
+      tags: ['Tilawat', 'Quran', 'Surah Rahman'],
+      description: 'Heart-soothing Quran Tilawat with crystal clarity.',
+      youtubeId: 'Vq9s8N4cQ4Q',
+    },
+  ],
+  Programs: [
+    {
+      id: 'yt-LXb3EKWsInQ',
+      title: 'Global Heritage & Wildlife TV Program Special',
+      subtitle: 'Discovery World Broadcast',
+      category: 'programs',
+      categoryLabel: 'Programs',
+      fileSize: 'Streaming HD',
+      sizeBytes: 110000000,
+      durationOrVersion: '42:15',
+      durationSeconds: 2535,
+      contentTypeTag: 'Program',
+      qualityBadge: 'Broadcast HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/LXb3EKWsInQ/mqdefault.jpg',
+      fallbackGradient: 'from-indigo-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.85,
+      tags: ['Programs', 'TV Show', 'Culture'],
+      description: 'Full-length cultural & exploration TV program.',
+      youtubeId: 'LXb3EKWsInQ',
+    },
+  ],
+  'Talk Shows': [
+    {
+      id: 'yt-YE7VzlLtp-4',
+      title: 'Global Comedy & Celebrity Late Night Talk Show',
+      subtitle: 'Entertainment Stage Podcast',
+      category: 'talk_shows',
+      categoryLabel: 'Talk Shows',
+      fileSize: 'Streaming HD',
+      sizeBytes: 98000000,
+      durationOrVersion: '38:50',
+      durationSeconds: 2330,
+      contentTypeTag: 'Talk Show',
+      qualityBadge: 'Talk Show HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/mqdefault.jpg',
+      fallbackGradient: 'from-orange-950 via-neutral-950 to-black',
+      downloadsCount: 'YouTube',
+      rating: 4.88,
+      tags: ['Talk Shows', 'Interview', 'Comedy'],
+      description: 'Engaging host interviews and lively panel talk show.',
+      youtubeId: 'YE7VzlLtp-4',
+    },
+  ],
+  'Hollywood & English': [
     {
       id: 'yt-R6MlUcmOul8',
-      title: 'Tears of Steel - Sci-Fi Action Feature Film 4K',
-      subtitle: 'Blender Foundation Cinema',
+      title: 'Tears of Steel - English Sci-Fi Action Short Film 4K',
+      subtitle: 'Blender Foundation Studio',
       category: 'movies',
-      categoryLabel: 'Full Movies',
+      categoryLabel: 'Hollywood & English',
       fileSize: 'Streaming 4K',
       sizeBytes: 180000000,
-      durationOrVersion: 'Movie 4K',
+      durationOrVersion: '12:14',
+      durationSeconds: 734,
+      contentTypeTag: 'Movie',
       qualityBadge: '4K Stream',
-      thumbnailUrl: 'https://i.ytimg.com/vi/R6MlUcmOul8/hqdefault.jpg',
+      thumbnailUrl: 'https://i.ytimg.com/vi/R6MlUcmOul8/mqdefault.jpg',
       fallbackGradient: 'from-cyan-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
       rating: 4.9,
-      tags: ['Full Movies', 'Sci-Fi', '4K'],
-      description: 'Clean sci-fi action film in 4K UHD.',
+      tags: ['Hollywood & English', 'Sci-Fi', '4K'],
+      description: 'Clean English sci-fi action short film in 4K UHD.',
       youtubeId: 'R6MlUcmOul8',
     },
-    {
-      id: 'yt-YE7VzlLtp-4',
-      title: 'Big Buck Bunny - Full Family Animated Adventure 4K 60fps',
-      subtitle: 'Blender Foundation',
-      category: 'movies',
-      categoryLabel: 'Full Movies',
-      fileSize: 'Streaming 4K',
-      sizeBytes: 150000000,
-      durationOrVersion: '4K 60FPS',
-      qualityBadge: '4K Stream',
-      thumbnailUrl: 'https://i.ytimg.com/vi/YE7VzlLtp-4/hqdefault.jpg',
-      fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Full Movies', 'Family', '4K'],
-      description: 'Award-winning family animated comedy film.',
-      youtubeId: 'YE7VzlLtp-4',
-    },
+  ],
+  'Pakistani Dramas': [
     {
       id: 'yt-eRsGyueVLvQ',
-      title: 'Sintel - Fantasy Adventure Movie HD',
-      subtitle: 'Cinema Fantasy Studio',
-      category: 'movies',
-      categoryLabel: 'Full Movies',
+      title: 'Sintel - Award Winning Fantasy Drama Short Film',
+      subtitle: 'Blender Studio',
+      category: 'dramas',
+      categoryLabel: 'Dramas',
       fileSize: 'Streaming HD',
-      sizeBytes: 125000000,
-      durationOrVersion: 'Movie HD',
-      qualityBadge: '1080p Stream',
-      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      sizeBytes: 85000000,
+      durationOrVersion: '44:00',
+      durationSeconds: 2640,
+      contentTypeTag: 'Drama',
+      qualityBadge: 'YouTube HD',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/mqdefault.jpg',
       fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
       rating: 4.9,
-      tags: ['Full Movies', 'Fantasy', 'HD'],
-      description: 'Dramatic fantasy adventure feature.',
+      tags: ['Dramas', 'HD'],
+      description: 'Full dramatic feature stream.',
       youtubeId: 'eRsGyueVLvQ',
-    },
-  ],
-  'Live TV/Trending': [
-    {
-      id: 'yt-aqz-KE-bpKQ',
-      title: '4K 60FPS Live Action & Nature Showcase Stream',
-      subtitle: 'Global Trending Hub',
-      category: 'movies',
-      categoryLabel: 'Live TV/Trending',
-      fileSize: 'Streaming 4K',
-      sizeBytes: 95000000,
-      durationOrVersion: '4K 60FPS',
-      qualityBadge: 'Live Trending HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg',
-      fallbackGradient: 'from-emerald-950 via-neutral-950 to-black',
-      downloadsCount: 'YouTube',
-      rating: 4.9,
-      tags: ['Live TV', 'Trending', '4K'],
-      description: 'Clean trending 4K 60FPS live showcase.',
-      youtubeId: 'aqz-KE-bpKQ',
-    },
-    {
-      id: 'yt-jfKfPfyJRdk',
-      title: '24/7 Live Lo-Fi Chill & Global Study Radio',
-      subtitle: 'Lofi Girl Live Stream',
-      category: 'songs',
-      categoryLabel: 'Live TV/Trending',
-      fileSize: 'Live Stream',
-      sizeBytes: 45000000,
-      durationOrVersion: 'LIVE 24/7',
-      qualityBadge: 'Live Radio HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
-      fallbackGradient: 'from-rose-950 via-purple-950 to-black',
-      downloadsCount: 'Live',
-      rating: 4.95,
-      tags: ['Live TV', '24/7 Radio', 'Music'],
-      description: 'Continuous 24/7 live music radio broadcast.',
-      youtubeId: 'jfKfPfyJRdk',
     },
   ],
   'Turkish Dramas': [
@@ -656,9 +501,11 @@ const CURATED_FALLBACK_VIDEOS: Record<string, DownloadItem[]> = {
       categoryLabel: 'Turkish Dramas',
       fileSize: 'Streaming HD',
       sizeBytes: 85000000,
-      durationOrVersion: 'Drama HD',
+      durationOrVersion: '52:10',
+      durationSeconds: 3130,
+      contentTypeTag: 'Drama',
       qualityBadge: 'YouTube HD',
-      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/hqdefault.jpg',
+      thumbnailUrl: 'https://i.ytimg.com/vi/eRsGyueVLvQ/mqdefault.jpg',
       fallbackGradient: 'from-purple-950 via-neutral-950 to-black',
       downloadsCount: 'YouTube',
       rating: 4.9,
@@ -1341,7 +1188,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     try {
       let mappedResults: DownloadItem[] = [];
 
-      // Tier 1: Official YouTube Data API v3 (maxResults=10 per page + pageToken for low RAM)
+      // Tier 1: Official YouTube Data API v3 (maxResults=10 + videos?part=contentDetails,snippet for exact durations & tags)
       if (effectiveKey) {
         try {
           const tokenParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
@@ -1353,28 +1200,97 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
             const data = await res.json();
             resolvedNextToken = typeof data?.nextPageToken === 'string' ? data.nextPageToken : null;
             resolvedPrevToken = typeof data?.prevPageToken === 'string' ? data.prevPageToken : null;
-            if (Array.isArray(data?.items) && data.items.length > 0) {
-              mappedResults = data.items
-                .filter((item: any) => item.id?.videoId)
-                .slice(0, HUB_PAGE_SIZE)
-                .map((item: any) => ({
-                  id: `yt-${item.id.videoId}`,
-                  title: decodeHtmlEntities(item.snippet?.title || 'YouTube Video'),
-                  subtitle: decodeHtmlEntities(item.snippet?.channelTitle || 'YouTube Channel'),
-                  category: (selectedCategory === 'all' ? 'movies' : selectedCategory) as DownloadCategory,
-                  categoryLabel: 'YouTube Live',
-                  fileSize: 'Streaming HD',
+            const searchItems = Array.isArray(data?.items)
+              ? data.items.filter((item: any) => item.id?.videoId).slice(0, HUB_PAGE_SIZE)
+              : [];
+
+            if (searchItems.length > 0) {
+              const videoIds = searchItems.map((item: any) => item.id.videoId as string);
+              const detailsById: Record<
+                string,
+                {
+                  durationSeconds?: number;
+                  formattedDuration?: string;
+                  title?: string;
+                  description?: string;
+                  channelTitle?: string;
+                  tags?: string[];
+                  isLive?: boolean;
+                }
+              > = {};
+
+              // Fetch exact durations & full snippets via YouTube Data API v3 videos?part=contentDetails,snippet
+              try {
+                const videosEndpoint = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${encodeURIComponent(
+                  videoIds.join(',')
+                )}&key=${encodeURIComponent(effectiveKey)}`;
+                const detailsRes = await fetchWithTimeout(videosEndpoint, 5000);
+                if (detailsRes.ok) {
+                  const detailsData = await detailsRes.json();
+                  if (Array.isArray(detailsData?.items)) {
+                    for (const v of detailsData.items) {
+                      if (!v?.id) continue;
+                      const isLive = v.snippet?.liveBroadcastContent === 'live';
+                      const secs = parseIso8601DurationToSeconds(v.contentDetails?.duration);
+                      detailsById[v.id] = {
+                        durationSeconds: secs,
+                        formattedDuration: formatVideoDuration(secs, isLive),
+                        title: v.snippet?.title,
+                        description: v.snippet?.description,
+                        channelTitle: v.snippet?.channelTitle,
+                        tags: Array.isArray(v.snippet?.tags) ? v.snippet.tags.slice(0, 6) : [],
+                        isLive,
+                      };
+                    }
+                  }
+                }
+              } catch {
+                // Proceed smoothly with search snippet fallback if videos endpoint times out
+              }
+
+              mappedResults = searchItems.map((item: any) => {
+                const vidId = item.id.videoId as string;
+                const detail = detailsById[vidId];
+                const title = decodeHtmlEntities(detail?.title || item.snippet?.title || 'YouTube Video');
+                const subtitle = decodeHtmlEntities(
+                  detail?.channelTitle || item.snippet?.channelTitle || 'YouTube Channel'
+                );
+                const description = decodeHtmlEntities(
+                  detail?.description || item.snippet?.description || ''
+                );
+                const styleTag = classifyVideoContentType({
+                  title,
+                  subtitle,
+                  description,
+                  tags: detail?.tags,
+                  tabHint: displayLabel || tabCacheKey,
+                  durationSeconds: detail?.durationSeconds,
+                });
+                const durationLabel =
+                  detail?.formattedDuration ||
+                  (item.snippet?.liveBroadcastContent === 'live' ? 'LIVE' : 'HD');
+
+                return {
+                  id: `yt-${vidId}`,
+                  title,
+                  subtitle,
+                  category: mapStyleTagToCategory(styleTag),
+                  categoryLabel: styleTag,
+                  fileSize: detail?.isLive ? 'Live Stream' : 'Streaming HD',
                   sizeBytes: 150000000,
-                  durationOrVersion: 'YouTube HD',
-                  qualityBadge: 'YouTube HD',
-                  thumbnailUrl: `https://i.ytimg.com/vi/${item.id.videoId}/mqdefault.jpg`,
+                  durationOrVersion: durationLabel,
+                  durationSeconds: detail?.durationSeconds,
+                  contentTypeTag: styleTag,
+                  qualityBadge: detail?.isLive ? 'LIVE HD' : 'YouTube HD',
+                  thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
                   fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-                  downloadsCount: 'YouTube',
+                  downloadsCount: detail?.isLive ? 'Live' : 'YouTube',
                   rating: 4.9,
-                  tags: ['YouTube Live', 'Movie Box'],
-                  description: decodeHtmlEntities(item.snippet?.description || ''),
-                  youtubeId: item.id.videoId,
-                }));
+                  tags: [styleTag, ...(detail?.tags?.slice(0, 2) || ['Global Hub'])],
+                  description,
+                  youtubeId: vidId,
+                };
+              });
             }
           }
         } catch {
@@ -1382,7 +1298,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
         }
       }
 
-      // Tier 2: Public Invidious & Piped YouTube search APIs fallback (paginated max 10/page)
+      // Tier 2: Public Invidious & Piped YouTube search APIs fallback (paginated max 10/page with exact seconds duration)
       if (mappedResults.length === 0) {
         const invidiousInstances = [
           `https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video&page=${targetPage}`,
@@ -1404,22 +1320,37 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                 .slice(0, HUB_PAGE_SIZE)
                 .map((item: any) => {
                   const vidId = item.videoId as string;
+                  const title = decodeHtmlEntities(item.title || 'YouTube Video');
+                  const subtitle = decodeHtmlEntities(item.author || 'YouTube Channel');
+                  const description = decodeHtmlEntities(item.description || '');
+                  const secs = typeof item.lengthSeconds === 'number' ? item.lengthSeconds : undefined;
+                  const isLive = Boolean(item.liveNow);
+                  const styleTag = classifyVideoContentType({
+                    title,
+                    subtitle,
+                    description,
+                    tabHint: displayLabel || tabCacheKey,
+                    durationSeconds: secs,
+                  });
+
                   return {
                     id: `yt-${vidId}`,
-                    title: decodeHtmlEntities(item.title || 'YouTube Video'),
-                    subtitle: decodeHtmlEntities(item.author || 'YouTube Channel'),
-                    category: (selectedCategory === 'all' ? 'movies' : selectedCategory) as DownloadCategory,
-                    categoryLabel: 'YouTube Live',
-                    fileSize: 'Streaming HD',
+                    title,
+                    subtitle,
+                    category: mapStyleTagToCategory(styleTag),
+                    categoryLabel: styleTag,
+                    fileSize: isLive ? 'Live Stream' : 'Streaming HD',
                     sizeBytes: 150000000,
-                    durationOrVersion: 'YouTube HD',
-                    qualityBadge: 'YouTube HD',
+                    durationOrVersion: formatVideoDuration(secs, isLive),
+                    durationSeconds: secs,
+                    contentTypeTag: styleTag,
+                    qualityBadge: isLive ? 'LIVE HD' : 'YouTube HD',
                     thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
                     fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-                    downloadsCount: 'YouTube',
+                    downloadsCount: isLive ? 'Live' : 'YouTube',
                     rating: 4.9,
-                    tags: ['YouTube Live', 'Movie Box'],
-                    description: decodeHtmlEntities(item.description || ''),
+                    tags: [styleTag, 'Movie Box'],
+                    description,
                     youtubeId: vidId,
                   };
                 });
@@ -1452,22 +1383,37 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                 .slice(0, HUB_PAGE_SIZE)
                 .map((item: any) => {
                   const vidId = extractYouTubeId(item.url) || '';
+                  const title = decodeHtmlEntities(item.title || 'YouTube Video');
+                  const subtitle = decodeHtmlEntities(item.uploaderName || 'YouTube Channel');
+                  const description = decodeHtmlEntities(item.shortDescription || '');
+                  const secs = typeof item.duration === 'number' && item.duration >= 0 ? item.duration : undefined;
+                  const isLive = secs === 0;
+                  const styleTag = classifyVideoContentType({
+                    title,
+                    subtitle,
+                    description,
+                    tabHint: displayLabel || tabCacheKey,
+                    durationSeconds: secs,
+                  });
+
                   return {
                     id: `yt-${vidId}`,
-                    title: decodeHtmlEntities(item.title || 'YouTube Video'),
-                    subtitle: decodeHtmlEntities(item.uploaderName || 'YouTube Channel'),
-                    category: (selectedCategory === 'all' ? 'movies' : selectedCategory) as DownloadCategory,
-                    categoryLabel: 'YouTube Live',
-                    fileSize: 'Streaming HD',
+                    title,
+                    subtitle,
+                    category: mapStyleTagToCategory(styleTag),
+                    categoryLabel: styleTag,
+                    fileSize: isLive ? 'Live Stream' : 'Streaming HD',
                     sizeBytes: 150000000,
-                    durationOrVersion: 'YouTube HD',
-                    qualityBadge: 'YouTube HD',
+                    durationOrVersion: formatVideoDuration(secs, isLive),
+                    durationSeconds: secs,
+                    contentTypeTag: styleTag,
+                    qualityBadge: isLive ? 'LIVE HD' : 'YouTube HD',
                     thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
                     fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-                    downloadsCount: 'YouTube',
+                    downloadsCount: isLive ? 'Live' : 'YouTube',
                     rating: 4.9,
-                    tags: ['YouTube Live', 'Movie Box'],
-                    description: decodeHtmlEntities(item.shortDescription || ''),
+                    tags: [styleTag, 'Movie Box'],
+                    description,
                     youtubeId: vidId,
                   };
                 })
@@ -1490,6 +1436,8 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
             Boolean(it.youtubeId) &&
             (it.title.toLowerCase().includes(lookupText) ||
               it.subtitle.toLowerCase().includes(lookupText) ||
+              it.categoryLabel.toLowerCase().includes(lookupText) ||
+              (it.contentTypeTag && it.contentTypeTag.toLowerCase().includes(lookupText)) ||
               it.tags.some((t) => t.toLowerCase().includes(lookupText)))
         );
         const allCatalogYoutube = INITIAL_DOWNLOADS.filter((it) => Boolean(it.youtubeId));
@@ -1502,13 +1450,31 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
 
         mappedResults = combinedPool
           .slice(startOffset, startOffset + HUB_PAGE_SIZE)
-          .map((it) => ({
-            ...it,
-            id: it.id.startsWith('yt-') ? it.id : `yt-${it.youtubeId}`,
-            thumbnailUrl: it.youtubeId
-              ? `https://i.ytimg.com/vi/${it.youtubeId}/mqdefault.jpg`
-              : it.thumbnailUrl,
-          }));
+          .map((it) => {
+            const styleTag =
+              it.contentTypeTag ||
+              classifyVideoContentType({
+                title: it.title,
+                subtitle: it.subtitle,
+                description: it.description,
+                tags: it.tags,
+                category: it.category,
+                tabHint: displayLabel || tabCacheKey,
+                durationSeconds: it.durationSeconds,
+              });
+            return {
+              ...it,
+              id: it.id.startsWith('yt-') ? it.id : `yt-${it.youtubeId}`,
+              contentTypeTag: styleTag,
+              durationOrVersion:
+                it.durationSeconds !== undefined
+                  ? formatVideoDuration(it.durationSeconds)
+                  : it.durationOrVersion,
+              thumbnailUrl: it.youtubeId
+                ? `https://i.ytimg.com/vi/${it.youtubeId}/mqdefault.jpg`
+                : it.thumbnailUrl,
+            };
+          });
       }
 
       if (tabCacheKey && targetPage === 1 && mappedResults.length > 0) {
@@ -1685,8 +1651,12 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     return items
       .filter((item) => {
         // Category filter
-        if (selectedCategory !== 'all' && item.category !== selectedCategory) {
-          return false;
+        if (selectedCategory !== 'all') {
+          if (selectedCategory === 'tilawat') {
+            if (item.category !== 'tilawat' && item.category !== 'quran') return false;
+          } else if (item.category !== selectedCategory) {
+            return false;
+          }
         }
         // Search filter
         if (searchQuery.trim()) {
@@ -1695,7 +1665,8 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
           const matchSubtitle = item.subtitle.toLowerCase().includes(q);
           const matchTags = item.tags.some((t) => t.toLowerCase().includes(q));
           const matchBadge = item.qualityBadge.toLowerCase().includes(q);
-          return matchTitle || matchSubtitle || matchTags || matchBadge;
+          const matchType = item.contentTypeTag?.toLowerCase().includes(q) || false;
+          return matchTitle || matchSubtitle || matchTags || matchBadge || matchType;
         }
         return true;
       })
@@ -1752,8 +1723,19 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
         return <Film className={className} />;
       case 'cartoons':
         return <Smile className={className} />;
+      case 'realistic':
+        return <Compass className={className} />;
+      case 'rhymes':
+        return <Baby className={className} />;
+      case 'naat':
+        return <HeartHandshake className={className} />;
+      case 'tilawat':
       case 'quran':
         return <BookOpen className={className} />;
+      case 'programs':
+        return <Radio className={className} />;
+      case 'talk_shows':
+        return <Mic className={className} />;
       default:
         return <Sparkles className={className} />;
     }
@@ -2634,6 +2616,8 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                     const count =
                       cat.id === 'all'
                         ? items.length
+                        : cat.id === 'tilawat'
+                        ? items.filter((it) => it.category === 'tilawat' || it.category === 'quran').length
                         : items.filter((it) => it.category === cat.id).length;
 
                     return (
@@ -2729,6 +2713,22 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                     const isCurrentlyPlaying = previewItem?.id === item.id;
                     const isYouTubeCard =
                       Boolean(item.youtubeId) && (searchSource === 'youtube' || item.id.startsWith('yt-'));
+                    const styleTag: ContentStyleTag | null =
+                      item.category === 'apps'
+                        ? null
+                        : item.contentTypeTag ||
+                          classifyVideoContentType({
+                            title: item.title,
+                            subtitle: item.subtitle,
+                            description: item.description,
+                            tags: item.tags,
+                            category: item.category,
+                            durationSeconds: item.durationSeconds,
+                          });
+                    const formattedDuration =
+                      item.durationSeconds !== undefined
+                        ? formatVideoDuration(item.durationSeconds)
+                        : item.durationOrVersion;
 
                     return (
                       <div
@@ -2774,9 +2774,32 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                     <Play className="w-5 h-5 fill-white ml-0.5" />
                                   </div>
                                 </div>
+
                                 <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-red-600/90 text-[10px] font-black text-white uppercase flex items-center gap-1">
                                   <Youtube className="w-3 h-3 fill-white" />
                                   <span>{isCurrentlyPlaying ? 'Playing' : 'Lite HD'}</span>
+                                </span>
+
+                                {/* Bottom-Left: Bold Color-Coded Category & Style Tag */}
+                                {styleTag && (
+                                  <span
+                                    className={`absolute bottom-2 left-2 px-2 py-0.5 rounded-md border text-[10px] font-black uppercase tracking-wide shadow-md ${getContentTagBadgeClasses(
+                                      styleTag
+                                    )}`}
+                                  >
+                                    {styleTag}
+                                  </span>
+                                )}
+
+                                {/* Bottom-Right: Exact Duration Pill Badge */}
+                                <span
+                                  className={`absolute bottom-2 right-2 px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-black tabular-nums shadow-md border ${
+                                    formattedDuration === 'LIVE'
+                                      ? 'bg-red-600/95 text-white border-red-300/60'
+                                      : 'bg-black/90 text-white border-white/15'
+                                  }`}
+                                >
+                                  {formattedDuration}
                                 </span>
                               </div>
 
@@ -2793,7 +2816,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                           <>
                             <div className="flex gap-3.5">
                               {/* Thumbnail with quality badge & Hover Play Overlay */}
-                              <div className="relative w-22 h-22 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-neutral-800 shrink-0 border border-neutral-700/80 shadow-md group-hover:scale-102 transition-transform">
+                              <div className="relative w-24 h-24 sm:w-28 sm:h-24 rounded-xl overflow-hidden bg-neutral-800 shrink-0 border border-neutral-700/80 shadow-md group-hover:scale-102 transition-transform">
                                 {item.youtubeId ? (
                                   <LiteYouTubeThumb
                                     videoId={item.youtubeId}
@@ -2810,10 +2833,10 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                     decoding="async"
                                   />
                                 )}
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-transparent pointer-events-none" />
 
                                 {/* Category Icon Badge */}
-                                <span className="absolute top-1.5 left-1.5 p-1 rounded-md bg-black/70 text-pink-400 text-[10px]">
+                                <span className="absolute top-1.5 left-1.5 p-1 rounded-md bg-black/75 text-pink-400 text-[10px]">
                                   {renderCategoryIcon(item.category, 'w-3 h-3')}
                                 </span>
 
@@ -2826,16 +2849,31 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                   </div>
                                 )}
 
-                                {/* Duration / Version Pill */}
-                                <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-sm bg-black/80 text-[9px] font-bold text-neutral-200">
-                                  {item.durationOrVersion}
+                                {/* Bottom-Right: Clean Dark Duration Pill Badge */}
+                                <span
+                                  className={`absolute bottom-1 right-1 px-1.5 py-0.5 rounded-md text-[10px] font-black tabular-nums border shadow-md ${
+                                    formattedDuration === 'LIVE'
+                                      ? 'bg-red-600/95 text-white border-red-300/60'
+                                      : 'bg-black/90 text-white border-white/15'
+                                  }`}
+                                >
+                                  {formattedDuration}
                                 </span>
                               </div>
 
                               {/* Item Details */}
                               <div className="flex-1 min-w-0">
-                                {/* Quality Badge */}
+                                {/* Content Type & Quality Badge Row */}
                                 <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                  {styleTag && (
+                                    <span
+                                      className={`text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-md border ${getContentTagBadgeClasses(
+                                        styleTag
+                                      )}`}
+                                    >
+                                      {styleTag}
+                                    </span>
+                                  )}
                                   <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300">
                                     {item.qualityBadge}
                                   </span>
@@ -2846,7 +2884,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                   {item.youtubeId && (
                                     <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded-md bg-red-500/20 text-red-300 border border-red-500/30 flex items-center gap-0.5">
                                       <Youtube className="w-2.5 h-2.5 fill-red-400" />
-                                      <span>Tap to Play</span>
+                                      <span>Play</span>
                                     </span>
                                   )}
                                 </div>
