@@ -175,7 +175,7 @@ const SidebarDesktopComponent: React.FC<SidebarDesktopProps> = ({
             </span>
           </button>
 
-          {/* Global YouTube / Movies & Download Hub Tab */}
+          {/* MOVIX (Movie Box) Worldwide Cinema, Dramas, Songs & Quran Tab */}
           <button
             type="button"
             onClick={() => onSelectTab('downloads')}
@@ -187,10 +187,10 @@ const SidebarDesktopComponent: React.FC<SidebarDesktopProps> = ({
           >
             <div className="flex items-center gap-3.5">
               <Film className="w-5 h-5 shrink-0 text-cyan-400 group-hover:scale-110 transition-transform" />
-              <span>YouTube / Movies</span>
+              <span>MOVIX</span>
             </div>
-            <span className="text-[10px] uppercase font-black tracking-wider bg-red-500/20 text-rose-300 px-2 py-0.5 rounded-full border border-red-500/35">
-              Global
+            <span className="text-[10px] uppercase font-black tracking-wider bg-pink-500/20 text-pink-300 px-2 py-0.5 rounded-full border border-pink-500/35">
+              Movie Box
             </span>
           </button>
 

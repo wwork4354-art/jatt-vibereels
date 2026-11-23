@@ -42,10 +42,16 @@ import {
   HeartHandshake,
   Radio,
   Mic,
+  ShieldCheck,
+  Languages,
+  Eye,
+  EyeOff,
+  Loader2,
 } from 'lucide-react';
 import Hls from 'hls.js';
-import { DownloadItem, ContentStyleTag } from '../types';
+import { DownloadItem, ContentStyleTag, UserAccount } from '../types';
 import { INITIAL_DOWNLOADS, DOWNLOAD_CATEGORIES } from '../data/mockDownloads';
+import { isMainAdminAccount } from '../data/mockUsers';
 import { soundEngine } from '../utils/soundEngine';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
 import {
@@ -78,9 +84,19 @@ import {
   sanitizeText,
   sanitizeSafeUrl,
 } from '../utils/security';
+import {
+  MOVIX_INSTANT_ROWS,
+  MOVIX_LANGUAGES,
+  containsAdultSearchTerms,
+  getMovixApiKeys,
+  isFamilySafeMediaItem,
+  resolveMovixDownloadUrl,
+  saveMovixApiKeys,
+  searchMovixWorldwide,
+} from '../utils/movixApi';
 
 const OFFLINE_WATCHLIST_STORAGE_KEY = 'jatt_offline_watchlist';
-const HUB_PAGE_SIZE = 10;
+const HUB_PAGE_SIZE = 12;
 
 interface GlobalHubTab {
   id:
@@ -522,6 +538,7 @@ interface DownloadHubProps {
   onShowToast: (msg: string) => void;
   isMuted: boolean;
   onToggleMute: () => void;
+  currentUser?: UserAccount | null;
 }
 
 interface DownloadProgressState {
@@ -539,11 +556,20 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
   onShowToast,
   isMuted,
   onToggleMute,
+  currentUser,
 }) => {
+  const isAdmin = isMainAdminAccount(currentUser);
   const isOnline = useOnlineStatus();
   const { isRamSaverMode, toggleRamSaverMode } = useRamSaverMode();
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const [items] = useState<DownloadItem[]>(INITIAL_DOWNLOADS);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
+  const [isMovixSettingsOpen, setIsMovixSettingsOpen] = useState<boolean>(false);
+  const [tmdbKeyInput, setTmdbKeyInput] = useState<string>(() => getMovixApiKeys().tmdbApiKey);
+  const [youtubeKeyInput, setYoutubeKeyInput] = useState<string>(() => getMovixApiKeys().youtubeApiKey);
+  const [showApiKeys, setShowApiKeys] = useState<boolean>(false);
+  const [resolvingDownloadId, setResolvingDownloadId] = useState<string | null>(null);
+  const [watchPlaybackTrigger, setWatchPlaybackTrigger] = useState<number>(0);
   const [selectedCategory, setSelectedCategory] = useState<string>(() => {
     try {
       return sessionStorage.getItem('jatt_hub_selected_category') || 'all';
@@ -1042,7 +1068,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     onShowToast('Playing in 16:9 Widescreen Landscape Fullscreen!');
   };
 
-  // Toggle Offline Watchlist / Cache thumbnail locally for YouTube-sourced movies & videos
+  // Toggle Offline Watchlist / Cache thumbnail locally for MOVIX movies, dramas, songs & Quran
   const handleToggleWatchlist = (item: DownloadItem) => {
     setOfflineWatchlist((prev) => {
       const exists = prev.some((w) => w.id === item.id);
@@ -1060,12 +1086,73 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
       }
       if (!exists) {
         soundEngine.playDownloadComplete();
-        onShowToast(`Saved "${item.title}" to Offline Watchlist!`);
+        onShowToast(`Saved "${item.title}" to MOVIX Watchlist!`);
       } else {
-        onShowToast(`Removed "${item.title}" from Offline Watchlist`);
+        onShowToast(`Removed "${item.title}" from Watchlist`);
       }
       return next;
     });
+  };
+
+  // Trigger real media file download (iTunes MP4, Archive.org MP4, Direct Video, or muxed stream)
+  const handleMovixDownloadItem = async (item: DownloadItem) => {
+    if (resolvingDownloadId === item.id) return;
+    setResolvingDownloadId(item.id);
+    handleStartDownload(item);
+
+    try {
+      const directUrl = await resolveMovixDownloadUrl(item);
+      if (directUrl) {
+        const safeHref = sanitizeSafeUrl(directUrl, {
+          allowBlob: false,
+          allowDataImageAudio: false,
+        });
+        if (safeHref) {
+          const safeFileName = `${(item.title || 'movix-media')
+            .replace(/[^a-z0-9\-_ ]+/gi, '')
+            .trim()
+            .replace(/\s+/g, '_')
+            .slice(0, 48)}.mp4`;
+          const link = document.createElement('a');
+          link.href = safeHref;
+          link.download = safeFileName;
+          link.rel = 'noopener noreferrer';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          onShowToast(`Downloading "${item.title}" MP4 file...`);
+          return;
+        }
+      }
+
+      // If stream is YouTube embed-only without CORS-accessible MP4 mirror, save to Watchlist too
+      setOfflineWatchlist((prev) => {
+        if (prev.some((w) => w.id === item.id)) return prev;
+        const next = [item, ...prev];
+        try {
+          localStorage.setItem(OFFLINE_WATCHLIST_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+      onShowToast(`Saved "${item.title}" to Saved & Watchlist for quick access!`);
+    } finally {
+      setResolvingDownloadId(null);
+    }
+  };
+
+  // Watch CTA handler inside Full HD Player Modal
+  const handleWatchAction = (item: DownloadItem) => {
+    setWatchPlaybackTrigger((n) => n + 1);
+    if (directVideoRef.current) {
+      void directVideoRef.current.play().catch(() => {});
+    }
+    if (item.youtubeId) {
+      setReloadNonce((n) => n + 1);
+    }
+    void enterFullscreenAndLandscape('fit');
+    onShowToast(`Watching "${item.title}" in Full HD!`);
   };
 
   // Switch between Global Content Hub category tabs with instant sessionStorage cache (max 10/page)
@@ -1124,21 +1211,29 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     void handleSearchYouTubeLive(tab.query, tab.id, tab.label, 1, null);
   };
 
-  // Paginated multi-tier search (maxResults=10 per page to keep 3GB RAM phones fast & lag-free)
+  // Paginated multi-provider family-safe worldwide MOVIX search (TMDB + YouTube + iTunes + Archive + Invidious/Piped)
   const handleSearchYouTubeLive = async (
     targetQuery?: string,
     tabCacheKey?: GlobalHubTab['id'],
     displayLabel?: string,
     targetPage = 1,
-    pageToken: string | null = null
+    pageToken: string | null = null,
+    languageOverride?: string
   ) => {
-    if (!isOnline) {
-      onShowToast('Offline Mode: Online YouTube search needs internet. Watch Saved / Downloads offline!');
-      return;
-    }
     const query = sanitizeText(targetQuery !== undefined ? targetQuery : searchQuery, 600);
     if (!query) {
-      onShowToast('Type a movie, drama, or song title — or paste any video URL.');
+      onShowToast('Type a movie, drama, song, clip, or Quran title in any language.');
+      return;
+    }
+
+    // Strict Family-Safe Shield: Block adult / 18+ / NSFW queries immediately
+    if (containsAdultSearchTerms(query)) {
+      onShowToast('MOVIX Family-Safe Filter: Adult / 18+ content is strictly blocked.');
+      return;
+    }
+
+    if (!isOnline) {
+      onShowToast('Offline Mode: Live worldwide search needs internet. Watch Saved & Watchlist offline!');
       return;
     }
 
@@ -1149,7 +1244,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
         const playable = playParsedUniversalLink(parsedLink);
         openVideoPlayer(playable);
         void enterFullscreenAndLandscape('fit');
-        onShowToast('Link loaded in 16:9 Widescreen Landscape Fullscreen!');
+        onShowToast('Link loaded in MOVIX Full HD Player!');
         return;
       }
     }
@@ -1164,291 +1259,57 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
       displayLabel,
     };
 
-    const effectiveKey = (
-      (import.meta.env.VITE_YOUTUBE_API_KEY as string | undefined) ||
-      localStorage.getItem('jatt_youtube_api_key') ||
-      ''
-    ).trim();
-
     setIsSearchingYouTube(true);
 
-    const fetchWithTimeout = async (url: string, ms = 5500) => {
-      const controller = new AbortController();
-      const timer = window.setTimeout(() => controller.abort(), ms);
-      try {
-        return await fetch(url, { signal: controller.signal });
-      } finally {
-        window.clearTimeout(timer);
-      }
-    };
-
-    let resolvedNextToken: string | null = null;
-    let resolvedPrevToken: string | null = null;
-
     try {
-      let mappedResults: DownloadItem[] = [];
+      const effectiveLang = languageOverride ?? selectedLanguage;
+      const liveRes = await searchMovixWorldwide({
+        query,
+        languageId: effectiveLang,
+        page: targetPage,
+        pageToken,
+        hintLabel: displayLabel || tabCacheKey,
+      });
 
-      // Tier 1: Official YouTube Data API v3 (maxResults=10 + videos?part=contentDetails,snippet for exact durations & tags)
-      if (effectiveKey) {
-        try {
-          const tokenParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
-          const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=${HUB_PAGE_SIZE}&type=video&safeSearch=strict&videoEmbeddable=true${tokenParam}&q=${encodeURIComponent(
-            query
-          )}&key=${encodeURIComponent(effectiveKey)}`;
-          const res = await fetchWithTimeout(endpoint, 6000);
-          if (res.ok) {
-            const data = await res.json();
-            resolvedNextToken = typeof data?.nextPageToken === 'string' ? data.nextPageToken : null;
-            resolvedPrevToken = typeof data?.prevPageToken === 'string' ? data.prevPageToken : null;
-            const searchItems = Array.isArray(data?.items)
-              ? data.items.filter((item: any) => item.id?.videoId).slice(0, HUB_PAGE_SIZE)
-              : [];
-
-            if (searchItems.length > 0) {
-              const videoIds = searchItems.map((item: any) => item.id.videoId as string);
-              const detailsById: Record<
-                string,
-                {
-                  durationSeconds?: number;
-                  formattedDuration?: string;
-                  title?: string;
-                  description?: string;
-                  channelTitle?: string;
-                  tags?: string[];
-                  isLive?: boolean;
-                }
-              > = {};
-
-              // Fetch exact durations & full snippets via YouTube Data API v3 videos?part=contentDetails,snippet
-              try {
-                const videosEndpoint = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${encodeURIComponent(
-                  videoIds.join(',')
-                )}&key=${encodeURIComponent(effectiveKey)}`;
-                const detailsRes = await fetchWithTimeout(videosEndpoint, 5000);
-                if (detailsRes.ok) {
-                  const detailsData = await detailsRes.json();
-                  if (Array.isArray(detailsData?.items)) {
-                    for (const v of detailsData.items) {
-                      if (!v?.id) continue;
-                      const isLive = v.snippet?.liveBroadcastContent === 'live';
-                      const secs = parseIso8601DurationToSeconds(v.contentDetails?.duration);
-                      detailsById[v.id] = {
-                        durationSeconds: secs,
-                        formattedDuration: formatVideoDuration(secs, isLive),
-                        title: v.snippet?.title,
-                        description: v.snippet?.description,
-                        channelTitle: v.snippet?.channelTitle,
-                        tags: Array.isArray(v.snippet?.tags) ? v.snippet.tags.slice(0, 6) : [],
-                        isLive,
-                      };
-                    }
-                  }
-                }
-              } catch {
-                // Proceed smoothly with search snippet fallback if videos endpoint times out
-              }
-
-              mappedResults = searchItems.map((item: any) => {
-                const vidId = item.id.videoId as string;
-                const detail = detailsById[vidId];
-                const title = decodeHtmlEntities(detail?.title || item.snippet?.title || 'YouTube Video');
-                const subtitle = decodeHtmlEntities(
-                  detail?.channelTitle || item.snippet?.channelTitle || 'YouTube Channel'
-                );
-                const description = decodeHtmlEntities(
-                  detail?.description || item.snippet?.description || ''
-                );
-                const styleTag = classifyVideoContentType({
-                  title,
-                  subtitle,
-                  description,
-                  tags: detail?.tags,
-                  tabHint: displayLabel || tabCacheKey,
-                  durationSeconds: detail?.durationSeconds,
-                });
-                const durationLabel =
-                  detail?.formattedDuration ||
-                  (item.snippet?.liveBroadcastContent === 'live' ? 'LIVE' : 'HD');
-
-                return {
-                  id: `yt-${vidId}`,
-                  title,
-                  subtitle,
-                  category: mapStyleTagToCategory(styleTag),
-                  categoryLabel: styleTag,
-                  fileSize: detail?.isLive ? 'Live Stream' : 'Streaming HD',
-                  sizeBytes: 150000000,
-                  durationOrVersion: durationLabel,
-                  durationSeconds: detail?.durationSeconds,
-                  contentTypeTag: styleTag,
-                  qualityBadge: detail?.isLive ? 'LIVE HD' : 'YouTube HD',
-                  thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
-                  fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-                  downloadsCount: detail?.isLive ? 'Live' : 'YouTube',
-                  rating: 4.9,
-                  tags: [styleTag, ...(detail?.tags?.slice(0, 2) || ['Global Hub'])],
-                  description,
-                  youtubeId: vidId,
-                };
-              });
-            }
-          }
-        } catch {
-          // Silently fall back to Tier 2 public search APIs
-        }
+      if (liveRes.blockedForSafety) {
+        onShowToast('MOVIX Family-Safe Filter: Adult / 18+ content is strictly blocked.');
+        return;
       }
 
-      // Tier 2: Public Invidious & Piped YouTube search APIs fallback (paginated max 10/page with exact seconds duration)
-      if (mappedResults.length === 0) {
-        const invidiousInstances = [
-          `https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video&page=${targetPage}`,
-          `https://invidious.nerdvpn.de/api/v1/search?q=${encodeURIComponent(query)}&type=video&page=${targetPage}`,
-          `https://yewtu.be/api/v1/search?q=${encodeURIComponent(query)}&type=video&page=${targetPage}`,
-        ];
+      let mappedResults: DownloadItem[] = liveRes.items.filter((it) => isFamilySafeMediaItem(it));
+      const resolvedNextToken = liveRes.nextPageToken;
+      const resolvedPrevToken = liveRes.prevPageToken;
 
-        for (const url of invidiousInstances) {
-          if (mappedResults.length > 0) break;
-          try {
-            const res = await fetchWithTimeout(url, 5500);
-            if (!res.ok) continue;
-            const list = await res.json();
-            if (Array.isArray(list) && list.length > 0) {
-              const filteredList = list.filter(
-                (item: any) => item?.videoId && (item.type === 'video' || !item.type)
-              );
-              mappedResults = filteredList
-                .slice(0, HUB_PAGE_SIZE)
-                .map((item: any) => {
-                  const vidId = item.videoId as string;
-                  const title = decodeHtmlEntities(item.title || 'YouTube Video');
-                  const subtitle = decodeHtmlEntities(item.author || 'YouTube Channel');
-                  const description = decodeHtmlEntities(item.description || '');
-                  const secs = typeof item.lengthSeconds === 'number' ? item.lengthSeconds : undefined;
-                  const isLive = Boolean(item.liveNow);
-                  const styleTag = classifyVideoContentType({
-                    title,
-                    subtitle,
-                    description,
-                    tabHint: displayLabel || tabCacheKey,
-                    durationSeconds: secs,
-                  });
-
-                  return {
-                    id: `yt-${vidId}`,
-                    title,
-                    subtitle,
-                    category: mapStyleTagToCategory(styleTag),
-                    categoryLabel: styleTag,
-                    fileSize: isLive ? 'Live Stream' : 'Streaming HD',
-                    sizeBytes: 150000000,
-                    durationOrVersion: formatVideoDuration(secs, isLive),
-                    durationSeconds: secs,
-                    contentTypeTag: styleTag,
-                    qualityBadge: isLive ? 'LIVE HD' : 'YouTube HD',
-                    thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
-                    fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-                    downloadsCount: isLive ? 'Live' : 'YouTube',
-                    rating: 4.9,
-                    tags: [styleTag, 'Movie Box'],
-                    description,
-                    youtubeId: vidId,
-                  };
-                });
-              if (filteredList.length >= HUB_PAGE_SIZE) {
-                resolvedNextToken = `page-${targetPage + 1}`;
-              }
-            }
-          } catch {
-            // Try next mirror
-          }
-        }
-      }
-
-      if (mappedResults.length === 0) {
-        const pipedInstances = [
-          `https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=all`,
-          `https://pipedapi.adminforge.de/search?q=${encodeURIComponent(query)}&filter=all`,
-        ];
-
-        for (const url of pipedInstances) {
-          if (mappedResults.length > 0) break;
-          try {
-            const res = await fetchWithTimeout(url, 5500);
-            if (!res.ok) continue;
-            const data = await res.json();
-            const list = Array.isArray(data?.items) ? data.items : [];
-            const streams = list.filter((it: any) => it?.url && it.url.includes('v='));
-            if (streams.length > 0) {
-              mappedResults = streams
-                .slice(0, HUB_PAGE_SIZE)
-                .map((item: any) => {
-                  const vidId = extractYouTubeId(item.url) || '';
-                  const title = decodeHtmlEntities(item.title || 'YouTube Video');
-                  const subtitle = decodeHtmlEntities(item.uploaderName || 'YouTube Channel');
-                  const description = decodeHtmlEntities(item.shortDescription || '');
-                  const secs = typeof item.duration === 'number' && item.duration >= 0 ? item.duration : undefined;
-                  const isLive = secs === 0;
-                  const styleTag = classifyVideoContentType({
-                    title,
-                    subtitle,
-                    description,
-                    tabHint: displayLabel || tabCacheKey,
-                    durationSeconds: secs,
-                  });
-
-                  return {
-                    id: `yt-${vidId}`,
-                    title,
-                    subtitle,
-                    category: mapStyleTagToCategory(styleTag),
-                    categoryLabel: styleTag,
-                    fileSize: isLive ? 'Live Stream' : 'Streaming HD',
-                    sizeBytes: 150000000,
-                    durationOrVersion: formatVideoDuration(secs, isLive),
-                    durationSeconds: secs,
-                    contentTypeTag: styleTag,
-                    qualityBadge: isLive ? 'LIVE HD' : 'YouTube HD',
-                    thumbnailUrl: `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
-                    fallbackGradient: 'from-red-950 via-purple-950 to-neutral-950',
-                    downloadsCount: isLive ? 'Live' : 'YouTube',
-                    rating: 4.9,
-                    tags: [styleTag, 'Movie Box'],
-                    description,
-                    youtubeId: vidId,
-                  };
-                })
-                .filter((r: DownloadItem) => Boolean(r.youtubeId));
-            }
-          } catch {
-            // Try next mirror
-          }
-        }
-      }
-
-      // Tier 3: Guaranteed local curated fallback (capped at 10 per page)
+      // Guaranteed local family-safe curated fallback if all live providers returned empty
       if (mappedResults.length === 0) {
         const lookupText = (displayLabel || query).toLowerCase();
         const curatedKey = Object.keys(CURATED_FALLBACK_VIDEOS).find(
           (k) => lookupText.includes(k.toLowerCase()) || k.toLowerCase().includes(lookupText)
         );
-        const catalogMatches = INITIAL_DOWNLOADS.filter(
+        const movixCuratedPool = MOVIX_INSTANT_ROWS.flatMap((row) => row.items);
+        const combinedSource = [...movixCuratedPool, ...INITIAL_DOWNLOADS];
+        const catalogMatches = combinedSource.filter(
           (it) =>
-            Boolean(it.youtubeId) &&
+            isFamilySafeMediaItem(it) &&
             (it.title.toLowerCase().includes(lookupText) ||
               it.subtitle.toLowerCase().includes(lookupText) ||
               it.categoryLabel.toLowerCase().includes(lookupText) ||
+              (it.languageLabel && it.languageLabel.toLowerCase().includes(lookupText)) ||
               (it.contentTypeTag && it.contentTypeTag.toLowerCase().includes(lookupText)) ||
               it.tags.some((t) => t.toLowerCase().includes(lookupText)))
         );
-        const allCatalogYoutube = INITIAL_DOWNLOADS.filter((it) => Boolean(it.youtubeId));
         const combinedPool = [
           ...(curatedKey ? CURATED_FALLBACK_VIDEOS[curatedKey] : []),
           ...catalogMatches,
-          ...(!curatedKey && catalogMatches.length === 0 ? allCatalogYoutube : []),
+          ...(!curatedKey && catalogMatches.length === 0 ? movixCuratedPool : []),
         ];
-        const startOffset = ((targetPage - 1) * HUB_PAGE_SIZE) % Math.max(1, combinedPool.length);
+        const dedupedPool = combinedPool.filter(
+          (it, idx, arr) =>
+            isFamilySafeMediaItem(it) && arr.findIndex((other) => other.id === it.id) === idx
+        );
+        const startOffset = ((targetPage - 1) * HUB_PAGE_SIZE) % Math.max(1, dedupedPool.length);
 
-        mappedResults = combinedPool
+        mappedResults = dedupedPool
           .slice(startOffset, startOffset + HUB_PAGE_SIZE)
           .map((it) => {
             const styleTag =
@@ -1464,20 +1325,16 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
               });
             return {
               ...it,
-              id: it.id.startsWith('yt-') ? it.id : `yt-${it.youtubeId}`,
               contentTypeTag: styleTag,
               durationOrVersion:
                 it.durationSeconds !== undefined
                   ? formatVideoDuration(it.durationSeconds)
                   : it.durationOrVersion,
-              thumbnailUrl: it.youtubeId
-                ? `https://i.ytimg.com/vi/${it.youtubeId}/mqdefault.jpg`
-                : it.thumbnailUrl,
             };
           });
       }
 
-      if (tabCacheKey && targetPage === 1 && mappedResults.length > 0) {
+      if (tabCacheKey && targetPage === 1 && mappedResults.length > 0 && effectiveLang === 'all') {
         try {
           const rawCache = sessionStorage.getItem('jatt_yt_tab_cache');
           const parsed = rawCache ? JSON.parse(rawCache) : {};
@@ -1498,7 +1355,9 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
       setSearchSource('youtube');
       scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       onShowToast(
-        `Page ${targetPage}: Showing ${mappedResults.length} playable videos${displayLabel ? ` in ${displayLabel}` : ` for "${query}"`}`
+        `MOVIX found ${mappedResults.length} family-safe results${
+          displayLabel ? ` in ${displayLabel}` : ` for "${query}"`
+        }`
       );
     } finally {
       setIsSearchingYouTube(false);
@@ -1554,8 +1413,14 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
           const state = next[id];
           if (state && state.isDownloading && !state.isPaused && !state.isCompleted) {
             hasChanges = true;
-            // Increment progress smoothly
-            const item = items.find((it) => it.id === id);
+            // Increment progress smoothly across catalog, MOVIX rows, and live search results
+            const allKnownItems = [
+              ...items,
+              ...MOVIX_INSTANT_ROWS.flatMap((r) => r.items),
+              ...youtubeLiveResults,
+              ...offlineWatchlist,
+            ];
+            const item = allKnownItems.find((it) => it.id === id);
             const totalBytes = item?.sizeBytes || 20000000;
             const stepIncrement = Math.floor(Math.random() * 8) + 6; // 6-13%
             const newProgress = Math.min(100, state.progress + stepIncrement);
@@ -1565,7 +1430,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
 
             if (newProgress >= 100) {
               soundEngine.playDownloadComplete();
-              onShowToast(`Downloaded "${item?.title || 'Item'}" successfully!`);
+              onShowToast(`Downloaded "${item?.title || 'MOVIX Media'}" successfully!`);
               next[id] = {
                 ...state,
                 progress: 100,
@@ -1695,10 +1560,21 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
     return filteredItems.slice(start, start + HUB_PAGE_SIZE);
   }, [searchSource, youtubeLiveResults, filteredItems, safeCatalogPage]);
 
-  // Completed downloads for "My Downloads"
+  // Completed downloads for "Watchlist & Saved"
   const completedDownloads = useMemo(() => {
-    return items.filter((it) => downloadStates[it.id]?.isCompleted);
-  }, [items, downloadStates]);
+    const pool = [
+      ...items,
+      ...MOVIX_INSTANT_ROWS.flatMap((r) => r.items),
+      ...youtubeLiveResults,
+      ...offlineWatchlist,
+    ];
+    const seen = new Set<string>();
+    return pool.filter((it) => {
+      if (seen.has(it.id)) return false;
+      seen.add(it.id);
+      return Boolean(downloadStates[it.id]?.isCompleted);
+    });
+  }, [items, youtubeLiveResults, offlineWatchlist, downloadStates]);
 
   // Total downloaded size in bytes
   const totalDownloadedSizeStr = useMemo(() => {
@@ -1743,37 +1619,68 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col bg-neutral-950 text-white overflow-hidden select-none">
-      {/* Top Header Bar */}
-      <div className="shrink-0 px-4 sm:px-6 py-3 bg-neutral-950/95 border-b border-neutral-800/80 [transform:translateZ(0)] flex items-center justify-between gap-3 z-30">
-        <div className="flex items-center gap-3">
+      {/* Top Header Bar — MOVIX World Cinema, Dramas, Songs & Quran */}
+      <div className="shrink-0 px-3 sm:px-6 py-2.5 sm:py-3 bg-neutral-950/95 border-b border-neutral-800/80 [transform:translateZ(0)] flex items-center justify-between gap-2 z-30">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
             type="button"
             onClick={onBackToFeed}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-700/80 text-xs font-bold transition-all shadow-md active:scale-95"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-700/80 text-xs font-bold transition-all shadow-md active:scale-95 shrink-0 cursor-pointer"
             title="Return to Reels Feed"
           >
             <ArrowLeft className="w-4 h-4 text-pink-400" />
-            <span className="hidden sm:inline">Back to Reels Feed</span>
+            <span className="hidden sm:inline">Reels Feed</span>
             <span className="sm:hidden">Back</span>
           </button>
 
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 via-purple-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-pink-500/25">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 via-purple-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-pink-500/25 shrink-0">
               <Film className="w-4 h-4" />
             </div>
-            <div>
-              <h1 className="text-sm sm:text-base font-black tracking-tight text-white flex items-center gap-1.5">
-                Movie Box & <span className="bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">Download Hub</span>
-              </h1>
-              <p className="text-[10px] text-neutral-400 hidden sm:block">
-                Standard YouTube Embed Players · Stream Movies, Dramas, Songs & Tilawat with zero 3rd-party blocks
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-sm sm:text-base font-black tracking-tight text-white flex items-center gap-1 truncate">
+                  <span className="bg-gradient-to-r from-amber-300 via-pink-400 to-cyan-400 bg-clip-text text-transparent">
+                    MOVIX
+                  </span>
+                  <span className="text-[10px] font-bold text-neutral-400 hidden xs:inline">
+                    · Movie Box
+                  </span>
+                </h1>
+                <span
+                  className="px-1.5 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-[9px] font-black uppercase tracking-wider flex items-center gap-0.5 shrink-0"
+                  title="Zero Adult / 18+ Content — Strictly Family-Safe"
+                >
+                  <ShieldCheck className="w-2.5 h-2.5" />
+                  <span className="hidden md:inline">Family-Safe</span>
+                </span>
+              </div>
+              <p className="text-[10px] text-neutral-400 hidden sm:block truncate">
+                Worldwide Movies · Dramas · Full HD Songs · Video Clips · Quran &amp; Bayans
               </p>
             </div>
           </div>
         </div>
 
-        {/* View Switcher: RAM Saver Toggle, Marketplace vs My Downloads, Mute */}
-        <div className="flex items-center gap-2">
+        {/* View Switcher & Controls: MOVIX Settings (Admin), RAM Saver, Explore vs Watchlist, Mute */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => {
+                const keys = getMovixApiKeys();
+                setTmdbKeyInput(keys.tmdbApiKey);
+                setYoutubeKeyInput(keys.youtubeApiKey);
+                setIsMovixSettingsOpen(true);
+              }}
+              className="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/50 text-amber-300 text-[11px] font-black flex items-center gap-1 cursor-pointer transition-colors"
+              title="MOVIX Settings (Admin: Configure TMDB & YouTube API Keys)"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">MOVIX Settings</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -1784,7 +1691,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                   : 'Lite / RAM Saver Mode OFF (Full visuals)'
               );
             }}
-            className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-1 cursor-pointer transition-colors ${
+            className={`px-2 sm:px-2.5 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-1 cursor-pointer transition-colors ${
               isRamSaverMode
                 ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
                 : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
@@ -1792,33 +1699,34 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
             title="Toggle Lite / 3GB RAM Saver Mode"
           >
             <Zap className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">{isRamSaverMode ? 'RAM Saver ON' : 'Lite RAM'}</span>
+            <span className="hidden md:inline">{isRamSaverMode ? 'RAM Saver' : 'Lite RAM'}</span>
           </button>
 
-          <div className="flex items-center p-1 bg-neutral-900 rounded-xl border border-neutral-800 text-xs font-bold">
+          <div className="flex items-center p-1 bg-neutral-900 rounded-xl border border-neutral-800 text-[11px] sm:text-xs font-bold">
             <button
               type="button"
               onClick={() => setActiveTab('marketplace')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 activeTab === 'marketplace'
                   ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-md'
                   : 'text-neutral-400 hover:text-white'
               }`}
             >
-              Marketplace
+              Explore
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('my_downloads')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
                 activeTab === 'my_downloads'
                   ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-md'
                   : 'text-neutral-400 hover:text-white'
               }`}
             >
               <HardDrive className="w-3.5 h-3.5" />
-              <span>Saved & Downloads</span>
-              {(completedDownloads.length + offlineWatchlist.length) > 0 && (
+              <span className="hidden sm:inline">Watchlist &amp; Saved</span>
+              <span className="sm:hidden">Saved</span>
+              {completedDownloads.length + offlineWatchlist.length > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-cyan-400 text-black text-[10px] font-black">
                   {completedDownloads.length + offlineWatchlist.length}
                 </span>
@@ -1830,7 +1738,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
           <button
             type="button"
             onClick={onToggleMute}
-            className={`p-2 rounded-xl border text-xs font-bold transition-all ${
+            className={`p-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
               isMuted
                 ? 'bg-neutral-900 text-neutral-400 border-neutral-800'
                 : 'bg-pink-600/20 text-pink-400 border-pink-500/40'
@@ -1852,25 +1760,63 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
             className="flex-1 overflow-y-auto no-scrollbar pb-24 lg:pb-8"
           >
             {/* ===================================================================== */}
-            {/* LITE-YOUTUBE & UNIVERSAL WIDESCREEN PLAYER (Auto-Unmounts Off-Screen) */}
+            {/* FULL HD VIDEO PLAYER MODAL (Watch, Save to Watchlist, & Download)      */}
             {/* ===================================================================== */}
             {previewItem && (
               <div
                 className={
                   isCinemaMode
-                    ? 'bg-neutral-950 border-b border-pink-500/40 px-3 sm:px-6 py-3 shadow-2xl z-[70]'
-                    : 'bg-neutral-950 border-b border-pink-500/40 px-3 sm:px-6 py-3 shadow-2xl relative z-20'
+                    ? 'fixed inset-0 z-[75] bg-black'
+                    : 'fixed inset-0 z-[65] bg-black/90 flex items-center justify-center p-2 sm:p-5 overflow-y-auto'
                 }
+                onClick={() => {
+                  if (!isCinemaMode) {
+                    setIsQualityMenuOpen(false);
+                    setPreviewItem(null);
+                  }
+                }}
               >
-                <div className="max-w-5xl mx-auto space-y-2.5">
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className={
+                    isCinemaMode
+                      ? 'w-full h-full'
+                      : 'w-full max-w-4xl bg-neutral-950 border border-neutral-800 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[94dvh]'
+                  }
+                >
+                  {/* Modal Header */}
                   {!isCinemaMode && (
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <span className="p-1.5 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 shrink-0">
-                          <Youtube className="w-4 h-4 fill-red-500" />
+                    <div className="px-3.5 sm:px-5 py-3 border-b border-neutral-800 flex flex-wrap items-center justify-between gap-2 bg-neutral-950">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <span className="p-2 rounded-xl bg-gradient-to-tr from-pink-600/25 to-cyan-500/25 text-cyan-300 border border-cyan-500/35 shrink-0">
+                          {previewItem.youtubeId ? (
+                            <Youtube className="w-4 h-4 text-red-400" />
+                          ) : (
+                            <Film className="w-4 h-4 text-cyan-300" />
+                          )}
                         </span>
                         <div className="min-w-0">
-                          <h2 className="text-xs sm:text-sm font-black text-white truncate">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {previewItem.contentTypeTag && (
+                              <span
+                                className={`px-2 py-0.5 rounded-md border text-[9px] font-black uppercase ${getContentTagBadgeClasses(
+                                  previewItem.contentTypeTag
+                                )}`}
+                              >
+                                {previewItem.contentTypeTag}
+                              </span>
+                            )}
+                            {previewItem.languageLabel && (
+                              <span className="px-2 py-0.5 rounded-md bg-neutral-800 text-neutral-300 text-[9px] font-bold">
+                                {previewItem.languageLabel}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-0.5">
+                              <ShieldCheck className="w-3 h-3" />
+                              Family-Safe
+                            </span>
+                          </div>
+                          <h2 className="text-xs sm:text-sm font-black text-white truncate mt-0.5">
                             {previewItem.title}
                           </h2>
                           <p className="text-[11px] text-neutral-400 truncate">
@@ -1878,46 +1824,41 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                           </p>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5 shrink-0 relative">
-                        {/* One-Tap Fast Server / Reload Fallback */}
-                        {previewItem.youtubeId && (
-                          <button
-                            type="button"
-                            onClick={handleFastServerReload}
-                            className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                            title="Switch Server or Reload if buffering slowly"
-                          >
-                            <Zap className="w-3.5 h-3.5 text-emerald-400" />
-                            <span className="hidden sm:inline">Fast Server / Reload</span>
-                            <span className="sm:hidden">Reload</span>
-                          </button>
-                        )}
 
-                        {/* Gear / Resolution Selector (Auto, 360p to 4K 2160p) */}
+                      <div className="flex items-center gap-1.5 shrink-0 relative">
                         {previewItem.youtubeId && (
-                          <div className="relative">
+                          <>
                             <button
                               type="button"
-                              onClick={() => setIsQualityMenuOpen((o) => !o)}
-                              className={`px-2.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 border cursor-pointer transition-colors ${
-                                activeQualityOption.isUltraHd
-                                  ? 'bg-amber-500/25 border-amber-400 text-amber-200'
-                                  : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-cyan-300'
-                              }`}
-                              title="Select Video Resolution (360p to 4K Ultra HD)"
+                              onClick={handleFastServerReload}
+                              className="px-2.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                              title="Switch Fast Server or Reload"
                             >
-                              <Settings className="w-3.5 h-3.5" />
-                              <span>{activeQualityOption.shortBadge}</span>
+                              <Zap className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Fast Server</span>
                             </button>
 
-                            {isQualityMenuOpen && (
-                              <div className="absolute right-0 mt-1.5 w-48 rounded-2xl bg-neutral-900 border border-neutral-700 shadow-2xl p-1.5 z-50">
-                                <p className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-neutral-400">
-                                  Video Resolution
-                                </p>
-                                {YOUTUBE_QUALITY_OPTIONS.map((opt) => {
-                                  const active = selectedQuality === opt.id;
-                                  return (
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() => setIsQualityMenuOpen((o) => !o)}
+                                className={`px-2.5 py-2 rounded-xl text-xs font-black flex items-center gap-1 border cursor-pointer ${
+                                  activeQualityOption.isUltraHd
+                                    ? 'bg-amber-500/25 border-amber-400 text-amber-200'
+                                    : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-cyan-300'
+                                }`}
+                                title="Resolution (360p to 4K)"
+                              >
+                                <Settings className="w-3.5 h-3.5" />
+                                <span>{activeQualityOption.shortBadge}</span>
+                              </button>
+
+                              {isQualityMenuOpen && (
+                                <div className="absolute right-0 mt-1.5 w-48 rounded-2xl bg-neutral-900 border border-neutral-700 shadow-2xl p-1.5 z-50">
+                                  <p className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-neutral-400">
+                                    Video Resolution
+                                  </p>
+                                  {YOUTUBE_QUALITY_OPTIONS.map((opt) => (
                                     <button
                                       key={opt.id}
                                       type="button"
@@ -1927,8 +1868,8 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                         setIsQualityMenuOpen(false);
                                         onShowToast(`Resolution set to ${opt.label}`);
                                       }}
-                                      className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-bold flex items-center justify-between cursor-pointer transition-colors ${
-                                        active
+                                      className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-bold flex items-center justify-between cursor-pointer ${
+                                        selectedQuality === opt.id
                                           ? 'bg-pink-600/25 text-white border border-pink-500/40'
                                           : 'text-neutral-300 hover:bg-neutral-800'
                                       }`}
@@ -1940,53 +1881,11 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                         </span>
                                       )}
                                     </button>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => handleToggleWatchlist(previewItem)}
-                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer transition-colors ${
-                            offlineWatchlist.some((w) => w.id === previewItem.id)
-                              ? 'bg-amber-500/20 border-amber-400 text-amber-300'
-                              : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-200'
-                          }`}
-                        >
-                          <Bookmark
-                            className={`w-3.5 h-3.5 ${
-                              offlineWatchlist.some((w) => w.id === previewItem.id)
-                                ? 'fill-amber-400 text-amber-400'
-                                : ''
-                            }`}
-                          />
-                          <span className="hidden md:inline">
-                            {offlineWatchlist.some((w) => w.id === previewItem.id)
-                              ? 'Saved'
-                              : 'Watchlist'}
-                          </span>
-                        </button>
-
-                        {(previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) && (
-                          <a
-                            href={
-                              previewItem.youtubeId
-                                ? `https://www.youtube.com/watch?v=${previewItem.youtubeId}`
-                                : previewItem.directVideoUrl || previewItem.embedUrl
-                            }
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-2.5 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/35 text-rose-200 border border-red-500/40 text-xs font-bold flex items-center gap-1.5"
-                            title="Open source directly in YouTube / Browser"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            <span className="hidden lg:inline">
-                              {previewItem.youtubeId ? 'Watch on YouTube' : 'Open Source'}
-                            </span>
-                          </a>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </>
                         )}
 
                         <button
@@ -1994,27 +1893,10 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                           onClick={() =>
                             setPlayerScaleMode((prev) => (prev === 'fill' ? 'fit' : 'fill'))
                           }
-                          className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                            playerScaleMode === 'fill'
-                              ? 'bg-pink-600/25 border-pink-400 text-pink-200'
-                              : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-300'
-                          }`}
-                          title="Toggle Stretch Fill vs 16:9 Fit"
+                          className="p-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-300 cursor-pointer"
+                          title="Toggle Stretch Fill / 16:9 Fit"
                         >
-                          <Maximize2 className="w-3.5 h-3.5" />
-                          <span className="hidden lg:inline">
-                            {playerScaleMode === 'fill' ? 'Stretch Fill' : 'Fit 16:9'}
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => void enterFullscreenAndLandscape('fit')}
-                          className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600/35 to-pink-600/35 hover:from-cyan-600/50 hover:to-pink-600/50 text-white border border-cyan-400/50 text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                          title="Enter 16:9 Widescreen Landscape Fullscreen"
-                        >
-                          <RectangleHorizontal className="w-3.5 h-3.5 text-cyan-300" />
-                          <span>Full Screen</span>
+                          <Maximize2 className="w-4 h-4" />
                         </button>
 
                         <button
@@ -2024,10 +1906,10 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                             setIsQualityMenuOpen(false);
                             setPreviewItem(null);
                           }}
-                          className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                          className="p-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white cursor-pointer"
+                          aria-label="Close player modal"
                         >
                           <X className="w-4 h-4" />
-                          <span className="hidden xs:inline">Close</span>
                         </button>
                       </div>
                     </div>
@@ -2043,12 +1925,8 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                     }
                     className={
                       isCinemaMode
-                        ? 'fixed inset-0 z-[70] bg-black flex items-center justify-center overflow-hidden'
-                        : `relative mx-auto overflow-hidden bg-black border border-neutral-800 shadow-2xl transition-all ${
-                            playerScaleMode === 'fill'
-                              ? 'w-full h-[38vh] sm:h-[44vh] rounded-xl sm:rounded-2xl'
-                              : 'w-[min(100%,calc(38vh*16/9))] sm:w-[min(100%,calc(44vh*16/9))] max-w-4xl aspect-video rounded-xl sm:rounded-2xl'
-                          }`
+                        ? 'fixed inset-0 z-[75] bg-black flex items-center justify-center overflow-hidden'
+                        : 'relative w-full aspect-video max-h-[52dvh] bg-black overflow-hidden'
                     }
                   >
                     <div
@@ -2079,14 +1957,17 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                       {!isCinemaMode && (
                         <>
                           <span
-                            className={`absolute top-2.5 left-2.5 z-20 px-2.5 py-0.5 rounded-full backdrop-blur-md text-[10px] font-black tracking-wide pointer-events-none border ${
+                            className={`absolute top-2.5 left-2.5 z-20 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide pointer-events-none border ${
                               activeQualityOption.isUltraHd
                                 ? 'bg-amber-500/90 border-amber-300 text-black shadow-lg'
                                 : 'bg-black/80 border-cyan-400/50 text-cyan-300'
                             }`}
                           >
-                            {activeQualityOption.shortBadge} ·{' '}
-                            {playerScaleMode === 'fill' ? 'STRETCH FILL' : '16:9 FIT'}
+                            {previewItem.directVideoUrl
+                              ? 'FULL HD MP4'
+                              : `${activeQualityOption.shortBadge} · ${
+                                  playerScaleMode === 'fill' ? 'FILL' : '16:9 FIT'
+                                }`}
                           </span>
                           <button
                             type="button"
@@ -2094,7 +1975,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                               e.stopPropagation();
                               void enterFullscreenAndLandscape('fit');
                             }}
-                            className="absolute top-2.5 right-2.5 z-20 p-2 rounded-xl bg-black/80 hover:bg-cyan-600/80 text-white border border-cyan-400/50 shadow-lg backdrop-blur-sm transition-all active:scale-95 cursor-pointer"
+                            className="absolute top-2.5 right-2.5 z-20 p-2 rounded-xl bg-black/80 hover:bg-cyan-600/80 text-white border border-cyan-400/50 shadow-lg transition-all active:scale-95 cursor-pointer"
                             title="Enter Full Screen & Lock Landscape"
                             aria-label="Enter Full Screen Landscape"
                           >
@@ -2108,7 +1989,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                         <div
                           className={`z-30 flex items-center justify-between gap-2 transition-all ${
                             playerScaleMode === 'fill' || cssLandscapeActive
-                              ? 'absolute top-2.5 left-3 right-3 px-3 py-1.5 rounded-2xl bg-black/75 backdrop-blur-md border border-white/15'
+                              ? 'absolute top-2.5 left-3 right-3 px-3 py-1.5 rounded-2xl bg-black/80 border border-white/15'
                               : 'w-[min(95vw,calc(80vh*16/9))] max-w-6xl mb-3 px-1'
                           }`}
                         >
@@ -2195,7 +2076,6 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                   ? 'bg-pink-600 text-white border-pink-400'
                                   : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-neutral-700'
                               }`}
-                              title="Switch between Stretch Fill and 16:9 Fit"
                             >
                               <RectangleHorizontal className="w-3.5 h-3.5" />
                               <span className="hidden xs:inline">
@@ -2204,17 +2084,9 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                             </button>
                             <button
                               type="button"
-                              onClick={handleToggleFullscreenApi}
-                              className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                              title="Toggle Fullscreen & Landscape"
-                            >
-                              <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
-                            </button>
-                            <button
-                              type="button"
                               onClick={() => void exitFullscreenAndRestorePortrait()}
                               className="px-2.5 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                              title="Exit Fullscreen & Unlock Portrait"
+                              title="Exit Fullscreen"
                             >
                               <Minimize2 className="w-3.5 h-3.5" />
                             </button>
@@ -2247,7 +2119,8 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                             : 'relative w-full h-full overflow-hidden bg-black'
                         }
                       >
-                        {!isOnline && (previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) ? (
+                        {!isOnline &&
+                        (previewItem.youtubeId || previewItem.directVideoUrl || previewItem.embedUrl) ? (
                           <div className="w-full h-full flex flex-col items-center justify-center p-5 text-center bg-neutral-950/95 space-y-3">
                             <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center">
                               <WifiOff className="w-6 h-6" />
@@ -2257,7 +2130,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                 You&apos;re in Offline Mode
                               </h3>
                               <p className="text-xs text-neutral-300 leading-relaxed">
-                                Online streaming needs an internet connection. Your saved reels, photos, songs, and naats are ready in <strong>Saved / Downloads</strong>!
+                                Online streaming needs an internet connection. Your saved reels, songs, and naats are ready in <strong>Saved / Downloads</strong>!
                               </p>
                             </div>
                             {onOpenSavedOffline && (
@@ -2293,9 +2166,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                               <h3 className="text-sm sm:text-base font-black text-white line-clamp-1">
                                 {previewItem.title}
                               </h3>
-                              <p className="text-xs text-neutral-300 leading-relaxed">
-                                {playerError}
-                              </p>
+                              <p className="text-xs text-neutral-300 leading-relaxed">{playerError}</p>
                               <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                                 <button
                                   type="button"
@@ -2315,13 +2186,8 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                   rel="noopener noreferrer"
                                   className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-red-600/35"
                                 >
-                                  <Youtube className="w-4 h-4 fill-white" />
-                                  <span>
-                                    {previewItem.youtubeId
-                                      ? 'Open & Watch on YouTube'
-                                      : 'Open Video Source'}
-                                  </span>
                                   <ExternalLink className="w-3.5 h-3.5" />
+                                  <span>Open Source</span>
                                 </a>
                               </div>
                             </div>
@@ -2329,15 +2195,20 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                         ) : previewItem.directVideoUrl ? (
                           <video
                             ref={directVideoRef}
-                            key={previewItem.directVideoUrl}
+                            key={`${previewItem.directVideoUrl}-${watchPlaybackTrigger}`}
                             controls
                             autoPlay
                             playsInline
-                            onError={() =>
-                              setPlayerError(
-                                'This direct video URL could not play in-app. Open source link directly.'
-                              )
-                            }
+                            poster={previewItem.thumbnailUrl || undefined}
+                            onError={() => {
+                              if (previewItem.youtubeId) {
+                                setPlayerError(null);
+                              } else {
+                                setPlayerError(
+                                  'This direct video URL could not play in-app. Tap Open Source to stream.'
+                                );
+                              }
+                            }}
                             className={`w-full h-full bg-black ${
                               playerScaleMode === 'fill' ? 'object-cover' : 'object-contain'
                             }`}
@@ -2393,6 +2264,82 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                       </div>
                     </div>
                   </div>
+
+                  {/* Modal Footer: Description + Working Watch, Save to Watchlist & Download CTAs */}
+                  {!isCinemaMode && (
+                    <div className="p-3.5 sm:p-5 bg-neutral-950 border-t border-neutral-800 space-y-3 overflow-y-auto">
+                      {previewItem.description && (
+                        <p className="text-xs text-neutral-300 line-clamp-2 leading-relaxed">
+                          {previewItem.description}
+                        </p>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        {/* 1. WATCH CTA */}
+                        <button
+                          type="button"
+                          onClick={() => handleWatchAction(previewItem)}
+                          className="min-h-[44px] px-4 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 via-rose-600 to-amber-500 hover:brightness-110 text-white text-xs sm:text-sm font-black flex items-center justify-center gap-2 shadow-lg shadow-pink-600/30 active:scale-[0.98] transition-all cursor-pointer"
+                        >
+                          <Play className="w-4 h-4 fill-white" />
+                          <span>Watch Full HD</span>
+                        </button>
+
+                        {/* 2. SAVE TO WATCHLIST CTA */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleWatchlist(previewItem)}
+                          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 border active:scale-[0.98] transition-all cursor-pointer ${
+                            offlineWatchlist.some((w) => w.id === previewItem.id)
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                              : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-white'
+                          }`}
+                        >
+                          <Bookmark
+                            className={`w-4 h-4 ${
+                              offlineWatchlist.some((w) => w.id === previewItem.id)
+                                ? 'fill-amber-400 text-amber-400'
+                                : ''
+                            }`}
+                          />
+                          <span>
+                            {offlineWatchlist.some((w) => w.id === previewItem.id)
+                              ? 'Saved to Watchlist'
+                              : 'Save to Watchlist'}
+                          </span>
+                        </button>
+
+                        {/* 3. DOWNLOAD CTA */}
+                        <button
+                          type="button"
+                          disabled={resolvingDownloadId === previewItem.id}
+                          onClick={() => void handleMovixDownloadItem(previewItem)}
+                          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 border active:scale-[0.98] transition-all cursor-pointer ${
+                            downloadStates[previewItem.id]?.isCompleted
+                              ? 'bg-emerald-600/25 border-emerald-400/60 text-emerald-300'
+                              : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:brightness-110 border-cyan-400/50 text-white shadow-lg shadow-cyan-600/25'
+                          }`}
+                        >
+                          {resolvingDownloadId === previewItem.id ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>Preparing...</span>
+                            </>
+                          ) : downloadStates[previewItem.id]?.isCompleted ? (
+                            <>
+                              <CheckCircle className="w-4 h-4" />
+                              <span>Downloaded</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-4 h-4" />
+                              <span>Download</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2443,7 +2390,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(sanitizeSearchQuery(e.target.value, 400))}
-                    placeholder="Search ANY movie, drama, song, or paste YouTube / .mp4 / .m3u8 link..."
+                    placeholder="Search worldwide movies, dramas, songs, clips, Quran in ANY language..."
                     className="w-full bg-neutral-900/90 text-xs sm:text-sm text-white placeholder-neutral-500 pl-10 pr-9 py-2.5 rounded-xl border border-neutral-800 focus:outline-hidden focus:border-pink-500 focus:ring-1 focus:ring-pink-500/50 transition-all shadow-inner"
                   />
                   {searchQuery && (
@@ -2460,14 +2407,14 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                   )}
                 </div>
 
-                {/* YouTube Live Search CTA */}
+                {/* Universal MOVIX Search CTA */}
                 <button
                   type="submit"
                   disabled={isSearchingYouTube}
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-red-600/30 active:scale-95 transition-all shrink-0 border border-red-400/30 cursor-pointer"
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 via-rose-600 to-amber-500 hover:brightness-110 disabled:opacity-50 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-md shadow-pink-600/30 active:scale-95 transition-all shrink-0 border border-pink-400/30 cursor-pointer"
                 >
-                  <Youtube className="w-4 h-4 fill-white" />
-                  <span>{isSearchingYouTube ? 'Searching...' : 'Search / Play'}</span>
+                  <Search className="w-4 h-4" />
+                  <span>{isSearchingYouTube ? 'Searching...' : 'Search MOVIX'}</span>
                 </button>
               </form>
 
@@ -2517,11 +2464,57 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
               </div>
             </div>
 
+            {/* Worldwide Language Filter Strip */}
+            <div className="max-w-6xl mx-auto flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider shrink-0 flex items-center gap-1 mr-1">
+                <Languages className="w-3.5 h-3.5" />
+                Language:
+              </span>
+              {MOVIX_LANGUAGES.map((lang) => {
+                const isLangActive = selectedLanguage === lang.id;
+                return (
+                  <button
+                    key={lang.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedLanguage(lang.id);
+                      if (searchQuery.trim()) {
+                        void handleSearchYouTubeLive(
+                          searchQuery.trim(),
+                          undefined,
+                          undefined,
+                          1,
+                          null,
+                          lang.id
+                        );
+                      } else if (lang.id !== 'all') {
+                        void handleSearchYouTubeLive(
+                          `${lang.searchSuffix} movies dramas songs`,
+                          undefined,
+                          lang.label,
+                          1,
+                          null,
+                          lang.id
+                        );
+                      }
+                    }}
+                    className={`px-3 py-1 rounded-xl text-[11px] font-bold whitespace-nowrap border transition-all cursor-pointer ${
+                      isLangActive
+                        ? 'bg-amber-500 text-black border-amber-300 shadow-sm'
+                        : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800'
+                    }`}
+                  >
+                    {lang.label}
+                  </button>
+                );
+              })}
+            </div>
+
             {/* Global Content Hub Dedicated Category Tabs */}
             <div className="max-w-6xl mx-auto flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
               <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider shrink-0 flex items-center gap-1">
                 <Globe className="w-3.5 h-3.5" />
-                Global Hub:
+                MOVIX Hub:
               </span>
               {GLOBAL_HUB_TABS.map((tab) => {
                 const isTabActive = activeGlobalTab === tab.id;
@@ -2572,9 +2565,9 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
             {searchSource === 'youtube' && youtubeLiveResults.length > 0 && (
               <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-red-950/25 border border-red-500/35 text-xs">
                 <div className="flex items-center gap-2">
-                  <Youtube className="w-4 h-4 text-red-500 shrink-0" />
+                  <Film className="w-4 h-4 text-pink-400 shrink-0" />
                   <span className="text-white font-bold">
-                    Showing {youtubeLiveResults.length} playable videos
+                    Showing {youtubeLiveResults.length} family-safe MOVIX videos
                     {searchQuery.trim() ? ` for "${searchQuery.trim()}"` : ''}
                   </span>
                 </div>
@@ -2582,22 +2575,182 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                   <button
                     type="button"
                     onClick={() => setSearchSource('youtube')}
-                    className="px-2.5 py-1 rounded-lg font-bold text-[11px] bg-red-600 text-white"
+                    className="px-2.5 py-1 rounded-lg font-bold text-[11px] bg-pink-600 text-white cursor-pointer"
                   >
-                    Playable Videos ({youtubeLiveResults.length})
+                    Live Results ({youtubeLiveResults.length})
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSearchSource('catalog')}
+                    onClick={() => {
+                      setSearchSource('catalog');
+                      setActiveGlobalTab('all');
+                      setSelectedCategory('all');
+                      setSearchQuery('');
+                    }}
                     className="px-2.5 py-1 rounded-lg font-bold text-[11px] text-neutral-300 hover:text-white bg-neutral-900 border border-neutral-800 cursor-pointer"
                   >
-                    Catalog
+                    MOVIX Home Rows
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Catalog Category Pills (only when viewing Catalog mode so YouTube results appear directly below "Showing X playable videos") */}
+            {/* INSTANT PRE-LOADED WORLDWIDE ROWS (No Empty Screen on MOVIX Open!) */}
+            {searchSource !== 'youtube' &&
+              activeGlobalTab === 'all' &&
+              selectedCategory === 'all' &&
+              !searchQuery.trim() && (
+                <div className="max-w-6xl mx-auto space-y-6 pb-2">
+                  {MOVIX_INSTANT_ROWS.map((row) => (
+                    <section key={row.id} className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h2 className="text-sm sm:text-base font-black text-white tracking-tight">
+                              {row.title}
+                            </h2>
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-gradient-to-r ${row.accentGradient} text-white`}
+                            >
+                              {row.badgeText}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-neutral-400 truncate mt-0.5">
+                            {row.subtitle}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleSearchYouTubeLive(row.liveSearchQuery, undefined, row.title)
+                          }
+                          className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-cyan-300 text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                        >
+                          <span>Search More</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {row.items.map((item) => {
+                          const isSaved = offlineWatchlist.some((w) => w.id === item.id);
+                          const durationText =
+                            item.durationSeconds !== undefined
+                              ? formatVideoDuration(item.durationSeconds)
+                              : item.durationOrVersion;
+
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => openVideoPlayer(item)}
+                              className="group bg-neutral-900/90 hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/60 rounded-2xl p-3 flex flex-col justify-between gap-2.5 cursor-pointer transition-all"
+                            >
+                              <div>
+                                <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-neutral-800">
+                                  {item.youtubeId ? (
+                                    <LiteYouTubeThumb
+                                      videoId={item.youtubeId}
+                                      alt={item.title}
+                                      fallbackUrl={item.thumbnailUrl}
+                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                    />
+                                  ) : (
+                                    <img
+                                      src={optimizeThumbnailUrl(item.thumbnailUrl, 'grid')}
+                                      alt={item.title}
+                                      loading="lazy"
+                                      decoding="async"
+                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                    />
+                                  )}
+                                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent pointer-events-none" />
+                                  <div className="absolute inset-0 flex items-center justify-center">
+                                    <div className="w-10 h-10 rounded-full bg-pink-600/90 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                                      <Play className="w-4 h-4 fill-white ml-0.5" />
+                                    </div>
+                                  </div>
+                                  {item.languageLabel && (
+                                    <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/80 border border-white/15 text-[9px] font-black text-amber-300">
+                                      {item.languageLabel}
+                                    </span>
+                                  )}
+                                  {item.contentTypeTag && (
+                                    <span
+                                      className={`absolute bottom-2 left-2 px-2 py-0.5 rounded-md border text-[9px] font-black uppercase ${getContentTagBadgeClasses(
+                                        item.contentTypeTag
+                                      )}`}
+                                    >
+                                      {item.contentTypeTag}
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md text-[10px] font-black tabular-nums border ${
+                                      durationText === 'LIVE'
+                                        ? 'bg-red-600 text-white border-red-300/60'
+                                        : 'bg-black/90 text-white border-white/15'
+                                    }`}
+                                  >
+                                    {durationText}
+                                  </span>
+                                </div>
+
+                                <h3 className="text-xs sm:text-sm font-bold text-white line-clamp-2 mt-2 group-hover:text-pink-400 transition-colors">
+                                  {item.title}
+                                </h3>
+                                <p className="text-[11px] text-neutral-400 truncate mt-0.5">
+                                  {item.subtitle}
+                                </p>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 pt-2 border-t border-neutral-800/80">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openVideoPlayer(item);
+                                  }}
+                                  className="flex-1 py-1.5 px-2 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 text-white text-[11px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                                >
+                                  <Play className="w-3 h-3 fill-white" />
+                                  <span>Watch</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleWatchlist(item);
+                                  }}
+                                  className={`p-1.5 rounded-lg border cursor-pointer ${
+                                    isSaved
+                                      ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                                      : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:text-white'
+                                  }`}
+                                  title={isSaved ? 'Saved in Watchlist' : 'Save to Watchlist'}
+                                >
+                                  <Bookmark className={`w-3.5 h-3.5 ${isSaved ? 'fill-amber-400' : ''}`} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleMovixDownloadItem(item);
+                                  }}
+                                  className="p-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 cursor-pointer"
+                                  title="Download"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+
+            {/* Catalog Category Pills (only when viewing Catalog mode) */}
             {searchSource !== 'youtube' && (
               <div className="max-w-6xl mx-auto overflow-x-auto no-scrollbar pb-1">
                 <div className="flex items-center gap-2 min-w-max">
@@ -3041,8 +3194,8 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                             </div>
                           </div>
                         ) : (
-                          /* DEFAULT IDLE STATE: WATCHLIST / DOWNLOAD HELPER / DIRECT DOWNLOAD */
-                          item.youtubeId ? (
+                          /* DEFAULT IDLE STATE: WATCH / WATCHLIST / DOWNLOAD */
+                          item.youtubeId || item.directVideoUrl || item.embedUrl ? (
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
@@ -3050,11 +3203,11 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                   e.stopPropagation();
                                   openVideoPlayer(item);
                                 }}
-                                className="py-2 px-3 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all shrink-0 cursor-pointer"
-                                title="Play in Movie Box Embed Player"
+                                className="py-2 px-3 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:brightness-110 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all shrink-0 cursor-pointer"
+                                title="Watch in MOVIX Full HD Player"
                               >
                                 <Play className="w-3.5 h-3.5 fill-white" />
-                                <span>Play</span>
+                                <span>Watch</span>
                               </button>
 
                               <button
@@ -3068,7 +3221,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                     ? 'bg-amber-500/20 border-amber-400 text-amber-300'
                                     : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200'
                                 }`}
-                                title="Save to Offline Watchlist"
+                                title="Save to Watchlist"
                               >
                                 <Bookmark
                                   className={`w-3.5 h-3.5 shrink-0 ${
@@ -3082,17 +3235,23 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                                 </span>
                               </button>
 
-                              <a
-                                href={`https://www.youtube.com/watch?v=${item.youtubeId}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="py-2 px-2.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 font-bold text-xs flex items-center justify-center gap-1 shrink-0"
-                                title="External YouTube / Download Helper Link"
+                              <button
+                                type="button"
+                                disabled={resolvingDownloadId === item.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleMovixDownloadItem(item);
+                                }}
+                                className="py-2 px-2.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 font-bold text-xs flex items-center justify-center gap-1 shrink-0 cursor-pointer"
+                                title="Download MP4 / Save Offline"
                               >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                <span className="hidden sm:inline">Save / Link</span>
-                              </a>
+                                {resolvingDownloadId === item.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Download className="w-3.5 h-3.5" />
+                                )}
+                                <span className="hidden sm:inline">Download</span>
+                              </button>
                             </div>
                           ) : (
                             <div className="flex items-center gap-2">
@@ -3120,7 +3279,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
               </div>
             )}
 
-              {/* Paginated Navigation (10 items/page keeps RAM low on 3GB Android phones) */}
+              {/* Paginated Navigation (12 items/page keeps RAM low on 3GB Android phones) */}
               {!isSearchingYouTube && displayedItems.length > 0 && (
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-neutral-900/90 border border-neutral-800">
                   {searchSource === 'youtube' ? (
@@ -3132,10 +3291,10 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                         className="px-3.5 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                       >
                         <ChevronLeft className="w-4 h-4" />
-                        <span>Prev 10</span>
+                        <span>Prev</span>
                       </button>
                       <span className="text-xs font-black text-neutral-300 tabular-nums">
-                        Page {ytPage} · 10 / page ({isRamSaverMode ? '3GB RAM Lite' : 'Standard'})
+                        Page {ytPage} · 12 / page ({isRamSaverMode ? '3GB RAM Lite' : 'MOVIX HD'})
                       </span>
                       <button
                         type="button"
@@ -3143,7 +3302,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                         onClick={() => handleLoadYouTubePage('next')}
                         className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 disabled:opacity-40 text-xs font-black text-white flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                       >
-                        <span>Next 10</span>
+                        <span>Next</span>
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </>
@@ -3159,10 +3318,10 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                         className="px-3.5 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                       >
                         <ChevronLeft className="w-4 h-4" />
-                        <span>Prev 10</span>
+                        <span>Prev</span>
                       </button>
                       <span className="text-xs font-black text-neutral-300 tabular-nums">
-                        Page {safeCatalogPage} of {totalCatalogPages} · 10 / page
+                        Page {safeCatalogPage} of {totalCatalogPages} · 12 / page
                       </span>
                       <button
                         type="button"
@@ -3173,7 +3332,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                         }}
                         className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 disabled:opacity-40 text-xs font-black text-white flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                       >
-                        <span>Next 10</span>
+                        <span>Next</span>
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </>
@@ -3350,6 +3509,117 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                 ))}
               </div>
             ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* ADMIN-ONLY "MOVIX SETTINGS" MODAL (TMDB + YouTube Data API v3 Keys)   */}
+      {/* ===================================================================== */}
+      {isMovixSettingsOpen && isAdmin && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setIsMovixSettingsOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-neutral-950 border border-amber-500/40 rounded-3xl p-5 shadow-2xl space-y-4"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/50 text-amber-300 flex items-center justify-center">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">MOVIX Settings</h3>
+                  <p className="text-[11px] text-neutral-400">
+                    Admin API Config · Keyless Mode Always Active
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMovixSettingsOpen(false)}
+                className="p-1.5 rounded-xl bg-neutral-900 text-neutral-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-emerald-200 leading-relaxed">
+                <strong>Keyless Search &amp; Family-Safe Filter Active:</strong> Apple iTunes Cinema, Internet Archive Open Cinema, and curated worldwide feeds work 100% out-of-the-box with zero adult/18+ content.
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-neutral-300 block mb-1">
+                  Free TMDB API Key (<code className="text-amber-300">VITE_TMDB_API_KEY</code>)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showApiKeys ? 'text' : 'password'}
+                    value={tmdbKeyInput}
+                    onChange={(e) => setTmdbKeyInput(sanitizeInputLive(e.target.value, 160))}
+                    placeholder="Paste optional free TMDB v3 API key..."
+                    className="w-full bg-neutral-900 border border-neutral-700 focus:border-amber-400 rounded-xl px-3 py-2.5 pr-9 text-xs text-white focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKeys((v) => !v)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white cursor-pointer"
+                  >
+                    {showApiKeys ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-neutral-300 block mb-1">
+                  YouTube Data API v3 Key (<code className="text-cyan-300">VITE_YOUTUBE_API_KEY</code>)
+                </label>
+                <input
+                  type={showApiKeys ? 'text' : 'password'}
+                  value={youtubeKeyInput}
+                  onChange={(e) => setYoutubeKeyInput(sanitizeInputLive(e.target.value, 160))}
+                  placeholder="Paste optional YouTube Data API v3 key..."
+                  className="w-full bg-neutral-900 border border-neutral-700 focus:border-cyan-400 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-hidden"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  saveMovixApiKeys('', '');
+                  setTmdbKeyInput('');
+                  setYoutubeKeyInput('');
+                  onShowToast('Cleared custom MOVIX keys (using Keyless & env defaults)');
+                }}
+                className="px-3.5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-300 text-xs font-bold cursor-pointer"
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  saveMovixApiKeys(tmdbKeyInput, youtubeKeyInput);
+                  try {
+                    sessionStorage.removeItem('jatt_yt_tab_cache');
+                  } catch {
+                    // ignore
+                  }
+                  setIsMovixSettingsOpen(false);
+                  onShowToast('Saved MOVIX API settings!');
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 text-white text-xs font-black cursor-pointer shadow-lg"
+              >
+                Save MOVIX Settings
+              </button>
+            </div>
           </div>
         </div>
       )}

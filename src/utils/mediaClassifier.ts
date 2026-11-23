@@ -82,6 +82,25 @@ const KEYWORD_RULES: { tag: ContentStyleTag; patterns: RegExp[]; weight: number 
     ],
   },
   {
+    tag: 'Bayan',
+    weight: 10,
+    patterns: [
+      /\bbayan\b/i,
+      /\bislamic\s*lecture\b/i,
+      /\btariq\s*jameel\b/i,
+      /\bmufti\s*menk\b/i,
+      /\bnouman\s*ali\b/i,
+      /\btq\s*bayan\b/i,
+      /\bkhutbah\b/i,
+      /\btafsir\b/i,
+      /\btafseer\b/i,
+      /\bseerah\b/i,
+      /\braza\s*saqib\b/i,
+      /\bpeer\s*ajmal\b/i,
+      /\bdr\s*israr\b/i,
+    ],
+  },
+  {
     tag: 'Talk Show',
     weight: 9,
     patterns: [
@@ -241,6 +260,8 @@ const TAB_OR_CATEGORY_TO_TAG: Record<string, ContentStyleTag> = {
   naat: 'Naat',
   tilawat: 'Tilawat',
   quran: 'Tilawat',
+  bayan: 'Bayan',
+  bayans: 'Bayan',
   programs: 'Program',
   program: 'Program',
   talk_shows: 'Talk Show',
@@ -320,6 +341,7 @@ export function mapStyleTagToCategory(tag: ContentStyleTag): DownloadCategory {
     case 'Naat':
       return 'naat';
     case 'Tilawat':
+    case 'Bayan':
       return 'tilawat';
     case 'Program':
       return 'programs';
@@ -348,6 +370,8 @@ export function getContentTagBadgeClasses(tag: ContentStyleTag): string {
       return 'bg-teal-600 text-white border-teal-300';
     case 'Tilawat':
       return 'bg-green-600 text-white border-emerald-300';
+    case 'Bayan':
+      return 'bg-emerald-700 text-white border-emerald-300';
     case 'Program':
       return 'bg-indigo-600 text-white border-indigo-400';
     case 'Talk Show':

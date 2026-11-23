@@ -2565,7 +2565,7 @@ export default function App() {
               />
             </Suspense>
           ) : currentTab === 'downloads' ? (
-            /* ALL-IN-ONE DOWNLOAD HUB (SONGS, APPS, DRAMAS, MOVIES, CARTOONS, QURAN) */
+            /* MOVIX (WORLDWIDE MOVIES, DRAMAS, SONGS, CLIPS & QURAN) */
             <Suspense fallback={<LazyTabFallback />}>
               <DownloadHub
                 onBackToFeed={handleBackToFeed}
@@ -2573,6 +2573,7 @@ export default function App() {
                 onShowToast={showToast}
                 isMuted={isMuted}
                 onToggleMute={handleToggleMute}
+                currentUser={currentUser}
               />
             </Suspense>
           ) : currentTab === 'templates' ? (
@@ -2800,7 +2801,7 @@ export default function App() {
                         className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 border border-cyan-500/40 text-cyan-300 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
                       >
                         <Film className="w-4 h-4" />
-                        <span>Movie Box</span>
+                        <span>MOVIX</span>
                       </button>
                       {currentTab !== 'foryou' && (
                         <button

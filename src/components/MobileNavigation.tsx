@@ -398,10 +398,10 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                 ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white shadow-sm border border-cyan-400'
                 : 'bg-cyan-600/15 border border-cyan-500/30 text-cyan-300'
             }`}
-            title="Open Movie Box & Download Hub"
+            title="Open MOVIX (Movie Box)"
           >
             <Film className="w-2.5 h-2.5 text-cyan-400" />
-            <span>Movie Box</span>
+            <span>MOVIX</span>
           </button>
 
           <button

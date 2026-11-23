@@ -170,6 +170,7 @@ export type ContentStyleTag =
   | 'Rhymes'
   | 'Naat'
   | 'Tilawat'
+  | 'Bayan'
   | 'Program'
   | 'Talk Show';
 
@@ -208,7 +209,13 @@ export interface DownloadItem {
   youtubeId?: string;
   youtubeUrl?: string;
   directVideoUrl?: string;
+  downloadUrl?: string;
   embedUrl?: string;
+  archiveId?: string;
+  tmdbId?: number;
+  languageLabel?: string;
+  sourceProvider?: 'curated' | 'tmdb' | 'youtube' | 'itunes' | 'archive';
+  movixSection?: 'trending_movies' | 'hit_dramas' | 'hd_songs' | 'quran_bayans';
 }
 
 export interface TrendingHashtag {
