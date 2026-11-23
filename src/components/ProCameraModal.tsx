@@ -25,6 +25,10 @@ import {
   Search,
   CheckCircle2,
   Lock,
+  Aperture,
+  Gauge,
+  Crosshair,
+  Layers,
 } from 'lucide-react';
 import {
   VideoPost,
@@ -74,7 +78,131 @@ interface ProCameraModalProps {
   onShowToast: (msg: string) => void;
 }
 
-type ResolutionFpsMode = '4K UHD/60FPS' | '1080p/60FPS' | '720p/60FPS';
+import { getIsRamSaverMode } from '../lib/ramSaverMode';
+
+type ResolutionFpsMode = '8K/60FPS' | '4K UHD/60FPS' | '1080p/120FPS' | '720p/60FPS';
+type SonyProPresetId = 'sony_a1_8k' | 'sony_a9_120';
+
+interface SonyProPresetConfig {
+  id: SonyProPresetId;
+  name: string;
+  shortName: string;
+  hudTag: string;
+  targetResFps: ResolutionFpsMode;
+  targetFps: number;
+  cssGrade: string;
+  shutterSpeed: string;
+  aperture: string;
+  baseIso: number;
+  colorScience: string;
+}
+
+const SONY_PRO_PRESETS: Record<SonyProPresetId, SonyProPresetConfig> = {
+  sony_a1_8k: {
+    id: 'sony_a1_8k',
+    name: 'Sony A1 8K Cinema',
+    shortName: 'Sony A1 8K',
+    hudTag: '8K • 60FPS • S-CINETONE',
+    targetResFps: '8K/60FPS',
+    targetFps: 60,
+    cssGrade: 'contrast(1.16) saturate(1.14) brightness(1.02) hue-rotate(-3deg)',
+    shutterSpeed: '1/120',
+    aperture: 'F1.4 GM',
+    baseIso: 400,
+    colorScience: 'S-CINETONE',
+  },
+  sony_a9_120: {
+    id: 'sony_a9_120',
+    name: 'Sony A9 III 120fps Action',
+    shortName: 'A9 III 120fps',
+    hudTag: '4K • 120FPS • S-CINETONE',
+    targetResFps: '1080p/120FPS',
+    targetFps: 120,
+    cssGrade: 'contrast(1.22) saturate(1.18) brightness(1.03)',
+    shutterSpeed: '1/1000',
+    aperture: 'F2.8 GM',
+    baseIso: 800,
+    colorScience: 'GLOBAL S-CINE',
+  },
+};
+
+interface BurstFrameItem {
+  id: string;
+  index: number;
+  url: string;
+  blob: Blob;
+  sharpnessScore: number;
+  timestampMs: number;
+}
+
+// Fast 3x3 micro-contrast unsharp clarity pass for crisp 8K photo & burst exports
+function applyCrispSharpnessKernel(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  amount = 0.34
+): void {
+  if (width < 4 || height < 4 || width * height > 4_800_000) return;
+  try {
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const src = imageData.data;
+    const copy = new Uint8ClampedArray(src);
+    const stride = width * 4;
+    const centerWeight = 1 + 4 * amount;
+    const edgeWeight = -amount;
+
+    for (let y = 1; y < height - 1; y++) {
+      const rowOffset = y * stride;
+      for (let x = 1; x < width - 1; x++) {
+        const idx = rowOffset + x * 4;
+        const up = idx - stride;
+        const down = idx + stride;
+        const left = idx - 4;
+        const right = idx + 4;
+
+        for (let c = 0; c < 3; c++) {
+          const val =
+            copy[idx + c] * centerWeight +
+            (copy[up + c] + copy[down + c] + copy[left + c] + copy[right + c]) * edgeWeight;
+          src[idx + c] = val < 0 ? 0 : val > 255 ? 255 : val;
+        }
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+  } catch {
+    // ignore memory-constrained devices cleanly
+  }
+}
+
+// Fast edge-contrast score on tiny downsample to auto-rank sharpest 120fps burst shot
+function computeFastSharpnessScore(sourceCanvas: HTMLCanvasElement): number {
+  try {
+    const probeW = 64;
+    const probeH = 64;
+    const probe = document.createElement('canvas');
+    probe.width = probeW;
+    probe.height = probeH;
+    const pCtx = probe.getContext('2d', { willReadFrequently: true });
+    if (!pCtx) return 0;
+    pCtx.drawImage(sourceCanvas, 0, 0, probeW, probeH);
+    const data = pCtx.getImageData(0, 0, probeW, probeH).data;
+    let totalDiff = 0;
+    for (let y = 1; y < probeH - 1; y++) {
+      for (let x = 1; x < probeW - 1; x++) {
+        const i = (y * probeW + x) * 4;
+        const r = (y * probeW + x + 1) * 4;
+        const d = ((y + 1) * probeW + x) * 4;
+        const lum = data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11;
+        const lumR = data[r] * 0.3 + data[r + 1] * 0.59 + data[r + 2] * 0.11;
+        const lumD = data[d] * 0.3 + data[d + 1] * 0.59 + data[d + 2] * 0.11;
+        totalDiff += Math.abs(lum - lumR) + Math.abs(lum - lumD);
+      }
+    }
+    return Math.round(totalDiff);
+  } catch {
+    return 0;
+  }
+}
 
 export interface CameraFilterDef {
   id: string;
@@ -164,7 +292,7 @@ export const CAMERA_FILTERS: CameraFilterDef[] = [
   },
 ];
 
-function getSupportedRecorderOptions(): MediaRecorderOptions {
+function getSupportedRecorderOptions(highBitrate = true): MediaRecorderOptions {
   const mimeCandidates = [
     'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
     'video/mp4',
@@ -173,11 +301,13 @@ function getSupportedRecorderOptions(): MediaRecorderOptions {
     'video/webm',
   ];
 
+  const videoBitsPerSecond = highBitrate ? 45_000_000 : 28_000_000;
+
   for (const mimeType of mimeCandidates) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeType)) {
       return {
         mimeType,
-        videoBitsPerSecond: 35_000_000,
+        videoBitsPerSecond,
         audioBitsPerSecond: 192_000,
       };
     }
@@ -202,19 +332,31 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   onSwitchToUploadFile,
   onShowToast,
 }) => {
-  // Camera Settings (Default 4K UHD/60FPS with instant hardware fallback for crisp zero-lag capture)
-  const [resFps, setResFps] = useState<ResolutionFpsMode>('4K UHD/60FPS');
-  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('4K UHD · 60fps');
+  // Sony A1 / A9 III Pro Cinema Engine State
+  const [sonyPreset, setSonyPreset] = useState<SonyProPresetId>('sony_a1_8k');
+  const [resFps, setResFps] = useState<ResolutionFpsMode>('8K/60FPS');
+  const [streamInfoLabel, setStreamInfoLabel] = useState<string>('4K/8K · 60fps');
   const [isHighFpsActive, setIsHighFpsActive] = useState<boolean>(true);
   const [selectedFilterId, setSelectedFilterId] = useState<string>('natural');
   const [nightModeLevel, setNightModeLevel] = useState<number>(0); // 0 = off, 1 = 1.5x, 2 = 3.0x
   const [isFlashOn, setIsFlashOn] = useState<boolean>(false);
   const [showGrid, setShowGrid] = useState<boolean>(false);
+  const [showLevelHorizon, setShowLevelHorizon] = useState<boolean>(true);
+  const [horizonTiltDeg, setHorizonTiltDeg] = useState<number>(0);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isSimulatedFeed, setIsSimulatedFeed] = useState<boolean>(false);
   const [cameraBlockedInWebView, setCameraBlockedInWebView] = useState<boolean>(false);
   const [isCameraReady, setIsCameraReady] = useState<boolean>(false);
+
+  // 120fps Burst Shot State
+  const [isBurstCapturing, setIsBurstCapturing] = useState<boolean>(false);
+  const [burstProgressCount, setBurstProgressCount] = useState<number>(0);
+  const [burstFrames, setBurstFrames] = useState<BurstFrameItem[]>([]);
+  const [selectedBurstIndex, setSelectedBurstIndex] = useState<number>(0);
+  const [bestBurstFrameId, setBestBurstFrameId] = useState<string | null>(null);
+  const [isCompilingBurstReel, setIsCompilingBurstReel] = useState<boolean>(false);
+  const [isExportingUltraSharp, setIsExportingUltraSharp] = useState<boolean>(false);
 
   // Recording & Capture State
   const [isRecording, setIsRecording] = useState<boolean>(false);
@@ -233,7 +375,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
 
   // Post-recording caption & song form
   const [clipTitle, setClipTitle] = useState('');
-  const [clipHashtags, setClipHashtags] = useState('#JattVibe #4K60FPS #LiveFilter #Trending');
+  const [clipHashtags, setClipHashtags] = useState('#JattVibe #SonyA1Cinema #SCinetone #4K60FPS');
   const [selectedMusicTrack, setSelectedMusicTrack] = useState<AudioTrackOption | null>(null);
   const [previewMusicId, setPreviewMusicId] = useState<string | null>(null);
   const [showMusicPicker, setShowMusicPicker] = useState<boolean>(false);
@@ -253,19 +395,26 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const recordingCanvasActiveRef = useRef<boolean>(false);
   const timerIntervalRef = useRef<number | null>(null);
   const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const burstFramesRef = useRef<BurstFrameItem[]>([]);
 
   // Keep live filter & transform values in refs so on-demand recording never restarts
   const activeFilterRef = useRef<CameraFilterDef>(CAMERA_FILTERS[0]);
+  const sonyPresetRef = useRef<SonyProPresetId>(sonyPreset);
   const nightModeRef = useRef<number>(nightModeLevel);
   const zoomRef = useRef<number>(zoomLevel);
   const facingRef = useRef<'user' | 'environment'>(facingMode);
 
+  const activeSonyConfig = SONY_PRO_PRESETS[sonyPreset];
   const selectedFilter =
     CAMERA_FILTERS.find((f) => f.id === selectedFilterId) || CAMERA_FILTERS[0];
 
   useEffect(() => {
     activeFilterRef.current = selectedFilter;
   }, [selectedFilter]);
+
+  useEffect(() => {
+    sonyPresetRef.current = sonyPreset;
+  }, [sonyPreset]);
 
   useEffect(() => {
     nightModeRef.current = nightModeLevel;
@@ -279,10 +428,43 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     facingRef.current = facingMode;
   }, [facingMode]);
 
-  // Compute combined CSS filter string for live canvas/fallback preview
+  const revokeBurstFrames = useCallback(() => {
+    if (burstFramesRef.current.length > 0) {
+      for (const frame of burstFramesRef.current) {
+        if (frame.url.startsWith('blob:')) {
+          URL.revokeObjectURL(frame.url);
+        }
+      }
+      burstFramesRef.current = [];
+    }
+    setBurstFrames([]);
+    setSelectedBurstIndex(0);
+    setBestBurstFrameId(null);
+  }, []);
+
+  // Live DeviceOrientation listener for Electronic Level Horizon Line
+  useEffect(() => {
+    if (!isOpen || !showLevelHorizon || recordedClipUrl) return;
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      if (typeof e.gamma === 'number' && Number.isFinite(e.gamma)) {
+        const clamped = Math.max(-45, Math.min(45, e.gamma));
+        setHorizonTiltDeg((prev) => Number((prev * 0.55 + clamped * 0.45).toFixed(1)));
+      }
+    };
+    window.addEventListener('deviceorientation', handleOrientation, true);
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation, true);
+    };
+  }, [isOpen, showLevelHorizon, recordedClipUrl]);
+
+  // Compute combined CSS filter string (Sony S-Cinetone / 8K Action LUT + Creative Filter + Night Mode)
   const buildCompositeFilter = useCallback(
-    (filterDef: CameraFilterDef, night: number): string => {
+    (filterDef: CameraFilterDef, night: number, presetId: SonyProPresetId = sonyPreset): string => {
       const parts: string[] = [];
+      const presetCfg = SONY_PRO_PRESETS[presetId];
+      if (presetCfg?.cssGrade) {
+        parts.push(presetCfg.cssGrade);
+      }
       if (filterDef.cssFilter && filterDef.cssFilter !== 'none') {
         parts.push(filterDef.cssFilter);
       }
@@ -293,7 +475,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       }
       return parts.length > 0 ? parts.join(' ') : 'none';
     },
-    []
+    [sonyPreset]
   );
 
   // Fallback native camera capture handler
@@ -348,6 +530,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       setIsSnapSendSheetOpen(false);
       setSentRecipientIds([]);
       setSnapFriendSearch('');
+      setIsBurstCapturing(false);
+      setBurstProgressCount(0);
+      revokeBurstFrames();
       recordedBlobRef.current = null;
       setCameraBlockedInWebView(false);
       setIsCameraReady(false);
@@ -368,15 +553,29 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         autoGainControl: true,
       };
 
+      const want120Fps = resFps === '1080p/120FPS' || sonyPreset === 'sony_a9_120';
       const targetConstraints: MediaStreamConstraints[] =
-        resFps === '4K UHD/60FPS'
+        resFps === '8K/60FPS' || resFps === '4K UHD/60FPS'
           ? [
+              ...(resFps === '8K/60FPS'
+                ? [
+                    {
+                      video: {
+                        facingMode,
+                        width: { ideal: 7680 },
+                        height: { ideal: 4320 },
+                        frameRate: { ideal: want120Fps ? 120 : 60, min: 24 },
+                      },
+                      audio: audioHighQuality,
+                    },
+                  ]
+                : []),
               {
                 video: {
                   facingMode,
                   width: { ideal: 3840 },
                   height: { ideal: 2160 },
-                  frameRate: { ideal: 60, min: 30 },
+                  frameRate: { ideal: want120Fps ? 120 : 60, min: 24 },
                 },
                 audio: audioHighQuality,
               },
@@ -385,7 +584,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   facingMode,
                   width: { ideal: 1920 },
                   height: { ideal: 1080 },
-                  frameRate: { ideal: 60, min: 30 },
+                  frameRate: { ideal: want120Fps ? 120 : 60, min: 24 },
                 },
                 audio: audioHighQuality,
               },
@@ -394,21 +593,30 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   facingMode,
                   width: { ideal: 1280 },
                   height: { ideal: 720 },
-                  frameRate: { ideal: 60, min: 30 },
+                  frameRate: { ideal: want120Fps ? 120 : 60, min: 24 },
                 },
                 audio: audioHighQuality,
               },
               { video: { facingMode, frameRate: { ideal: 60 } }, audio: true },
               { video: { facingMode }, audio: false },
             ]
-          : resFps === '1080p/60FPS'
+          : resFps === '1080p/120FPS'
           ? [
+              {
+                video: {
+                  facingMode,
+                  width: { ideal: 3840 },
+                  height: { ideal: 2160 },
+                  frameRate: { ideal: 120, min: 30 },
+                },
+                audio: audioHighQuality,
+              },
               {
                 video: {
                   facingMode,
                   width: { ideal: 1920 },
                   height: { ideal: 1080 },
-                  frameRate: { ideal: 60, min: 30 },
+                  frameRate: { ideal: 120, min: 30 },
                 },
                 audio: audioHighQuality,
               },
@@ -417,7 +625,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   facingMode,
                   width: { ideal: 1280 },
                   height: { ideal: 720 },
-                  frameRate: { ideal: 60, min: 30 },
+                  frameRate: { ideal: 120, min: 24 },
                 },
                 audio: audioHighQuality,
               },
@@ -430,7 +638,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   facingMode,
                   width: { ideal: 1280 },
                   height: { ideal: 720 },
-                  frameRate: { ideal: 60, min: 30 },
+                  frameRate: { ideal: 60, min: 24 },
                 },
                 audio: audioHighQuality,
               },
@@ -499,11 +707,11 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaStreamRef.current = null;
       }
     };
-  }, [isOpen, facingMode, resFps, onShowToast]);
+  }, [isOpen, facingMode, resFps, sonyPreset, onShowToast, revokeBurstFrames]);
 
-  // Draw one filtered/mirrored/zoomed frame onto the offscreen canvas (used for snapshot & filtered recording only)
+  // Draw one S-Cinetone/filtered/mirrored/zoomed frame onto offscreen canvas
   const drawVideoFrameToCanvas = useCallback(
-    (maxDim = 1920): boolean => {
+    (maxDim = 1920, applySharpness = false): boolean => {
       const video = videoPreviewRef.current;
       const canvas = canvasPreviewRef.current;
       if (!video || !canvas || video.readyState < 2 || video.videoWidth <= 0 || video.videoHeight <= 0) {
@@ -526,13 +734,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         canvasCtxRef.current = canvas.getContext('2d', {
           alpha: false,
           desynchronized: true,
+          willReadFrequently: applySharpness,
         } as CanvasRenderingContext2DSettings);
       }
       const ctx = canvasCtxRef.current;
       if (!ctx) return false;
 
       const filterDef = activeFilterRef.current;
-      const compositeFilter = buildCompositeFilter(filterDef, nightModeRef.current);
+      const compositeFilter = buildCompositeFilter(
+        filterDef,
+        nightModeRef.current,
+        sonyPresetRef.current
+      );
       const zoom = Math.max(1, zoomRef.current);
 
       ctx.save();
@@ -556,9 +769,25 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       if ('filter' in ctx) {
         ctx.filter = 'none';
       }
+
+      // Sony S-Cinetone subtle warm midtone / deep shadow roll-off glaze
+      ctx.save();
+      ctx.globalCompositeOperation = 'soft-light';
+      ctx.fillStyle =
+        sonyPresetRef.current === 'sony_a9_120'
+          ? 'rgba(56, 189, 248, 0.06)'
+          : 'rgba(251, 191, 36, 0.05)';
+      ctx.fillRect(0, 0, targetW, targetH);
+      ctx.restore();
+
       if (filterDef.drawOverlay) {
         filterDef.drawOverlay(ctx, targetW, targetH);
       }
+
+      if (applySharpness) {
+        applyCrispSharpnessKernel(ctx, targetW, targetH, 0.34);
+      }
+
       return true;
     },
     [buildCompositeFilter]
@@ -584,10 +813,11 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
   }, []);
 
-  // Start on-demand recording-only canvas pump (720p bake guarantees zero slow-motion lag on mobile GPUs)
+  // Start on-demand recording-only canvas pump (720p on 3GB RAM Saver, 1080p S-Cinetone otherwise)
   const startRecordingFramePump = useCallback(() => {
     stopRecordingFramePump();
     recordingCanvasActiveRef.current = true;
+    const bakeMaxDim = getIsRamSaverMode() ? 720 : 1080;
 
     const video = videoPreviewRef.current as (HTMLVideoElement & {
       requestVideoFrameCallback?: (cb: () => void) => number;
@@ -596,20 +826,20 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     if (video && typeof video.requestVideoFrameCallback === 'function') {
       const onVideoFrame = () => {
         if (!recordingCanvasActiveRef.current) return;
-        drawVideoFrameToCanvas(720);
+        drawVideoFrameToCanvas(bakeMaxDim, false);
         videoFrameCbRef.current = video.requestVideoFrameCallback!(onVideoFrame);
       };
-      drawVideoFrameToCanvas(720);
+      drawVideoFrameToCanvas(bakeMaxDim, false);
       videoFrameCbRef.current = video.requestVideoFrameCallback(onVideoFrame);
       return;
     }
 
     const onRaf = () => {
       if (!recordingCanvasActiveRef.current) return;
-      drawVideoFrameToCanvas(720);
+      drawVideoFrameToCanvas(bakeMaxDim, false);
       animFrameRef.current = requestAnimationFrame(onRaf);
     };
-    drawVideoFrameToCanvas(720);
+    drawVideoFrameToCanvas(bakeMaxDim, false);
     animFrameRef.current = requestAnimationFrame(onRaf);
   }, [drawVideoFrameToCanvas, stopRecordingFramePump]);
 
@@ -696,24 +926,23 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
 
     try {
-      const needsCanvasBake =
-        selectedFilterId !== 'natural' ||
-        nightModeLevel > 0 ||
-        zoomLevel > 1.0;
+      // Always bake Sony S-Cinetone / A9 III LUT grade + creative filters when canvas capture is available
+      const needsCanvasBake = typeof canvas.captureStream === 'function';
 
       let combinedStream: MediaStream;
-      if (!needsCanvasBake || typeof canvas.captureStream !== 'function') {
+      if (!needsCanvasBake) {
         combinedStream = rawStream;
       } else {
         startRecordingFramePump();
-        const canvasStream = canvas.captureStream(60);
+        const targetCaptureFps = activeSonyConfig.targetFps >= 120 ? 60 : 60;
+        const canvasStream = canvas.captureStream(targetCaptureFps);
         combinedStream = new MediaStream([
           ...canvasStream.getVideoTracks(),
           ...rawStream.getAudioTracks(),
         ]);
       }
 
-      const options = getSupportedRecorderOptions();
+      const options = getSupportedRecorderOptions(true);
       let recorder: MediaRecorder;
       try {
         recorder = new MediaRecorder(combinedStream, options);
@@ -740,12 +969,12 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           setRecordedMediaType('video');
           setRecordedClipUrl(url);
           setClipTitle(
-            `${selectedFilter.name !== 'Natural' ? `${selectedFilter.shortLabel} ` : ''}HD Reel #${Math.floor(
-              Math.random() * 900 + 100
-            )}`
+            `${activeSonyConfig.shortName} ${
+              selectedFilter.name !== 'Natural' ? `${selectedFilter.shortLabel} ` : ''
+            }Reel #${Math.floor(Math.random() * 900 + 100)}`
           );
           onShowToast(
-            `Recorded in ${streamInfoLabel} (${selectedFilter.name})!`
+            `Captured ${activeSonyConfig.name} (${streamInfoLabel} · ${activeSonyConfig.colorScience})!`
           );
         } else {
           onShowToast('No video data captured. Please try recording for at least 1 second.');
@@ -757,7 +986,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       soundEngine.playRecordBeep(true);
       setIsRecording(true);
       setRecordingSeconds(0);
-      onShowToast(`Recording ${resFps} (${selectedFilter.name})...`);
+      onShowToast(`Recording ${activeSonyConfig.hudTag}...`);
     } catch (err) {
       stopRecordingFramePump();
       console.error('Failed to start MediaRecorder:', err);
@@ -766,13 +995,14 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
   };
 
-  // Capture Filtered High-Res Photo via single on-demand snapshot
+  // Capture Filtered High-Res Sharp 8K Photo via single on-demand snapshot
   const handleCapturePhoto = () => {
     if (isSimulatedFeed) {
       nativeCameraInputRef.current?.click();
       return;
     }
-    const ok = drawVideoFrameToCanvas(1920);
+    const maxSnapDim = getIsRamSaverMode() ? 1440 : 2160;
+    const ok = drawVideoFrameToCanvas(maxSnapDim, true);
     const canvas = canvasPreviewRef.current;
     if (!ok || !canvas || canvas.width === 0) {
       onShowToast('Camera preview is still loading...');
@@ -790,20 +1020,225 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         setRecordedMediaType('image');
         setRecordedClipUrl(URL.createObjectURL(blob));
         setClipTitle(
-          `${selectedFilter.name !== 'Natural' ? `${selectedFilter.shortLabel} ` : ''}Shot #${Math.floor(
-            Math.random() * 900 + 100
-          )}`
+          `${activeSonyConfig.shortName} ${
+            selectedFilter.name !== 'Natural' ? `${selectedFilter.shortLabel} ` : ''
+          }Shot #${Math.floor(Math.random() * 900 + 100)}`
         );
-        onShowToast(`Photo captured with ${selectedFilter.name} filter!`);
+        onShowToast(`Ultra-Sharp ${activeSonyConfig.colorScience} photo captured!`);
       },
       'image/jpeg',
-      0.92
+      0.95
     );
+  };
+
+  // 120fps Burst Shot: captures rapid action frames over ~1 second so user can pick sharpest frame or make Action Reel
+  const handleBurstShot = async () => {
+    if (isSimulatedFeed) {
+      nativeCameraInputRef.current?.click();
+      return;
+    }
+    if (isRecording || isBurstCapturing) return;
+
+    const video = videoPreviewRef.current;
+    const canvas = canvasPreviewRef.current;
+    if (!video || !canvas || video.readyState < 2) {
+      onShowToast('Camera preview is still loading...');
+      return;
+    }
+
+    revokeBurstFrames();
+    setIsBurstCapturing(true);
+    setBurstProgressCount(0);
+
+    const targetFrames = getIsRamSaverMode() ? 10 : 14;
+    const burstMaxDim = getIsRamSaverMode() ? 960 : 1280;
+    const intervalMs = 68; // ~1s total burst capture
+    const captured: BurstFrameItem[] = [];
+    const startTs = performance.now();
+
+    try {
+      for (let i = 0; i < targetFrames; i++) {
+        const ok = drawVideoFrameToCanvas(burstMaxDim, false);
+        if (ok && canvas.width > 0) {
+          const sharpnessScore = computeFastSharpnessScore(canvas);
+          const blob = await new Promise<Blob | null>((resolve) =>
+            canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9)
+          );
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            captured.push({
+              id: `burst-${Date.now()}-${i}`,
+              index: i,
+              url,
+              blob,
+              sharpnessScore,
+              timestampMs: Math.round(performance.now() - startTs),
+            });
+            setBurstProgressCount(captured.length);
+            if (i % 3 === 0) {
+              soundEngine.playCameraShutter();
+            }
+          }
+        }
+        if (i < targetFrames - 1) {
+          await new Promise((r) => window.setTimeout(r, intervalMs));
+        }
+      }
+
+      if (captured.length === 0) {
+        onShowToast('Could not capture burst frames.');
+        return;
+      }
+
+      // Auto-select the sharpest action frame
+      let bestIdx = 0;
+      let bestScore = -1;
+      captured.forEach((f, idx) => {
+        if (f.sharpnessScore > bestScore) {
+          bestScore = f.sharpnessScore;
+          bestIdx = idx;
+        }
+      });
+
+      burstFramesRef.current = captured;
+      setBurstFrames(captured);
+      setSelectedBurstIndex(bestIdx);
+      setBestBurstFrameId(captured[bestIdx].id);
+      soundEngine.playDownloadComplete();
+      onShowToast(
+        `120fps Burst Shot complete (${captured.length} frames) — Frame #${bestIdx + 1} auto-picked as Sharpest!`
+      );
+    } finally {
+      setIsBurstCapturing(false);
+    }
+  };
+
+  // Promote chosen burst shot into the preview / publish / export screen
+  const handleSelectBurstPhotoForPreview = () => {
+    const chosen = burstFrames[selectedBurstIndex];
+    if (!chosen) return;
+    recordedBlobRef.current = chosen.blob;
+    setRecordedMediaType('image');
+    setRecordedClipUrl(URL.createObjectURL(chosen.blob));
+    setClipTitle(`${activeSonyConfig.shortName} Burst #${selectedBurstIndex + 1}`);
+    revokeBurstFrames();
+  };
+
+  // Stitch captured 120fps burst frames into a fast punchy Action Reel video
+  const handleCompileBurstActionReel = async () => {
+    if (burstFrames.length < 2 || isCompilingBurstReel) return;
+    const canvas = canvasPreviewRef.current;
+    if (!canvas || typeof canvas.captureStream !== 'function') {
+      onShowToast('Action Reel assembly is unavailable on this browser.');
+      return;
+    }
+
+    setIsCompilingBurstReel(true);
+    onShowToast('Assembling Sony A9 III Action Reel...');
+
+    try {
+      // Load burst frame ImageBitmaps / Images
+      const loadedImgs = await Promise.all(
+        burstFrames.map(
+          (f) =>
+            new Promise<HTMLImageElement>((resolve, reject) => {
+              const img = new Image();
+              img.onload = () => resolve(img);
+              img.onerror = reject;
+              img.src = f.url;
+            })
+        )
+      );
+
+      const first = loadedImgs[0];
+      const w = Math.min(1080, first.naturalWidth || 720);
+      const h = Math.min(1920, first.naturalHeight || 1280);
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d', { alpha: false });
+      if (!ctx) throw new Error('Canvas 2D unavailable');
+
+      const stream = canvas.captureStream(30);
+      const options = getSupportedRecorderOptions(true);
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, options);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
+
+      const chunks: Blob[] = [];
+      const mime = recorder.mimeType || options.mimeType || 'video/webm';
+      recordedMimeRef.current = mime;
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      };
+
+      const stopPromise = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: mime }));
+      });
+
+      recorder.start(100);
+
+      // Play rapid forward + boomerang sweep across 2 cycles (~1.6s action reel)
+      const sequence = [...loadedImgs, ...[...loadedImgs].reverse(), ...loadedImgs];
+      for (const img of sequence) {
+        ctx.drawImage(img, 0, 0, w, h);
+        await new Promise((r) => window.setTimeout(r, 52));
+      }
+
+      recorder.stop();
+      const reelBlob = await stopPromise;
+      if (reelBlob.size > 0) {
+        recordedBlobRef.current = reelBlob;
+        setRecordedMediaType('video');
+        setRecordedClipUrl(URL.createObjectURL(reelBlob));
+        setClipTitle(`${activeSonyConfig.shortName} Action Burst Reel`);
+        revokeBurstFrames();
+        soundEngine.playDownloadComplete();
+        onShowToast('Fast Action Reel ready for Ultra-Sharp Export or Publish!');
+      } else {
+        onShowToast('Action Reel assembly produced empty clip.');
+      }
+    } catch (err) {
+      console.warn('Burst Action Reel compile warning:', err);
+      onShowToast('Could not compile Action Reel on this browser.');
+    } finally {
+      setIsCompilingBurstReel(false);
+    }
+  };
+
+  // Switch Sony Pro Preset (Sony A1 8K Cinema vs Sony A9 III 120fps Action)
+  const handleSelectSonyPreset = (presetId: SonyProPresetId) => {
+    if (isRecording || isBurstCapturing) return;
+    soundEngine.playCameraShutter();
+    setSonyPreset(presetId);
+    const cfg = SONY_PRO_PRESETS[presetId];
+    setResFps(cfg.targetResFps);
+    onShowToast(`${cfg.name} · ${cfg.hudTag}`);
+  };
+
+  // Toggle Electronic Level Horizon (requests iOS DeviceOrientation permission cleanly on tap if needed)
+  const handleToggleLevelHorizon = async () => {
+    const devOrientation = typeof window !== 'undefined'
+      ? (window.DeviceOrientationEvent as unknown as {
+          requestPermission?: () => Promise<'granted' | 'denied'>;
+        } | undefined)
+      : undefined;
+
+    if (!showLevelHorizon && devOrientation && typeof devOrientation.requestPermission === 'function') {
+      try {
+        await devOrientation.requestPermission();
+      } catch {
+        // fallback still shows horizon level reticle cleanly
+      }
+    }
+    setShowLevelHorizon((prev) => !prev);
   };
 
   // Switch Camera (Front / Back)
   const handleFlipCamera = () => {
-    if (isRecording) {
+    if (isRecording || isBurstCapturing) {
       onShowToast('Stop recording before switching camera.');
       return;
     }
@@ -813,16 +1248,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     onShowToast(`Switched Camera: ${nextMode === 'environment' ? 'Back (Rear)' : 'Front (Selfie)'}`);
   };
 
-  // Cycle Ultra-HD 4K/60FPS, 1080p/60FPS & 720p/60FPS
+  // Cycle Resolution & FPS (8K/60FPS, 4K UHD/60FPS, 1080p/120FPS, 720p/60FPS)
   const handleCycleResFps = () => {
-    if (isRecording) return;
+    if (isRecording || isBurstCapturing) return;
     soundEngine.playCameraShutter();
     const nextMode: ResolutionFpsMode =
-      resFps === '4K UHD/60FPS'
-        ? '1080p/60FPS'
-        : resFps === '1080p/60FPS'
+      resFps === '8K/60FPS'
+        ? '4K UHD/60FPS'
+        : resFps === '4K UHD/60FPS'
+        ? '1080p/120FPS'
+        : resFps === '1080p/120FPS'
         ? '720p/60FPS'
-        : '4K UHD/60FPS';
+        : '8K/60FPS';
     setResFps(nextMode);
     onShowToast(`Pro Camera Quality: ${nextMode}`);
   };
@@ -834,6 +1271,83 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     setNightModeLevel(next);
     const labels = ['Night Mode: OFF', 'Night Mode: 1.5x Boost', 'Night Mode: 3.0x Max'];
     onShowToast(labels[next]);
+  };
+
+  // One-Tap Ultra-Sharp Export (applies 8K clarity polish for photos/burst frames & triggers crisp high-quality download)
+  const handleUltraSharpExport = async (overrideBurstFrame?: BurstFrameItem) => {
+    const targetUrl = overrideBurstFrame?.url || recordedClipUrl;
+    const isPhoto = Boolean(overrideBurstFrame) || recordedMediaType === 'image';
+    if (!targetUrl || isExportingUltraSharp) return;
+
+    setIsExportingUltraSharp(true);
+    const baseName = (
+      clipTitle.trim() ||
+      `JattVibeReels_${sonyPreset === 'sony_a1_8k' ? 'SonyA1_8K' : 'SonyA9III_120fps'}`
+    )
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .slice(0, 48);
+
+    try {
+      let exportHref = targetUrl;
+      let tempExportUrl: string | null = null;
+
+      if (isPhoto) {
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const el = new Image();
+          el.onload = () => resolve(el);
+          el.onerror = reject;
+          el.src = targetUrl;
+        });
+
+        const exportCanvas = document.createElement('canvas');
+        const maxOut = getIsRamSaverMode() ? 1600 : 2560;
+        const scale = Math.min(1, maxOut / Math.max(img.naturalWidth || 1280, img.naturalHeight || 720));
+        const outW = Math.max(2, Math.round((img.naturalWidth || 1280) * scale));
+        const outH = Math.max(2, Math.round((img.naturalHeight || 720) * scale));
+        exportCanvas.width = outW;
+        exportCanvas.height = outH;
+        const eCtx = exportCanvas.getContext('2d', { willReadFrequently: true });
+        if (eCtx) {
+          eCtx.drawImage(img, 0, 0, outW, outH);
+          applyCrispSharpnessKernel(eCtx, outW, outH, 0.42);
+          const crispBlob = await new Promise<Blob | null>((resolve) =>
+            exportCanvas.toBlob((b) => resolve(b), 'image/jpeg', 0.96)
+          );
+          if (crispBlob) {
+            tempExportUrl = URL.createObjectURL(crispBlob);
+            exportHref = tempExportUrl;
+          }
+        }
+      }
+
+      const ext = isPhoto
+        ? 'jpg'
+        : recordedMimeRef.current.includes('mp4')
+        ? 'mp4'
+        : 'webm';
+      const filename = `${baseName}_UltraSharp_${Date.now()}.${ext}`;
+
+      const link = document.createElement('a');
+      link.href = exportHref;
+      link.download = filename;
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      if (tempExportUrl) {
+        window.setTimeout(() => URL.revokeObjectURL(tempExportUrl!), 5000);
+      }
+
+      setIsSavedToGallery(true);
+      soundEngine.playDownloadComplete();
+      onShowToast(`Ultra-Sharp Export saved (${filename})!`);
+    } catch (err) {
+      console.error('Ultra-sharp export error:', err);
+      onShowToast('Could not complete Ultra-Sharp Export.');
+    } finally {
+      setIsExportingUltraSharp(false);
+    }
   };
 
   // Direct Save to Device Gallery / Storage using standard <a download> blob trigger
@@ -1181,7 +1695,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   })();
 
   const formattedTimer = `00:${recordingSeconds < 10 ? `0${recordingSeconds}` : recordingSeconds}`;
-  const activeCanvasFallbackFilter = buildCompositeFilter(selectedFilter, nightModeLevel);
+  const activeCanvasFallbackFilter = buildCompositeFilter(selectedFilter, nightModeLevel, sonyPreset);
+  const liveIsoValue = nightModeLevel === 0 ? activeSonyConfig.baseIso : nightModeLevel === 1 ? 1600 : 6400;
+  const isHorizonLevel = Math.abs(horizonTiltDeg) <= 1.5;
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col justify-between overflow-hidden select-none [transform:translateZ(0)]">
@@ -1203,102 +1719,131 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         <div className="absolute inset-0 pointer-events-none z-40 bg-radial from-amber-100/25 via-white/10 to-transparent mix-blend-screen" />
       )}
 
-      {/* TOP PRO STATUS BAR */}
-      <div className="relative z-30 px-3 sm:px-4 py-2.5 bg-gradient-to-b from-black/90 via-black/55 to-transparent flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-9 h-9 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-neutral-300 hover:text-white flex items-center justify-center border border-white/15 transition-all active:scale-95"
-            title="Close Camera"
-          >
-            <X className="w-5 h-5" />
-          </button>
+      {/* TOP PRO STATUS BAR + SONY A1 / A9 III ENGINE SWITCHER */}
+      <div className="relative z-30 px-3 sm:px-4 pt-2.5 pb-1.5 bg-gradient-to-b from-black/95 via-black/70 to-transparent flex flex-col gap-2 shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-10 h-10 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-neutral-300 hover:text-white flex items-center justify-center border border-white/15 transition-all active:scale-95 cursor-pointer"
+              title="Close Camera"
+            >
+              <X className="w-5 h-5" />
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              onSwitchToUploadFile();
-            }}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-xs font-bold text-neutral-300 hover:text-white border border-neutral-700/80 transition-all"
-          >
-            <Upload className="w-3.5 h-3.5 text-pink-400" />
-            <span>Upload File</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onSwitchToUploadFile();
+              }}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-xs font-bold text-neutral-300 hover:text-white border border-neutral-700/80 transition-all cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5 text-pink-400" />
+              <span>Upload File</span>
+            </button>
+          </div>
+
+          {/* Center: Resolution/FPS Cycle + Night Booster */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleCycleResFps}
+              className="min-h-[38px] px-3 py-1.5 rounded-full bg-neutral-900/95 hover:bg-neutral-800 border border-cyan-500/50 text-white text-[11px] font-black flex items-center gap-1.5 shadow-lg shadow-cyan-500/15 active:scale-95 transition-transform cursor-pointer tabular-nums"
+              title="Tap to cycle 8K/60FPS, 4K UHD/60FPS, 1080p/120FPS, 720p/60FPS"
+            >
+              <Aperture className={`w-3.5 h-3.5 ${isHighFpsActive ? 'text-emerald-400' : 'text-cyan-400'}`} />
+              <span className="tracking-wide">{isSimulatedFeed ? resFps : `${resFps.split('/')[0]} · ${streamInfoLabel}`}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCycleNightMode}
+              className={`min-h-[38px] px-2.5 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1 border transition-all cursor-pointer ${
+                nightModeLevel > 0
+                  ? 'bg-amber-500/20 border-amber-400/80 text-amber-300'
+                  : 'bg-neutral-900/90 border-white/15 text-neutral-400 hover:text-white'
+              }`}
+              title="Night Mode Low-Light ISO Boost"
+            >
+              <Moon className={`w-3.5 h-3.5 ${nightModeLevel > 0 ? 'text-amber-400 fill-amber-400' : ''}`} />
+              <span className="hidden sm:inline">
+                {nightModeLevel === 0 ? 'Night' : nightModeLevel === 1 ? '1.5x' : '3.0x'}
+              </span>
+            </button>
+          </div>
+
+          {/* Right: Horizon Level, Flash & Grid */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void handleToggleLevelHorizon()}
+              className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                showLevelHorizon
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/60'
+                  : 'bg-neutral-900/90 text-neutral-400 border-white/15'
+              }`}
+              title="Toggle Electronic Level Horizon"
+            >
+              <Crosshair className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsFlashOn(!isFlashOn)}
+              className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                isFlashOn
+                  ? 'bg-amber-400 text-black border-amber-300'
+                  : 'bg-neutral-900/90 text-neutral-300 border-white/15'
+              }`}
+              title="Toggle Studio Light"
+            >
+              <Zap className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowGrid(!showGrid)}
+              className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                showGrid
+                  ? 'bg-pink-500/25 text-pink-400 border-pink-500/50'
+                  : 'bg-neutral-900/90 text-neutral-400 border-white/15'
+              }`}
+              title="Toggle Framing Grid"
+            >
+              <Grid className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Center: Ultra-HD 4K · 60FPS Badge + Active Stream Resolution & FPS */}
-        <div className="flex items-center gap-1.5">
-          <span
-            className={`px-2 py-1 rounded-full text-[10px] font-black tracking-wider border shadow-sm ${
-              isHighFpsActive
-                ? 'bg-gradient-to-r from-emerald-500/25 via-cyan-500/25 to-pink-500/25 border-emerald-400/70 text-emerald-300'
-                : 'bg-neutral-900/90 border-cyan-500/50 text-cyan-300'
-            }`}
-          >
-            {resFps === '4K UHD/60FPS'
-              ? '4K UHD · 60FPS'
-              : resFps === '720p/60FPS'
-              ? '720p · 60FPS'
-              : '1080p · 60FPS'}
-          </span>
-
-          <button
-            type="button"
-            onClick={handleCycleResFps}
-            className="px-3 py-1.5 rounded-full bg-neutral-900/90 hover:bg-neutral-800 border border-pink-500/50 text-white text-[11px] font-black flex items-center gap-1.5 shadow-lg shadow-pink-500/15 active:scale-95 transition-transform"
-            title="Tap to cycle 4K UHD/60FPS, 1080p/60FPS, and 720p/60FPS"
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="tracking-wide">{isSimulatedFeed ? resFps : streamInfoLabel}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleCycleNightMode}
-            className={`px-2.5 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1 border transition-all ${
-              nightModeLevel > 0
-                ? 'bg-amber-500/20 border-amber-400/80 text-amber-300'
-                : 'bg-neutral-900/90 border-white/15 text-neutral-400 hover:text-white'
-            }`}
-            title="Night Mode Low-Light Boost"
-          >
-            <Moon className={`w-3.5 h-3.5 ${nightModeLevel > 0 ? 'text-amber-400 fill-amber-400' : ''}`} />
-            <span className="hidden sm:inline">
-              {nightModeLevel === 0 ? 'Night' : nightModeLevel === 1 ? '1.5x' : '3.0x'}
-            </span>
-          </button>
-        </div>
-
-        {/* Right: Flash & Grid */}
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setIsFlashOn(!isFlashOn)}
-            className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all ${
-              isFlashOn
-                ? 'bg-amber-400 text-black border-amber-300'
-                : 'bg-neutral-900/90 text-neutral-300 border-white/15'
-            }`}
-            title="Toggle Studio Light"
-          >
-            <Zap className="w-4 h-4" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowGrid(!showGrid)}
-            className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all ${
-              showGrid
-                ? 'bg-pink-500/25 text-pink-400 border-pink-500/50'
-                : 'bg-neutral-900/90 text-neutral-400 border-white/15'
-            }`}
-            title="Toggle Framing Grid"
-          >
-            <Grid className="w-4 h-4" />
-          </button>
-        </div>
+        {/* Sony A1 8K Cinema / Sony A9 III 120fps Action Preset Switcher */}
+        {!recordedClipUrl && burstFrames.length === 0 && (
+          <div className="max-w-md mx-auto w-full grid grid-cols-2 gap-1.5 bg-neutral-950/90 p-1 rounded-2xl border border-white/15">
+            {(['sony_a1_8k', 'sony_a9_120'] as SonyProPresetId[]).map((presetKey) => {
+              const cfg = SONY_PRO_PRESETS[presetKey];
+              const isSelected = sonyPreset === presetKey;
+              return (
+                <button
+                  key={presetKey}
+                  type="button"
+                  disabled={isRecording || isBurstCapturing}
+                  onClick={() => handleSelectSonyPreset(presetKey)}
+                  className={`min-h-[38px] px-2.5 py-1.5 rounded-xl text-[11px] font-black tracking-tight flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-60 ${
+                    isSelected
+                      ? presetKey === 'sony_a1_8k'
+                        ? 'bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 text-white shadow-md'
+                        : 'bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600 text-white shadow-md'
+                      : 'text-neutral-300 hover:text-white hover:bg-neutral-900'
+                  }`}
+                >
+                  <Gauge className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{cfg.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* MAIN VIEWFINDER / RECORDED PREVIEW (Snapchat-Style Edge-to-Edge) */}
@@ -1329,7 +1874,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
               <span className="px-3 py-1 rounded-full bg-pink-600/95 text-white text-[11px] font-black tracking-wider flex items-center gap-1.5 shadow-md">
                 <Film className="w-3.5 h-3.5" />
-                {recordedMediaType === 'image' ? 'SNAP PHOTO' : `${selectedFilter.shortLabel.toUpperCase()} 4K VIDEO`}
+                {recordedMediaType === 'image'
+                  ? `${activeSonyConfig.shortName.toUpperCase()} SHARP PHOTO`
+                  : `${activeSonyConfig.shortName.toUpperCase()} ${activeSonyConfig.colorScience}`}
               </span>
               <button
                 type="button"
@@ -1344,7 +1891,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   setIsSavedToGallery(false);
                   recordedBlobRef.current = null;
                 }}
-                className="pointer-events-auto px-3 py-1 rounded-full bg-neutral-900/95 hover:bg-neutral-800 text-neutral-200 text-xs font-bold border border-neutral-700 flex items-center gap-1"
+                className="pointer-events-auto px-3 py-1.5 rounded-full bg-neutral-900/95 hover:bg-neutral-800 text-neutral-200 text-xs font-bold border border-neutral-700 flex items-center gap-1 cursor-pointer"
               >
                 <RotateCcw className="w-3 h-3" /> Retake
               </button>
@@ -1496,7 +2043,19 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-stretch gap-2">
+              <div className="flex flex-wrap sm:flex-nowrap items-stretch gap-2">
+                {/* One-Tap Ultra-Sharp Export (8K Clarity + High-Bitrate Download) */}
+                <button
+                  type="button"
+                  disabled={isExportingUltraSharp}
+                  onClick={() => void handleUltraSharpExport()}
+                  className="py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 border bg-gradient-to-r from-cyan-500 to-emerald-500 hover:brightness-110 disabled:opacity-60 border-cyan-300/60 text-black shadow-lg shadow-cyan-500/20 active:scale-98 transition-all cursor-pointer shrink-0"
+                  title="One-Tap Ultra-Sharp 8K Clarity Export"
+                >
+                  <Zap className="w-3.5 h-3.5 fill-black" />
+                  <span>{isExportingUltraSharp ? 'Sharpening...' : 'Ultra-Sharp Export'}</span>
+                </button>
+
                 {/* Direct Save to Mobile Gallery / Download */}
                 <button
                   type="button"
@@ -1504,9 +2063,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   className={`py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 border transition-all active:scale-98 cursor-pointer shrink-0 ${
                     isSavedToGallery
                       ? 'bg-emerald-600/25 border-emerald-400 text-emerald-300'
-                      : 'bg-neutral-900 hover:bg-neutral-800 border-cyan-500/50 text-cyan-300 shadow-lg shadow-cyan-500/15'
+                      : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-neutral-200'
                   }`}
-                  title="Save to Mobile Gallery / Download"
+                  title="Quick Save Raw Capture"
                 >
                   {isSavedToGallery ? (
                     <>
@@ -1704,8 +2263,102 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               </div>
             )}
           </div>
+        ) : burstFrames.length > 0 ? (
+          /* 120FPS BURST SHOT REVIEW & ACTION REEL STUDIO */
+          <div className="relative w-full h-full sm:max-w-md sm:max-h-[760px] rounded-none sm:rounded-3xl overflow-hidden bg-neutral-950 border-0 sm:border sm:border-cyan-500/45 shadow-2xl flex flex-col justify-between">
+            <div className="relative flex-1 min-h-0 bg-black flex items-center justify-center overflow-hidden">
+              <img
+                src={burstFrames[selectedBurstIndex]?.url}
+                alt={`Burst frame ${selectedBurstIndex + 1}`}
+                className="w-full h-full object-contain gpu-accelerated"
+              />
+              <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2">
+                <span className="px-3 py-1 rounded-full bg-black/85 border border-cyan-400/60 text-cyan-200 text-[11px] font-black tabular-nums flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>
+                    FRAME {selectedBurstIndex + 1}/{burstFrames.length}
+                    {burstFrames[selectedBurstIndex]?.id === bestBurstFrameId ? ' · SHARPEST' : ''}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={revokeBurstFrames}
+                  className="px-3 py-1.5 rounded-full bg-neutral-900/95 hover:bg-neutral-800 border border-white/20 text-xs font-bold text-white flex items-center gap-1 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Retake Burst
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3 bg-neutral-950 border-t border-neutral-800 space-y-3 shrink-0">
+              {/* Filmstrip Picker */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                {burstFrames.map((frame, idx) => {
+                  const isSelected = idx === selectedBurstIndex;
+                  const isBest = frame.id === bestBurstFrameId;
+                  return (
+                    <button
+                      key={frame.id}
+                      type="button"
+                      onClick={() => setSelectedBurstIndex(idx)}
+                      className={`relative shrink-0 w-14 h-20 rounded-xl overflow-hidden border-2 transition-all cursor-pointer ${
+                        isSelected
+                          ? 'border-cyan-400 scale-105 shadow-lg shadow-cyan-500/25'
+                          : 'border-neutral-800 opacity-75 hover:opacity-100'
+                      }`}
+                    >
+                      <img
+                        src={frame.url}
+                        alt={`Shot ${idx + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <span className="absolute bottom-0.5 right-0.5 px-1 rounded bg-black/80 text-[9px] font-black text-white tabular-nums">
+                        {idx + 1}
+                      </span>
+                      {isBest && (
+                        <span className="absolute top-0.5 left-0.5 px-1 rounded bg-emerald-500 text-[8px] font-black text-black">
+                          TOP
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  disabled={isExportingUltraSharp}
+                  onClick={() => void handleUltraSharpExport(burstFrames[selectedBurstIndex])}
+                  className="min-h-[44px] px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:brightness-110 disabled:opacity-60 text-black font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Zap className="w-3.5 h-3.5 fill-black" />
+                  <span>{isExportingUltraSharp ? 'Exporting...' : 'Ultra-Sharp Photo'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isCompilingBurstReel}
+                  onClick={() => void handleCompileBurstActionReel()}
+                  className="min-h-[44px] px-3 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-amber-500 hover:brightness-110 disabled:opacity-60 text-white font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Film className="w-3.5 h-3.5" />
+                  <span>{isCompilingBurstReel ? 'Building Reel...' : 'Make Action Reel'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSelectBurstPhotoForPreview}
+                  className="min-h-[44px] px-3 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Post Shot</span>
+                </button>
+              </div>
+            </div>
+          </div>
         ) : (
-          /* ACTIVE SNAPCHAT-STYLE 60FPS HARDWARE-ACCELERATED VIEWFINDER (Double-tap to flip camera) */
+          /* ACTIVE SONY A1 / A9 III HARDWARE-ACCELERATED VIEWFINDER (Double-tap to flip camera) */
           <div
             onClick={() => {
               const now = Date.now();
@@ -1736,12 +2389,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                 />
                 {!isCameraReady && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/75 pointer-events-none">
-                    <div className="px-4 py-2 rounded-full bg-neutral-900/90 border border-pink-500/40 text-xs font-bold text-neutral-200 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
-                      <span>Starting 60fps low-latency camera...</span>
+                    <div className="px-4 py-2 rounded-full bg-neutral-900/90 border border-cyan-500/45 text-xs font-bold text-neutral-200 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                      <span>Initializing {activeSonyConfig.name}...</span>
                     </div>
                   </div>
                 )}
+                {/* Subtle S-Cinetone highlight/shadow tint */}
+                <div
+                  className={`absolute inset-0 pointer-events-none mix-blend-soft-light ${
+                    sonyPreset === 'sony_a9_120' ? 'bg-sky-400/8' : 'bg-amber-300/6'
+                  }`}
+                />
                 {selectedFilterId === 'golden_glow' && (
                   <div className="absolute inset-0 pointer-events-none bg-amber-400/10 mix-blend-screen" />
                 )}
@@ -1785,6 +2444,45 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               </div>
             )}
 
+            {/* Electronic Level Horizon Line Reticle */}
+            {showLevelHorizon && !isSimulatedFeed && (
+              <div className="absolute inset-0 pointer-events-none z-10 flex items-center justify-center">
+                <div className="relative w-52 h-12 flex items-center justify-center">
+                  {/* Fixed reference wings */}
+                  <div className="absolute left-0 w-7 h-[1.5px] bg-white/50" />
+                  <div className="absolute right-0 w-7 h-[1.5px] bg-white/50" />
+                  {/* Dynamic Tilting Level Horizon Bar */}
+                  <div
+                    style={{ transform: `rotate(${horizonTiltDeg}deg) translateZ(0)` }}
+                    className={`w-32 h-[2px] rounded-full transition-colors duration-150 ${
+                      isHorizonLevel
+                        ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                        : 'bg-amber-300/90'
+                    }`}
+                  />
+                  <span
+                    className={`absolute -bottom-3 px-1.5 py-0.5 rounded bg-black/75 text-[9px] font-black tabular-nums tracking-wider border ${
+                      isHorizonLevel
+                        ? 'text-emerald-300 border-emerald-400/50'
+                        : 'text-amber-300 border-amber-400/40'
+                    }`}
+                  >
+                    {isHorizonLevel ? 'LEVEL ' : ''}
+                    {horizonTiltDeg > 0 ? `+${horizonTiltDeg.toFixed(1)}` : horizonTiltDeg.toFixed(1)}°
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* 120fps Burst Capturing Overlay */}
+            {isBurstCapturing && (
+              <div className="absolute inset-0 pointer-events-none z-30 flex items-center justify-center bg-white/10">
+                <div className="px-4 py-2 rounded-full bg-black/90 border border-cyan-400 text-cyan-200 text-xs font-black tabular-nums shadow-2xl">
+                  120FPS BURST · {burstProgressCount} FRAMES
+                </div>
+              </div>
+            )}
+
             {/* Rule of Thirds Grid */}
             {showGrid && (
               <div className="absolute inset-0 pointer-events-none z-10 flex flex-col divide-y divide-white/15">
@@ -1811,25 +2509,38 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               <div className="absolute inset-0 pointer-events-none z-20 border-4 border-red-500 rounded-2xl sm:rounded-3xl" />
             )}
 
-            {/* Top Viewfinder Overlay: REC Timer + Filter Badge */}
-            <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between gap-2 pointer-events-none">
-              {isRecording ? (
-                <div className="flex items-center gap-2 bg-red-600/95 border border-red-400 px-3 py-1 rounded-full text-white shadow-xl">
-                  <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                  <span className="text-xs font-black tracking-wider tabular-nums">
-                    REC {formattedTimer} / 01:00
-                  </span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 bg-black/75 border border-white/15 px-2.5 py-1 rounded-full text-[11px] text-neutral-200">
-                  <Sparkles className="w-3 h-3 text-pink-400" />
-                  <span className="font-bold">{selectedFilter.name}</span>
-                </div>
-              )}
+            {/* Top Viewfinder Live Shutter/ISO/FPS Telemetry HUD */}
+            <div className="absolute top-3 left-3 right-3 z-30 flex flex-col gap-1.5 pointer-events-none">
+              <div className="flex items-center justify-between gap-2">
+                {isRecording ? (
+                  <div className="flex items-center gap-2 bg-red-600/95 border border-red-400 px-3 py-1 rounded-full text-white shadow-xl">
+                    <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                    <span className="text-xs font-black tracking-wider tabular-nums">
+                      REC {formattedTimer} / 01:00
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 bg-black/80 border border-amber-400/45 px-2.5 py-1 rounded-full text-[10px] font-black tracking-wider text-amber-300 tabular-nums">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>{activeSonyConfig.hudTag}</span>
+                  </div>
+                )}
 
-              <div className="flex items-center gap-1.5 bg-black/75 px-2.5 py-1 rounded-full border border-white/15 text-[10px] font-bold text-neutral-300">
-                <Volume2 className="w-3 h-3 text-emerald-400" />
-                <span>{facingMode === 'user' ? 'Front' : 'Back'}</span>
+                <div className="flex items-center gap-1.5 bg-black/80 px-2.5 py-1 rounded-full border border-white/15 text-[10px] font-bold text-neutral-200">
+                  <Volume2 className="w-3 h-3 text-emerald-400" />
+                  <span>{facingMode === 'user' ? 'Front' : 'Back'}</span>
+                </div>
+              </div>
+
+              {/* Pro Camera Exposure Telemetry Bar */}
+              <div className="inline-flex self-start items-center gap-2 px-2.5 py-1 rounded-lg bg-black/75 border border-white/10 text-[10px] font-bold text-neutral-200 tabular-nums tracking-wide">
+                <span className="text-cyan-300">SS {activeSonyConfig.shutterSpeed}</span>
+                <span className="text-neutral-600">·</span>
+                <span>ISO {liveIsoValue}</span>
+                <span className="text-neutral-600">·</span>
+                <span className="text-emerald-300">{activeSonyConfig.aperture}</span>
+                <span className="text-neutral-600">·</span>
+                <span className="text-pink-300">{selectedFilter.shortLabel}</span>
               </div>
             </div>
 
@@ -1845,7 +2556,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                       setZoomLevel(z);
                       onShowToast(`Zoom ${z}x`);
                     }}
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-black border transition-all ${
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border transition-all cursor-pointer tabular-nums ${
                       zoomLevel === z
                         ? 'bg-amber-400 text-black border-amber-300 scale-105'
                         : 'bg-black/70 text-white border-white/20 hover:bg-neutral-800'
@@ -1898,32 +2609,47 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         )}
       </div>
 
-      {/* SNAPCHAT-STYLE BOTTOM CAMERA CONTROLS: PHOTO | CIRCULAR RECORD RING | FLIP CAMERA */}
-      {!recordedClipUrl && (
-        <div className="relative z-30 px-4 py-3 bg-gradient-to-t from-black via-black/95 to-transparent shrink-0">
-          <div className="max-w-md mx-auto w-full flex items-center justify-around gap-3">
-            {/* Capture Photo Button */}
+      {/* PRO BOTTOM CAMERA CONTROLS: 120FPS BURST | PHOTO | CIRCULAR RECORD RING | FLIP CAMERA */}
+      {!recordedClipUrl && burstFrames.length === 0 && (
+        <div className="relative z-30 px-3 sm:px-4 py-3 bg-gradient-to-t from-black via-black/95 to-transparent shrink-0">
+          <div className="max-w-md mx-auto w-full flex items-center justify-between gap-2">
+            {/* 120fps Burst Shot Button */}
             <button
               type="button"
-              disabled={isRecording}
+              disabled={isRecording || isBurstCapturing}
+              onClick={() => void handleBurstShot()}
+              className="flex flex-col items-center gap-1 px-2 py-1 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer min-w-[56px]"
+              title="120fps Rapid Burst Action Shot"
+            >
+              <div className="w-11 h-11 rounded-full bg-cyan-500/20 border border-cyan-400/60 flex items-center justify-center shadow-md">
+                <Layers className="w-5 h-5 text-cyan-300" />
+              </div>
+              <span className="text-[10px] font-black text-cyan-300">Burst 120</span>
+            </button>
+
+            {/* Capture Sharp Photo Button */}
+            <button
+              type="button"
+              disabled={isRecording || isBurstCapturing}
               onClick={handleCapturePhoto}
-              className="flex flex-col items-center gap-1 px-3 py-1 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
-              title="Capture Filtered Photo"
+              className="flex flex-col items-center gap-1 px-2 py-1 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer min-w-[52px]"
+              title="Capture Ultra-Sharp S-Cinetone Photo"
             >
               <div className="w-11 h-11 rounded-full bg-neutral-900/90 border border-white/20 flex items-center justify-center shadow-md">
-                <ImageIcon className="w-5 h-5 text-cyan-400" />
+                <ImageIcon className="w-5 h-5 text-amber-300" />
               </div>
               <span className="text-[10px] font-bold">Photo</span>
             </button>
 
-            {/* Snapchat-Style Circular Shutter Button with Live SVG Recording Ring */}
+            {/* Circular Cinema Shutter Button with Live SVG Recording Ring */}
             <div className="flex flex-col items-center gap-1">
               <button
                 type="button"
+                disabled={isBurstCapturing}
                 onClick={handleToggleRecord}
-                className="relative w-20 h-20 rounded-full flex items-center justify-center transition-transform active:scale-92 cursor-pointer"
-                aria-label={isRecording ? 'Stop Recording' : 'Record Video'}
-                title={isRecording ? 'Tap to Stop' : 'Tap to Record 4K Video'}
+                className="relative w-20 h-20 rounded-full flex items-center justify-center transition-transform active:scale-92 cursor-pointer disabled:opacity-50"
+                aria-label={isRecording ? 'Stop Recording' : 'Record Pro Cinema Video'}
+                title={isRecording ? 'Tap to Stop' : `Record ${activeSonyConfig.name}`}
               >
                 <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 80 80">
                   <circle
@@ -1964,16 +2690,16 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                 </div>
               </button>
               <span className="text-[10px] font-black tracking-wide text-white tabular-nums">
-                {isRecording ? `Stop ${formattedTimer}` : 'Tap to Record'}
+                {isRecording ? `Stop ${formattedTimer}` : sonyPreset === 'sony_a1_8k' ? '8K Rec' : '120 Rec'}
               </span>
             </div>
 
             {/* Switch Camera Button (Front / Back) */}
             <button
               type="button"
-              disabled={isRecording}
+              disabled={isRecording || isBurstCapturing}
               onClick={handleFlipCamera}
-              className="flex flex-col items-center gap-1 px-3 py-1 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
+              className="flex flex-col items-center gap-1 px-2 py-1 rounded-2xl text-neutral-200 hover:text-white disabled:opacity-40 transition-all active:scale-95 cursor-pointer min-w-[52px]"
               title="Switch Front / Back Camera (or Double-Tap screen)"
             >
               <div className="w-11 h-11 rounded-full bg-neutral-900/90 border border-white/20 flex items-center justify-center shadow-md">

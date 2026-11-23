@@ -46,9 +46,18 @@
   will-change: transform;
 }
 
+.turbo-card {
+  transform: translate3d(0, 0, 0);
+  -webkit-transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform;
+  contain: layout style paint;
+}
+
 .cv-auto-card {
   content-visibility: auto;
-  contain-intrinsic-size: 220px 320px;
+  contain-intrinsic-size: 240px 320px;
 }
 
 /* Vinyl rotation animation */

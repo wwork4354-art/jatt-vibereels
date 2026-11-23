@@ -754,7 +754,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     <div
       ref={cardRootRef}
       data-reel-index={cardIndex}
-      className="relative w-full h-full snap-item gpu-accelerated flex items-center justify-center bg-black select-none overflow-hidden"
+      className="relative w-full h-full snap-item turbo-card gpu-accelerated flex items-center justify-center bg-black select-none overflow-hidden"
     >
       <div className="relative w-full h-full gpu-accelerated flex items-center justify-center overflow-hidden">
       {/* Attached Custom Song / Naat Audio Player (strictly mounted ONLY on active visible card) */}
@@ -858,15 +858,26 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 />
               </div>
             ) : !videoError ? (
-              /* Off-screen adjacent card (prev/next): lightweight poster image only — zero <video> DOM */
-              <div className="w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center bg-neutral-950">
+              /* Off-screen adjacent card: strict preloading for Next +1 video ONLY; zero video DOM for prev cards */
+              <div className="w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center bg-neutral-950 gpu-accelerated">
                 {optimizedPoster && (
                   <img
                     src={optimizedPoster}
                     alt={video.title}
                     loading="lazy"
                     decoding="async"
-                    className="w-full h-full object-cover sm:object-contain opacity-85"
+                    className="w-full h-full object-cover sm:object-contain opacity-85 gpu-accelerated"
+                  />
+                )}
+                {isNext && !isActive && video.videoUrl && (
+                  <video
+                    src={video.videoUrl}
+                    preload={isRamSaverMode ? 'metadata' : 'auto'}
+                    muted
+                    playsInline
+                    crossOrigin="anonymous"
+                    className="hidden"
+                    aria-hidden="true"
                   />
                 )}
               </div>

@@ -2643,7 +2643,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                             <div
                               key={item.id}
                               onClick={() => openVideoPlayer(item)}
-                              className="group bg-neutral-900/90 hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/60 rounded-2xl p-3 flex flex-col justify-between gap-2.5 cursor-pointer transition-all"
+                              className="group turbo-card cv-auto-card bg-neutral-900/90 hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/60 rounded-2xl p-3 flex flex-col justify-between gap-2.5 cursor-pointer transition-all [transform:translateZ(0)] [will-change:transform]"
                             >
                               <div>
                                 <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-neutral-800">
@@ -2892,7 +2892,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                             onShowToast(`Playing "${item.title}"`);
                           }
                         }}
-                        className={`group cv-auto-card bg-neutral-900/90 hover:bg-neutral-900 border rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between [transform:translateZ(0)] relative overflow-hidden ${
+                        className={`group turbo-card cv-auto-card bg-neutral-900/90 hover:bg-neutral-900 border rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between [transform:translateZ(0)] [will-change:transform] relative overflow-hidden ${
                           isCurrentlyPlaying
                             ? 'border-red-500 ring-1 ring-red-500/40'
                             : item.youtubeId || item.directVideoUrl || item.embedUrl
@@ -3394,7 +3394,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                 {offlineWatchlist.map((item) => (
                   <div
                     key={`wl-${item.id}`}
-                    className="p-3.5 rounded-2xl bg-neutral-900/90 border border-amber-500/30 flex items-center justify-between gap-3 shadow-md"
+                    className="turbo-card p-3.5 rounded-2xl bg-neutral-900/90 border border-amber-500/30 flex items-center justify-between gap-3 shadow-md [transform:translateZ(0)] [will-change:transform]"
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <img

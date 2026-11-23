@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense, startTransition } from 'react';
 import {
   ChevronUp,
   ChevronDown,
@@ -755,14 +755,15 @@ export default function App() {
       void loadCloudData();
     }
 
-    // Idle-preload heavy tab/modal chunks on >=6GB devices; skip in 3GB RAM Saver mode to keep memory minimal
+    // Idle-preload core interactive tabs (MOVIX, Live, Pro Camera) cleanly; defer secondary modals on 3GB RAM devices
     const preloadChunks = () => {
-      if (getIsRamSaverMode()) return;
       void import('./components/DownloadHub');
+      void import('./components/LiveStreamMainView');
+      void import('./components/ProCameraModal');
+      if (getIsRamSaverMode()) return;
       void import('./components/CreatorProfileView');
       void import('./components/TrendsDashboard');
       void import('./components/CreatorActivityView');
-      void import('./components/ProCameraModal');
       void import('./components/CreatorDirectoryModal');
       void import('./components/PublicCreatorProfileView');
       void import('./components/DirectSnapsModal');
@@ -772,10 +773,10 @@ export default function App() {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
       cancelIdleCallback?: (id: number) => void;
     };
-    const idleId =
-      typeof idleWin.requestIdleCallback === 'function'
-        ? idleWin.requestIdleCallback(preloadChunks, { timeout: 1500 })
-        : window.setTimeout(preloadChunks, 350);
+    const usingIdleCallback = typeof idleWin.requestIdleCallback === 'function';
+    const idleId = usingIdleCallback
+      ? idleWin.requestIdleCallback!(preloadChunks, { timeout: 1400 })
+      : window.setTimeout(preloadChunks, 300);
 
     if (!supabase || !isSupabaseConfigured) {
       return () => {
@@ -1148,18 +1149,22 @@ export default function App() {
     el.scrollTop = safeIdx * el.clientHeight;
   }, [activeIndex, displayedVideos.length, currentTab]);
 
-  // Switch dynamically to TikTok Live Stream view
+  // Switch dynamically to TikTok Live Stream view (non-blocking transition)
   const handleOpenLive = useCallback(() => {
-    setSelectedTag(null);
-    setCurrentTab('live');
+    startTransition(() => {
+      setSelectedTag(null);
+      setCurrentTab('live');
+    });
     showToast('Switched to TikTok-style LIVE Stream');
   }, [showToast]);
 
-  // Switch dynamically to All-in-One Download Hub
+  // Switch dynamically to MOVIX Download Hub (non-blocking transition)
   const handleOpenDownloads = useCallback(() => {
-    setSelectedTag(null);
-    setCurrentTab('downloads');
-    showToast('Opened All-in-One Download Hub');
+    startTransition(() => {
+      setSelectedTag(null);
+      setCurrentTab('downloads');
+    });
+    showToast('Opened MOVIX Hub');
   }, [showToast]);
 
   // Scroll to specific index
@@ -1884,19 +1889,25 @@ export default function App() {
     setIsAuthOpen(true);
   }, []);
   const handleOpenProfileTab = useCallback(() => {
-    setSelectedTag(null);
-    setProfileInitialSubTab('videos');
-    setCurrentTab('profile');
+    startTransition(() => {
+      setSelectedTag(null);
+      setProfileInitialSubTab('videos');
+      setCurrentTab('profile');
+    });
   }, []);
   const handleOpenActivityTab = useCallback(() => {
-    setSelectedTag(null);
-    setCurrentTab('activity');
+    startTransition(() => {
+      setSelectedTag(null);
+      setCurrentTab('activity');
+    });
     handleMarkActivityRead();
   }, [handleMarkActivityRead]);
   const handleBackToFeed = useCallback(() => {
-    setSelectedTag(null);
     needsScrollSyncRef.current = true;
-    setCurrentTab('foryou');
+    startTransition(() => {
+      setSelectedTag(null);
+      setCurrentTab('foryou');
+    });
   }, []);
 
   // Add comment (real username + ISO timestamp + persistent DB/local sync + activity log)
@@ -2508,10 +2519,12 @@ export default function App() {
             currentTab={currentTab}
             onSelectTab={(tab) => {
               expectedVideoIdRef.current = '';
-              setSelectedTag(null);
-              setCurrentTab(tab);
-              setActiveIndex(0);
-              setIsMobileBottomNavOpen(false);
+              startTransition(() => {
+                setSelectedTag(null);
+                setCurrentTab(tab);
+                setActiveIndex(0);
+                setIsMobileBottomNavOpen(false);
+              });
               if (tab === 'activity') {
                 handleMarkActivityRead();
               }
