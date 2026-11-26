@@ -116,9 +116,9 @@ function readLocalHighWaterMark(): number {
   return best;
 }
 
-async function writeLocalHighWaterMark(tsMs: number): Promise<void> {
+async function writeLocalHighWaterMark(tsMs: number, forceSync = false): Promise<void> {
   const existing = readLocalHighWaterMark();
-  const nextTs = Math.max(existing, tsMs);
+  const nextTs = forceSync ? tsMs : Math.max(existing, tsMs);
   const sig = await signPayload(`hwm:${nextTs}`);
   const serialized = JSON.stringify({ ts: nextTs, sig });
   try {
@@ -297,12 +297,15 @@ export async function fetchAuthoritativeClock(): Promise<{
   }
 
   const SKEW_TOLERANCE_MS = 120_000;
-  const tamperVsHwm = hwmMs > 0 && localNowMs < hwmMs - SKEW_TOLERANCE_MS;
   const tamperVsServer = serverTimeMs !== null && localNowMs < serverTimeMs - SKEW_TOLERANCE_MS;
-  const clockTamperDetected = tamperVsHwm || tamperVsServer;
+  const tamperVsHwm = serverTimeMs === null && hwmMs > 0 && localNowMs < hwmMs - SKEW_TOLERANCE_MS;
+  const clockTamperDetected = tamperVsServer || tamperVsHwm;
 
-  const effectiveNowMs = Math.max(localNowMs, hwmMs, serverTimeMs ?? 0);
-  await writeLocalHighWaterMark(effectiveNowMs);
+  // When online serverTimeMs is available, treat it as authoritative so stale client HWM cannot cause false expiry
+  const effectiveNowMs =
+    serverTimeMs !== null ? Math.max(serverTimeMs, Math.min(localNowMs, serverTimeMs + 86_400_000)) : Math.max(localNowMs, hwmMs);
+
+  await writeLocalHighWaterMark(effectiveNowMs, serverTimeMs !== null);
 
   return {
     effectiveNowMs,

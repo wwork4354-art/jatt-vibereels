@@ -142,6 +142,7 @@ export function checkLicenseStatus(
   nowMs: number = Date.now(),
   overrides?: LicenseEvaluationOverrides
 ): LicenseCheckResult {
+  const safeNowMs = Number.isFinite(nowMs) && nowMs > 0 ? nowMs : Date.now();
   const cleanDate = (
     overrides?.expiryDate ||
     config.licenseExpiryDate ||
@@ -167,7 +168,11 @@ export function checkLicenseStatus(
     };
   }
 
-  const expiryEndMs = parseExpiryEndMs(cleanDate);
+  const expiryDateObj = /^\d{4}-\d{2}-\d{2}$/.test(cleanDate)
+    ? new Date(`${cleanDate}T23:59:59`)
+    : new Date(parseExpiryEndMs(cleanDate));
+  const expiryEndMs = expiryDateObj.getTime();
+
   if (!Number.isFinite(expiryEndMs) || expiryEndMs <= 0) {
     return {
       phase: 'locked',
@@ -182,11 +187,10 @@ export function checkLicenseStatus(
     };
   }
 
-  const currentDateObj = new Date(nowMs);
-  const expiryDateObj = new Date(expiryEndMs);
+  const currentDateObj = new Date(safeNowMs);
 
   if (!(currentDateObj > expiryDateObj)) {
-    const daysRemaining = Math.max(1, Math.ceil((expiryEndMs - nowMs) / 86_400_000));
+    const daysRemaining = Math.max(1, Math.ceil((expiryEndMs - safeNowMs) / 86_400_000));
     return {
       phase: 'active',
       isValid: true,
@@ -200,7 +204,7 @@ export function checkLicenseStatus(
     };
   }
 
-  const msPastExpiry = nowMs - expiryEndMs;
+  const msPastExpiry = safeNowMs - expiryEndMs;
   const daysOverdue = Math.max(1, Math.ceil(msPastExpiry / 86_400_000));
   const graceWindowMs = graceDays * 86_400_000;
 
