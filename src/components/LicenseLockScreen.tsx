@@ -48,6 +48,10 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
   const paymentNumber = BRAND_CONFIG.paymentNumber || '03214383976';
   const isSuspended = licenseStatus.reason === 'suspended';
 
+  if (licenseStatus.isValid && licenseStatus.phase !== 'locked') {
+    return null;
+  }
+
   const handleCopyNumber = async (provider: 'jazzcash' | 'easypaisa') => {
     try {
       await navigator.clipboard.writeText(paymentNumber);

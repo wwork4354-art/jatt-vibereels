@@ -363,7 +363,8 @@ export async function fetchMasterProviderLicense(): Promise<StoredMasterCache | 
       rawStatus === 'suspended' ? 'suspended' : 'active';
 
     const rawExpiry = (clientEntry.expiryDate || clientEntry.expiry_date || '').trim();
-    const remoteExpiry = rawExpiry ? rawExpiry.slice(0, 10) : BRAND_CONFIG.expiryDate;
+    const defaultExpiry = (BRAND_CONFIG.licenseExpiryDate || BRAND_CONFIG.expiryDate || '').trim();
+    const remoteExpiry = rawExpiry ? rawExpiry.slice(0, 10) : defaultExpiry;
 
     const rawKey = (clientEntry.activationKey || clientEntry.activation_key || '').trim();
     const activationKeyHash = rawKey
@@ -415,7 +416,8 @@ export function evaluateLicenseSync(): LicenseCheckResult {
   const baseStatus: 'active' | 'suspended' =
     remoteSuspendedAfterGrant || configSuspendedWithoutGrant ? 'suspended' : 'active';
 
-  let bestExpiryDate = masterCache?.expiryDate || BRAND_CONFIG.expiryDate;
+  const defaultExpiry = (BRAND_CONFIG.licenseExpiryDate || BRAND_CONFIG.expiryDate || '').trim();
+  let bestExpiryDate = masterCache?.expiryDate || defaultExpiry;
   let source: 'config' | 'remote' | 'activation_key' = masterCache ? 'remote' : 'config';
 
   if (unlockGrant && baseStatus !== 'suspended') {
@@ -456,7 +458,8 @@ export async function evaluateFullLicenseState(): Promise<LicenseCheckResult> {
   const baseStatus: 'active' | 'suspended' =
     remoteSuspendedAfterGrant || configSuspendedWithoutGrant ? 'suspended' : 'active';
 
-  let bestExpiryDate = masterState?.expiryDate || BRAND_CONFIG.expiryDate;
+  const defaultExpiry = (BRAND_CONFIG.licenseExpiryDate || BRAND_CONFIG.expiryDate || '').trim();
+  let bestExpiryDate = masterState?.expiryDate || defaultExpiry;
   let source: 'config' | 'remote' | 'activation_key' = masterState ? 'remote' : 'config';
 
   if (unlockGrant && baseStatus !== 'suspended') {

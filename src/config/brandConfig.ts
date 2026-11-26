@@ -56,9 +56,9 @@ export interface BrandConfig {
  *      Gist raw / Cloudflare Worker / static JSON) and set `masterLicenseUrl`.
  *      Supported JSON formats:
  *        Single client:
- *          { "status": "active", "expiryDate": "2026-12-31" }
+ *          { "status": "active", "expiryDate": "2030-12-31" }
  *        Multi-client (keyed by `licenseId`):
- *          { "clients": { "jatt-vibereels-main": { "status": "active", "expiryDate": "2026-12-31" } } }
+ *          { "clients": { "jatt-vibereels-main": { "status": "active", "expiryDate": "2030-12-31" } } }
  * ============================================================================
  */
 export const BRAND_CONFIG: BrandConfig = {
@@ -76,10 +76,10 @@ export const BRAND_CONFIG: BrandConfig = {
   supportProviderName: 'Platform Provider',
   licenseId: 'jatt-vibereels-main',
   masterLicenseUrl: '',
-  expiryDate: '2026-12-31',
+  licenseExpiryDate: '2030-12-31',
+  expiryDate: '2030-12-31',
   status: 'active',
   gracePeriodDays: 3,
-  licenseExpiryDate: '2026-12-31',
   isLicenseActive: true,
 };
 
@@ -115,34 +115,39 @@ export interface LicenseEvaluationOverrides {
 }
 
 /**
- * Parses a YYYY-MM-DD date string to end-of-day UTC/local timestamp so the
- * expiry day itself remains valid through 23:59:59.999.
+ * Parses a YYYY-MM-DD date string using `new Date(licenseExpiryDate + "T23:59:59")`
+ * so future dates and the expiry date itself stay 100% active through 23:59:59.
  */
 export function parseExpiryEndMs(dateStr: string): number {
   const cleanDate = (dateStr || '').trim();
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(cleanDate);
-  if (match) {
-    const year = Number(match[1]);
-    const monthIndex = Number(match[2]) - 1;
-    const day = Number(match[3]);
-    return new Date(year, monthIndex, day, 23, 59, 59, 999).getTime();
+  if (!cleanDate) return 0;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+    const endOfDay = new Date(`${cleanDate}T23:59:59`);
+    if (Number.isFinite(endOfDay.getTime())) {
+      return endOfDay.getTime();
+    }
   }
-  const parsed = Date.parse(cleanDate);
+  const parsed = new Date(cleanDate).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /**
  * Evaluates whether the white-label rental instance is:
- * - 'active': before expiryDate
+ * - 'active': `now <= new Date(licenseExpiryDate + "T23:59:59")`
  * - 'grace': 1 to gracePeriodDays (default 3) days past expiryDate
- * - 'locked': >3 days past expiryDate OR status === 'suspended'
+ * - 'locked': >3 days past expiryDate OR status === 'suspended' OR !isLicenseActive
  */
 export function checkLicenseStatus(
   config: BrandConfig = BRAND_CONFIG,
   nowMs: number = Date.now(),
   overrides?: LicenseEvaluationOverrides
 ): LicenseCheckResult {
-  const cleanDate = (overrides?.expiryDate || config.expiryDate || config.licenseExpiryDate || '').trim();
+  const cleanDate = (
+    overrides?.expiryDate ||
+    config.licenseExpiryDate ||
+    config.expiryDate ||
+    ''
+  ).trim();
   const effectiveStatus = overrides?.status ?? config.status;
   const graceDays = Math.max(0, Math.floor(config.gracePeriodDays ?? 3));
   const clockTamperDetected = Boolean(overrides?.clockTamperDetected);
@@ -177,7 +182,10 @@ export function checkLicenseStatus(
     };
   }
 
-  if (nowMs <= expiryEndMs) {
+  const currentDateObj = new Date(nowMs);
+  const expiryDateObj = new Date(expiryEndMs);
+
+  if (!(currentDateObj > expiryDateObj)) {
     const daysRemaining = Math.max(1, Math.ceil((expiryEndMs - nowMs) / 86_400_000));
     return {
       phase: 'active',
@@ -230,7 +238,7 @@ export function checkLicenseStatus(
  */
 export function getWhatsAppRenewalUrl(config: BrandConfig = BRAND_CONFIG): string {
   const digits = (config.supportWhatsApp || '').replace(/[^\d]/g, '');
-  const activeExpiry = config.expiryDate || config.licenseExpiryDate;
+  const activeExpiry = config.licenseExpiryDate || config.expiryDate;
   const message = `Hello, I need to renew the monthly license for ${config.appName} (Expiry: ${activeExpiry}).`;
   if (!digits) return 'https://wa.me/';
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
