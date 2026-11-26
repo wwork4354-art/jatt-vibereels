@@ -38,8 +38,15 @@ import {
   EyeOff,
   Search,
   Clock,
+  MessageCircle,
 } from 'lucide-react';
-import { ActivityEvent, CreatorProfileData, UserAccount, VideoPost } from '../types';
+import {
+  ActivityEvent,
+  CreatorProfileData,
+  DirectSnapRecipient,
+  UserAccount,
+  VideoPost,
+} from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { PWAInstallButton } from './PWAInstallButton';
 import {
@@ -121,6 +128,7 @@ interface CreatorProfileViewProps {
   onDeletePost?: (videoId: string) => void;
   onOpenUpload: () => void;
   onOpenPublicChannel?: () => void;
+  onMessageCreator?: (recipient: DirectSnapRecipient) => void;
   onBackToFeed: () => void;
   onShowToast: (msg: string) => void;
 }
@@ -163,6 +171,7 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
   onDeletePost,
   onOpenUpload,
   onOpenPublicChannel,
+  onMessageCreator,
   onBackToFeed,
   onShowToast,
 }) => {
@@ -1347,6 +1356,30 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                         </button>
 
                         <div className="flex items-center gap-1.5 shrink-0">
+                          {onMessageCreator && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const matchedUser = allUsers.find(
+                                  (u) =>
+                                    normalizeCreatorUsername(u.username) ===
+                                    normalizeCreatorUsername(member.username)
+                                );
+                                onMessageCreator({
+                                  id: matchedUser?.id || `user-${member.username}`,
+                                  name: member.name,
+                                  username: member.username,
+                                  avatar: member.avatar,
+                                  isVerified: member.isVerified,
+                                });
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-pink-600 text-pink-300 hover:text-white border border-pink-500/35 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                              title={`Message @${member.username}`}
+                            >
+                              <MessageCircle className="w-3 h-3" />
+                              <span className="hidden sm:inline">Message</span>
+                            </button>
+                          )}
                           {activeSubTab === 'friends' ? (
                             <>
                               <button

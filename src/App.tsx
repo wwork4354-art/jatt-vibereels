@@ -61,6 +61,8 @@ import {
   fetchDirectSnaps,
   sendDirectSnap,
   markDirectSnapViewed,
+  markMessagesSeen,
+  toggleMessageReaction,
   fetchDirectSendRecipients,
   subscribeToLiveSnapsRealtime,
 } from './lib/liveSnapService';
@@ -139,6 +141,9 @@ const TemplatesStudioView = lazy(() =>
 );
 const PhotoVideoEditorModal = lazy(() =>
   import('./components/PhotoVideoEditorModal').then((m) => ({ default: m.PhotoVideoEditorModal }))
+);
+const AIGeneratorModal = lazy(() =>
+  import('./components/AIGeneratorModal').then((m) => ({ default: m.AIGeneratorModal }))
 );
 
 const LazyTabFallback = () => (
@@ -442,6 +447,8 @@ export default function App() {
   const [preselectedUploadFile, setPreselectedUploadFile] = useState<File | null>(null);
   const [isProCameraOpen, setIsProCameraOpen] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editorInitialFile, setEditorInitialFile] = useState<File | null>(null);
+  const [isAIGeneratorOpen, setIsAIGeneratorOpen] = useState(false);
   const [isTrendsOpen, setIsTrendsOpen] = useState(false);
   const [isLiveOpen, setIsLiveOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -453,6 +460,7 @@ export default function App() {
   const [directSnaps, setDirectSnaps] = useState<DirectSnapMessage[]>(getStoredDirectSnaps);
   const [directRecipients, setDirectRecipients] = useState<DirectSnapRecipient[]>([]);
   const [isDirectSnapsOpen, setIsDirectSnapsOpen] = useState(false);
+  const [dmTargetPartner, setDmTargetPartner] = useState<DirectSnapRecipient | null>(null);
   const [isStoriesBarOpen, setIsStoriesBarOpen] = useState(false);
   const [storiesDragOffsetPx, setStoriesDragOffsetPx] = useState<number | null>(null);
   const [isMobileBottomNavOpen, setIsMobileBottomNavOpen] = useState(false);
@@ -922,12 +930,37 @@ export default function App() {
       onNewDirectSnap: (snap) => {
         setDirectSnaps((prev) => [snap, ...prev.filter((m) => m.id !== snap.id)]);
         const ownClean = normalizeCreatorUsername(creatorProfile.username);
+        const senderClean = normalizeCreatorUsername(snap.senderUsername);
+        const isFromMe =
+          snap.senderId === creatorProfile.id || (Boolean(ownClean) && senderClean === ownClean);
         if (
-          snap.recipientId === creatorProfile.id ||
-          (ownClean && normalizeCreatorUsername(snap.recipientUsername) === ownClean)
+          !isFromMe &&
+          (snap.recipientId === creatorProfile.id ||
+            (ownClean && normalizeCreatorUsername(snap.recipientUsername) === ownClean))
         ) {
-          showToast(`New Live Snap from @${snap.senderUsername}!`);
+          showToast(
+            snap.textMessage && !snap.mediaUrl
+              ? `New message from @${snap.senderUsername}`
+              : `New Live Snap from @${snap.senderUsername}!`
+          );
         }
+      },
+      onMessagesSeen: (messageIds) => {
+        const idSet = new Set(messageIds);
+        setDirectSnaps((prev) =>
+          prev.map((m) =>
+            idSet.has(m.id) ? { ...m, isViewed: true, deliveryStatus: 'seen' as const } : m
+          )
+        );
+      },
+      onMessageReaction: (messageId, reactions) => {
+        setDirectSnaps((prev) =>
+          prev.map((m) =>
+            m.id === messageId
+              ? { ...m, reactions: Object.keys(reactions).length > 0 ? reactions : undefined }
+              : m
+          )
+        );
       },
     });
 
@@ -1820,6 +1853,8 @@ export default function App() {
   const handleOpenCreatorProfile = useCallback((username: string) => {
     const clean = normalizeCreatorUsername(username) || username.trim().replace(/^@+/, '');
     if (!clean) return;
+    setIsDirectSnapsOpen(false);
+    setDmTargetPartner(null);
     setIsCreatorSearchOpen(false);
     setIsTrendsOpen(false);
     setCommentsVideo(null);
@@ -1827,6 +1862,54 @@ export default function App() {
     setSelectedChannelUsername(clean);
     setCurrentTab('channel');
   }, []);
+
+  const openDirectMessagesWith = useCallback((recipient?: DirectSnapRecipient) => {
+    setIsCreatorSearchOpen(false);
+    setIsTrendsOpen(false);
+    setCommentsVideo(null);
+    setDmTargetPartner(recipient || null);
+    setIsDirectSnapsOpen(true);
+  }, []);
+
+  const handleMarkConversationSeen = useCallback((messageIds: string[]) => {
+    if (messageIds.length === 0) return;
+    const idSet = new Set(messageIds);
+    setDirectSnaps((prev) =>
+      prev.map((m) =>
+        idSet.has(m.id) ? { ...m, isViewed: true, deliveryStatus: 'seen' as const } : m
+      )
+    );
+    void markMessagesSeen(messageIds);
+  }, []);
+
+  const handleToggleMessageReaction = useCallback(
+    (messageId: string, emoji: string) => {
+      const reactor = currentUser?.username || creatorProfile.username;
+      const reactorClean = normalizeCreatorUsername(reactor) || reactor;
+      setDirectSnaps((prev) =>
+        prev.map((msg) => {
+          if (msg.id !== messageId) return msg;
+          const next = { ...(msg.reactions || {}) };
+          const list = Array.isArray(next[emoji]) ? [...next[emoji]] : [];
+          const hasMine = list.some((u) => normalizeCreatorUsername(u) === reactorClean);
+          const updatedList = hasMine
+            ? list.filter((u) => normalizeCreatorUsername(u) !== reactorClean)
+            : [...list, reactorClean];
+          if (updatedList.length > 0) {
+            next[emoji] = updatedList;
+          } else {
+            delete next[emoji];
+          }
+          return {
+            ...msg,
+            reactions: Object.keys(next).length > 0 ? next : undefined,
+          };
+        })
+      );
+      void toggleMessageReaction(messageId, emoji, reactor);
+    },
+    [currentUser?.username, creatorProfile.username]
+  );
 
   const handleOpenComments = useCallback((vid: VideoPost) => {
     if (vid.commentsList.length === 0 && vid.stats.comments > 0) {
@@ -2457,12 +2540,13 @@ export default function App() {
         onOpenDownloads={handleOpenDownloads}
         onOpenProCamera={handleOpenProCamera}
         onOpenEditor={() => setIsEditorOpen(true)}
+        onOpenAIStudio={() => setIsAIGeneratorOpen(true)}
         onOpenAdmin={handleOpenAdminPanel}
         onOpenProfile={handleOpenProfileTab}
         onOpenCreatorSearch={handleOpenCreatorSearch}
         onOpenActivity={handleOpenActivityTab}
         unreadActivityCount={unreadActivityCount}
-        onOpenDirectSnaps={() => setIsDirectSnapsOpen(true)}
+        onOpenDirectSnaps={() => openDirectMessagesWith()}
         unreadDirectSnapsCount={unreadDirectSnapsCount}
         onLogout={handleLogout}
         onShowToast={showToast}
@@ -2503,10 +2587,13 @@ export default function App() {
           onOpenLive={handleOpenLive}
           onOpenProCamera={handleOpenProCamera}
           onOpenEditor={() => setIsEditorOpen(true)}
+          onOpenAIStudio={() => setIsAIGeneratorOpen(true)}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
           savedCount={savedCount}
           unreadActivityCount={unreadActivityCount}
+          onOpenDirectSnaps={() => openDirectMessagesWith()}
+          unreadDirectSnapsCount={unreadDirectSnapsCount}
           currentUser={currentUser}
           onOpenAdmin={handleOpenAdminPanel}
           onOpenLogin={handleOpenAuthLogin}
@@ -2542,10 +2629,11 @@ export default function App() {
             onOpenLive={handleOpenLive}
             onOpenProCamera={handleOpenProCamera}
             onOpenEditor={() => setIsEditorOpen(true)}
+            onOpenAIStudio={() => setIsAIGeneratorOpen(true)}
             onQuickVideoUpload={handleQuickGalleryUpload}
             savedCount={savedCount}
             unreadActivityCount={unreadActivityCount}
-            onOpenDirectSnaps={() => setIsDirectSnapsOpen(true)}
+            onOpenDirectSnaps={() => openDirectMessagesWith()}
             unreadDirectSnapsCount={unreadDirectSnapsCount}
             currentUser={currentUser}
             creatorAvatar={creatorProfile.avatar}
@@ -2622,6 +2710,7 @@ export default function App() {
                 onDeletePost={handleDeletePost}
                 onOpenUpload={handleOpenUpload}
                 onOpenPublicChannel={() => handleOpenCreatorProfile(creatorProfile.username)}
+                onMessageCreator={openDirectMessagesWith}
                 onToggleFollowUser={handleFollowToggle}
                 onRemoveFriend={handleRemoveFriend}
                 onOpenCreatorProfile={handleOpenCreatorProfile}
@@ -2651,6 +2740,7 @@ export default function App() {
                   setSelectedChannelUsername(null);
                   setCurrentTab('profile');
                 }}
+                onMessageCreator={openDirectMessagesWith}
                 onShowToast={showToast}
               />
             </Suspense>
@@ -2758,7 +2848,7 @@ export default function App() {
                       setSnapReplyTarget(recipient);
                       setIsProCameraOpen(true);
                     }}
-                    onOpenDirectSnaps={() => setIsDirectSnapsOpen(true)}
+                    onOpenDirectSnaps={() => openDirectMessagesWith()}
                     unreadDirectSnapsCount={unreadDirectSnapsCount}
                   />
                 )}
@@ -2882,6 +2972,7 @@ export default function App() {
                             onDeletePost={handleDeletePost}
                             onHashtagClick={handleHashtagClick}
                             onOpenCreatorProfile={handleOpenCreatorProfile}
+                            onMessageCreator={openDirectMessagesWith}
                             onShowToast={showToast}
                           />
                         );
@@ -3062,11 +3153,33 @@ export default function App() {
         <Suspense fallback={null}>
           <PhotoVideoEditorModal
             isOpen={isEditorOpen}
-            onClose={() => setIsEditorOpen(false)}
+            onClose={() => {
+              setIsEditorOpen(false);
+              setEditorInitialFile(null);
+            }}
+            initialFile={editorInitialFile}
             currentUser={currentUser}
             creatorProfile={creatorProfile}
             onUploadSuccess={handleUploadSuccess}
             onUploadCloudSynced={handleUploadCloudSynced}
+            onShowToast={showToast}
+          />
+        </Suspense>
+      )}
+
+      {isAIGeneratorOpen && (
+        <Suspense fallback={null}>
+          <AIGeneratorModal
+            isOpen={isAIGeneratorOpen}
+            onClose={() => setIsAIGeneratorOpen(false)}
+            onOpenInEditor={(file) => {
+              setEditorInitialFile(file);
+              setIsEditorOpen(true);
+            }}
+            onPostMedia={(file) => {
+              setPreselectedUploadFile(file);
+              setIsUploadOpen(true);
+            }}
             onShowToast={showToast}
           />
         </Suspense>
@@ -3116,21 +3229,31 @@ export default function App() {
         <Suspense fallback={null}>
           <DirectSnapsModal
             isOpen={isDirectSnapsOpen}
-            onClose={() => setIsDirectSnapsOpen(false)}
+            onClose={() => {
+              setIsDirectSnapsOpen(false);
+              setDmTargetPartner(null);
+            }}
             currentUserId={currentUser?.id || creatorProfile.id}
             currentUsername={currentUser?.username || creatorProfile.username}
             currentName={currentUser?.name || creatorProfile.name}
             currentAvatar={currentUser?.avatar || creatorProfile.avatar}
             snaps={directSnaps}
             recipients={directRecipients}
+            initialPartner={dmTargetPartner}
             onMarkSnapViewed={(snapId) => {
               setDirectSnaps((prev) =>
-                prev.map((m) => (m.id === snapId ? { ...m, isViewed: true } : m))
+                prev.map((m) =>
+                  m.id === snapId ? { ...m, isViewed: true, deliveryStatus: 'seen' as const } : m
+                )
               );
               void markDirectSnapViewed(snapId);
             }}
+            onMarkConversationSeen={handleMarkConversationSeen}
+            onToggleReaction={handleToggleMessageReaction}
+            onOpenCreatorProfile={handleOpenCreatorProfile}
             onReplyWithCamera={(recipient) => {
               setIsDirectSnapsOpen(false);
+              setDmTargetPartner(null);
               setSnapReplyTarget(recipient);
               setIsProCameraOpen(true);
             }}
@@ -3207,6 +3330,7 @@ export default function App() {
               handlePlayVideoFromProfile(vid);
             }}
             onFollowToggle={handleFollowToggle}
+            onMessageCreator={openDirectMessagesWith}
             onShowToast={showToast}
           />
         </Suspense>

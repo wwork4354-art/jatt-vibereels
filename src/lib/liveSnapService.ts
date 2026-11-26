@@ -8,22 +8,26 @@ import {
   VideoPost,
 } from '../types';
 import {
+  fetchRegisteredUsersFromCloud,
   fileToPersistentDataUrl,
   normalizeCreatorUsername,
   searchCreatorsDirectory,
   uploadMediaToReelsBucket,
 } from './supabaseService';
+import { getStoredUsers } from '../data/mockUsers';
 import { sanitizeText, sanitizeUsername, sanitizeSafeUrl } from '../utils/security';
 
 const LIVE_STORIES_STORAGE_KEY = 'jatt_live_stories_v1';
 const DIRECT_SNAPS_STORAGE_KEY = 'jatt_direct_snaps_v1';
 const SNAP_REALTIME_CHANNEL = 'vibereels-snaps-realtime';
+const DM_BROADCAST_CHANNEL = 'jatt_dm_channel_v1';
 
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
 const optionalTablesAvailable = {
   liveStories: true,
   directSnaps: true,
+  messages: true,
 };
 
 function isMissingTableOrColumn(err: { code?: string; message?: string } | null): boolean {
@@ -32,9 +36,86 @@ function isMissingTableOrColumn(err: { code?: string; message?: string } | null)
   return (
     err.code === 'PGRST205' ||
     err.code === '42P01' ||
+    err.code === '42703' ||
+    err.code === 'PGRST204' ||
     msg.includes('does not exist') ||
-    msg.includes('could not find the table')
+    msg.includes('could not find the table') ||
+    msg.includes('could not find the')
   );
+}
+
+function postLocalDmBroadcast(
+  event:
+    | { type: 'DM_NEW'; message: DirectSnapMessage }
+    | { type: 'DM_SEEN'; messageIds: string[] }
+    | { type: 'DM_REACTION'; messageId: string; reactions: Record<string, string[]> }
+): void {
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel(DM_BROADCAST_CHANNEL);
+      bc.postMessage(event);
+      bc.close();
+    }
+  } catch {
+    // ignore BroadcastChannel failures
+  }
+}
+
+function sanitizeReactionsMap(raw: unknown): Record<string, string[]> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Record<string, string[]> = {};
+  for (const [emoji, users] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof emoji === 'string' && emoji.trim() && Array.isArray(users)) {
+      const cleanUsers = Array.from(
+        new Set(
+          users
+            .map((u) => sanitizeUsername(String(u)) || String(u).trim())
+            .filter(Boolean)
+        )
+      );
+      if (cleanUsers.length > 0) {
+        result[emoji.slice(0, 8)] = cleanUsers;
+      }
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function mapSupabaseDmRow(row: Record<string, unknown>): DirectSnapMessage {
+  const safeSenderUname = sanitizeUsername(String(row.sender_username || '')) || 'user';
+  const safeRecipUname =
+    sanitizeUsername(String(row.recipient_username ?? row.receiver_username ?? '')) || 'friend';
+  const isSeen = Boolean(row.is_viewed ?? row.is_seen ?? row.is_read);
+  const rawText = row.text_message ?? row.content ?? row.message ?? row.text ?? '';
+  const textStr = rawText ? sanitizeText(String(rawText), 500) || undefined : undefined;
+  const mediaUrl = sanitizeSafeUrl(String(row.media_url || ''));
+
+  return {
+    id: String(row.id),
+    senderId: String(row.sender_id || ''),
+    senderUsername: safeSenderUname,
+    senderName: sanitizeText(String(row.sender_name || safeSenderUname || 'User'), 60),
+    senderAvatar: sanitizeSafeUrl(String(row.sender_avatar || '')),
+    recipientId: String(row.recipient_id ?? row.receiver_id ?? ''),
+    recipientUsername: safeRecipUname,
+    recipientName: sanitizeText(
+      String(row.recipient_name ?? row.receiver_name ?? (safeRecipUname || 'Friend')),
+      60
+    ),
+    recipientAvatar: sanitizeSafeUrl(String(row.recipient_avatar ?? row.receiver_avatar ?? '')),
+    mediaUrl,
+    mediaType: row.media_type === 'image' ? 'image' : 'video',
+    caption: row.caption ? sanitizeText(String(row.caption), 160) || undefined : undefined,
+    filterName: row.filter_name
+      ? sanitizeText(String(row.filter_name), 40) || undefined
+      : undefined,
+    textMessage: textStr,
+    reactions: sanitizeReactionsMap(row.reactions),
+    deliveryStatus: isSeen ? 'seen' : 'delivered',
+    createdAt: String(row.created_at || new Date().toISOString()),
+    isViewed: isSeen,
+    isSupabaseBacked: true,
+  };
 }
 
 // =========================================================================
@@ -167,7 +248,12 @@ export async function publishLiveStory(params: {
 
   if (params.mediaBlob) {
     if (isSupabaseConfigured && isDeviceOnline) {
-      const ext = params.mediaType === 'image' ? 'jpg' : params.mediaBlob.type.includes('mp4') ? 'mp4' : 'webm';
+      const ext =
+        params.mediaType === 'image'
+          ? 'jpg'
+          : params.mediaBlob.type.includes('mp4')
+          ? 'mp4'
+          : 'webm';
       const uploaded = await uploadMediaToReelsBucket(
         params.mediaBlob,
         'posts',
@@ -236,7 +322,6 @@ export async function publishLiveStory(params: {
       }
     }
 
-    // Also broadcast live story event to connected clients
     try {
       const channel = supabase.channel(SNAP_REALTIME_CHANNEL);
       await channel.send({
@@ -297,7 +382,7 @@ export async function deleteLiveStoryById(storyId: string): Promise<void> {
 }
 
 // =========================================================================
-// Direct Snaps & DM Chat Helpers
+// Direct Messaging (DM / Chat) & Live Snaps Helpers (Supabase `messages` + local fallback)
 // =========================================================================
 export function getStoredDirectSnaps(): DirectSnapMessage[] {
   try {
@@ -315,7 +400,7 @@ export function saveStoredDirectSnaps(messages: DirectSnapMessage[]): void {
   try {
     const clean = messages
       .filter((m) => !m.mediaUrl || !m.mediaUrl.startsWith('blob:'))
-      .slice(0, 150);
+      .slice(0, 250);
     localStorage.setItem(DIRECT_SNAPS_STORAGE_KEY, JSON.stringify(clean));
   } catch {
     // ignore quota errors
@@ -324,65 +409,77 @@ export function saveStoredDirectSnaps(messages: DirectSnapMessage[]): void {
 
 export async function fetchDirectSnaps(): Promise<DirectSnapMessage[]> {
   const localMessages = getStoredDirectSnaps();
-  if (!supabase || !isSupabaseConfigured || !optionalTablesAvailable.directSnaps) {
+  if (!supabase || !isSupabaseConfigured) {
     return localMessages;
   }
 
-  try {
-    const { data, error } = await supabase
-      .from('direct_snaps')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(150);
+  const remoteMap = new Map<string, DirectSnapMessage>();
 
-    if (error) {
-      if (isMissingTableOrColumn(error)) {
-        optionalTablesAvailable.directSnaps = false;
+  // 1. Query primary Supabase `messages` table if present
+  if (optionalTablesAvailable.messages) {
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (error) {
+        if (isMissingTableOrColumn(error)) {
+          optionalTablesAvailable.messages = false;
+        }
+      } else if (Array.isArray(data)) {
+        for (const row of data) {
+          if (row && typeof row === 'object') {
+            const mapped = mapSupabaseDmRow(row as Record<string, unknown>);
+            remoteMap.set(mapped.id, mapped);
+          }
+        }
       }
-      return localMessages;
+    } catch {
+      // keep instant local fallback
     }
+  }
 
-    if (!Array.isArray(data)) return localMessages;
+  // 2. Also check `direct_snaps` table if present so media snaps & chats unify cleanly
+  if (optionalTablesAvailable.directSnaps) {
+    try {
+      const { data, error } = await supabase
+        .from('direct_snaps')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(150);
 
-    const remoteMessages: DirectSnapMessage[] = data.map((row) => {
-      const safeSenderUname = sanitizeUsername(String(row.sender_username || '')) || 'user';
-      const safeRecipUname = sanitizeUsername(String(row.recipient_username || '')) || 'friend';
-      return {
-        id: String(row.id),
-        senderId: String(row.sender_id || ''),
-        senderUsername: safeSenderUname,
-        senderName: sanitizeText(String(row.sender_name || safeSenderUname || 'User'), 60),
-        senderAvatar: sanitizeSafeUrl(String(row.sender_avatar || '')),
-        recipientId: String(row.recipient_id || ''),
-        recipientUsername: safeRecipUname,
-        recipientName: sanitizeText(String(row.recipient_name || safeRecipUname || 'Friend'), 60),
-        recipientAvatar: sanitizeSafeUrl(String(row.recipient_avatar || '')),
-        mediaUrl: sanitizeSafeUrl(String(row.media_url || '')),
-        mediaType: row.media_type === 'image' ? 'image' : 'video',
-        caption: row.caption ? sanitizeText(String(row.caption), 160) || undefined : undefined,
-        filterName: row.filter_name
-          ? sanitizeText(String(row.filter_name), 40) || undefined
-          : undefined,
-        textMessage: row.text_message
-          ? sanitizeText(String(row.text_message), 500) || undefined
-          : undefined,
-        createdAt: String(row.created_at || new Date().toISOString()),
-        isViewed: Boolean(row.is_viewed),
-        isSupabaseBacked: true,
-      };
-    });
+      if (error) {
+        if (isMissingTableOrColumn(error)) {
+          optionalTablesAvailable.directSnaps = false;
+        }
+      } else if (Array.isArray(data)) {
+        for (const row of data) {
+          if (row && typeof row === 'object') {
+            const mapped = mapSupabaseDmRow(row as Record<string, unknown>);
+            if (!remoteMap.has(mapped.id)) {
+              remoteMap.set(mapped.id, mapped);
+            }
+          }
+        }
+      }
+    } catch {
+      // keep instant local fallback
+    }
+  }
 
-    const seen = new Set(remoteMessages.map((m) => m.id));
-    const merged = [
-      ...remoteMessages,
-      ...localMessages.filter((m) => !seen.has(m.id)),
-    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    saveStoredDirectSnaps(merged);
-    return merged;
-  } catch {
+  if (remoteMap.size === 0) {
     return localMessages;
   }
+
+  const merged = [
+    ...Array.from(remoteMap.values()),
+    ...localMessages.filter((m) => !remoteMap.has(m.id)),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  saveStoredDirectSnaps(merged);
+  return merged;
 }
 
 export async function sendDirectSnap(params: {
@@ -404,7 +501,12 @@ export async function sendDirectSnap(params: {
 
   if (params.mediaBlob) {
     if (isSupabaseConfigured && isDeviceOnline) {
-      const ext = params.mediaType === 'image' ? 'jpg' : params.mediaBlob.type.includes('mp4') ? 'mp4' : 'webm';
+      const ext =
+        params.mediaType === 'image'
+          ? 'jpg'
+          : params.mediaBlob.type.includes('mp4')
+          ? 'mp4'
+          : 'webm';
       const uploaded = await uploadMediaToReelsBucket(
         params.mediaBlob,
         'posts',
@@ -439,34 +541,55 @@ export async function sendDirectSnap(params: {
     textMessage: params.textMessage
       ? sanitizeText(params.textMessage, 500) || undefined
       : undefined,
+    deliveryStatus: 'delivered',
     createdAt,
     isViewed: false,
     isSupabaseBacked: false,
   };
 
+  // Persist immediately in localStorage + notify open browser tabs
+  const existing = getStoredDirectSnaps();
+  saveStoredDirectSnaps([newSnap, ...existing.filter((m) => m.id !== newSnap.id)]);
+  postLocalDmBroadcast({ type: 'DM_NEW', message: newSnap });
+
   if (supabase && isSupabaseConfigured && isDeviceOnline) {
+    const dbRow = {
+      id: newSnap.id,
+      sender_id: newSnap.senderId,
+      sender_username: newSnap.senderUsername,
+      sender_name: newSnap.senderName,
+      sender_avatar: newSnap.senderAvatar,
+      recipient_id: newSnap.recipientId,
+      recipient_username: newSnap.recipientUsername,
+      recipient_name: newSnap.recipientName,
+      recipient_avatar: newSnap.recipientAvatar,
+      media_url: newSnap.mediaUrl || null,
+      media_type: newSnap.mediaType,
+      caption: newSnap.caption || null,
+      filter_name: newSnap.filterName || null,
+      text_message: newSnap.textMessage || null,
+      created_at: newSnap.createdAt,
+      is_viewed: false,
+    };
+
+    // Primary `messages` table sync
+    if (optionalTablesAvailable.messages) {
+      try {
+        const { error } = await supabase.from('messages').insert([dbRow]);
+        if (error && isMissingTableOrColumn(error)) {
+          optionalTablesAvailable.messages = false;
+        } else if (!error) {
+          newSnap.isSupabaseBacked = true;
+        }
+      } catch {
+        // fallback cleanly
+      }
+    }
+
+    // Secondary `direct_snaps` table sync when available
     if (optionalTablesAvailable.directSnaps) {
       try {
-        const { error } = await supabase.from('direct_snaps').insert([
-          {
-            id: newSnap.id,
-            sender_id: newSnap.senderId,
-            sender_username: newSnap.senderUsername,
-            sender_name: newSnap.senderName,
-            sender_avatar: newSnap.senderAvatar,
-            recipient_id: newSnap.recipientId,
-            recipient_username: newSnap.recipientUsername,
-            recipient_name: newSnap.recipientName,
-            recipient_avatar: newSnap.recipientAvatar,
-            media_url: newSnap.mediaUrl,
-            media_type: newSnap.mediaType,
-            caption: newSnap.caption || null,
-            filter_name: newSnap.filterName || null,
-            text_message: newSnap.textMessage || null,
-            created_at: newSnap.createdAt,
-            is_viewed: false,
-          },
-        ]);
+        const { error } = await supabase.from('direct_snaps').insert([dbRow]);
         if (error && isMissingTableOrColumn(error)) {
           optionalTablesAvailable.directSnaps = false;
         } else if (!error) {
@@ -489,23 +612,141 @@ export async function sendDirectSnap(params: {
     }
   }
 
-  const existing = getStoredDirectSnaps();
-  saveStoredDirectSnaps([newSnap, ...existing.filter((m) => m.id !== newSnap.id)]);
   return newSnap;
 }
 
 export async function markDirectSnapViewed(snapId: string): Promise<void> {
-  const existing = getStoredDirectSnaps();
-  const next = existing.map((m) => (m.id === snapId ? { ...m, isViewed: true } : m));
-  saveStoredDirectSnaps(next);
+  await markMessagesSeen([snapId]);
+}
 
-  if (supabase && isSupabaseConfigured && optionalTablesAvailable.directSnaps) {
+export async function markMessagesSeen(messageIds: string[]): Promise<void> {
+  const uniqueIds = Array.from(new Set(messageIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return;
+
+  const idSet = new Set(uniqueIds);
+  const existing = getStoredDirectSnaps();
+  const next = existing.map((m) =>
+    idSet.has(m.id) ? { ...m, isViewed: true, deliveryStatus: 'seen' as const } : m
+  );
+  saveStoredDirectSnaps(next);
+  postLocalDmBroadcast({ type: 'DM_SEEN', messageIds: uniqueIds });
+
+  if (!supabase || !isSupabaseConfigured) return;
+
+  if (optionalTablesAvailable.messages) {
     try {
-      await supabase.from('direct_snaps').update({ is_viewed: true }).eq('id', snapId);
+      const { error } = await supabase
+        .from('messages')
+        .update({ is_viewed: true })
+        .in('id', uniqueIds);
+      if (error && isMissingTableOrColumn(error)) {
+        optionalTablesAvailable.messages = false;
+      }
     } catch {
       // ignore
     }
   }
+
+  if (optionalTablesAvailable.directSnaps) {
+    try {
+      const { error } = await supabase
+        .from('direct_snaps')
+        .update({ is_viewed: true })
+        .in('id', uniqueIds);
+      if (error && isMissingTableOrColumn(error)) {
+        optionalTablesAvailable.directSnaps = false;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const channel = supabase.channel(SNAP_REALTIME_CHANNEL);
+    await channel.send({
+      type: 'broadcast',
+      event: 'messages_seen',
+      payload: { messageIds: uniqueIds },
+    });
+  } catch {
+    // ignore broadcast errors
+  }
+}
+
+export async function toggleMessageReaction(
+  messageId: string,
+  emoji: string,
+  reactorUsername: string
+): Promise<Record<string, string[]>> {
+  const cleanUser = normalizeCreatorUsername(reactorUsername) || reactorUsername;
+  const cleanEmoji = emoji.trim().slice(0, 8);
+  let nextReactions: Record<string, string[]> = {};
+
+  const existing = getStoredDirectSnaps();
+  const updated = existing.map((msg) => {
+    if (msg.id !== messageId) return msg;
+    const current = { ...(msg.reactions || {}) };
+    const list = Array.isArray(current[cleanEmoji]) ? [...current[cleanEmoji]] : [];
+    const already = list.some((u) => normalizeCreatorUsername(u) === cleanUser);
+    const updatedList = already
+      ? list.filter((u) => normalizeCreatorUsername(u) !== cleanUser)
+      : [...list, cleanUser];
+    if (updatedList.length > 0) {
+      current[cleanEmoji] = updatedList;
+    } else {
+      delete current[cleanEmoji];
+    }
+    nextReactions = current;
+    return {
+      ...msg,
+      reactions: Object.keys(current).length > 0 ? current : undefined,
+    };
+  });
+  saveStoredDirectSnaps(updated);
+  postLocalDmBroadcast({ type: 'DM_REACTION', messageId, reactions: nextReactions });
+
+  if (supabase && isSupabaseConfigured) {
+    if (optionalTablesAvailable.messages) {
+      try {
+        const { error } = await supabase
+          .from('messages')
+          .update({ reactions: nextReactions })
+          .eq('id', messageId);
+        if (error && isMissingTableOrColumn(error)) {
+          optionalTablesAvailable.messages = false;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (optionalTablesAvailable.directSnaps) {
+      try {
+        const { error } = await supabase
+          .from('direct_snaps')
+          .update({ reactions: nextReactions })
+          .eq('id', messageId);
+        if (error && isMissingTableOrColumn(error)) {
+          optionalTablesAvailable.directSnaps = false;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      const channel = supabase.channel(SNAP_REALTIME_CHANNEL);
+      await channel.send({
+        type: 'broadcast',
+        event: 'message_reaction',
+        payload: { messageId, reactions: nextReactions },
+      });
+    } catch {
+      // ignore broadcast errors
+    }
+  }
+
+  return nextReactions;
 }
 
 export async function fetchDirectSendRecipients(
@@ -516,20 +757,20 @@ export async function fetchDirectSendRecipients(
   const ownClean = normalizeCreatorUsername(ownProfile.username);
   const byUsername = new Map<string, DirectSnapRecipient>();
 
-  const creators = await searchCreatorsDirectory('', allVideos, ownProfile);
-  for (const c of creators) {
-    const clean = normalizeCreatorUsername(c.username);
-    if (!clean || clean === ownClean || c.id === ownProfile.id) continue;
-    byUsername.set(clean, {
-      id: c.id,
-      name: c.name,
-      username: c.username,
-      avatar: c.avatar,
-      isVerified: c.isVerified,
-    });
+  // Combine passed users, stored users & cloud-registered users
+  const mergedUsers: UserAccount[] = [...registeredUsers, ...getStoredUsers()];
+  if (typeof navigator === 'undefined' || navigator.onLine) {
+    try {
+      const cloudUsers = await fetchRegisteredUsersFromCloud();
+      if (cloudUsers.length > 0) {
+        mergedUsers.push(...cloudUsers);
+      }
+    } catch {
+      // ignore offline cloud user lookup failures
+    }
   }
 
-  for (const u of registeredUsers) {
+  for (const u of mergedUsers) {
     if (u.status === 'suspended') continue;
     const clean = normalizeCreatorUsername(u.username);
     if (!clean || clean === ownClean || u.id === ownProfile.id) continue;
@@ -544,15 +785,58 @@ export async function fetchDirectSendRecipients(
     }
   }
 
+  const creators = await searchCreatorsDirectory('', allVideos, ownProfile);
+  for (const c of creators) {
+    const clean = normalizeCreatorUsername(c.username);
+    if (!clean || clean === ownClean || c.id === ownProfile.id) continue;
+    if (!byUsername.has(clean)) {
+      byUsername.set(clean, {
+        id: c.id,
+        name: c.name,
+        username: c.username,
+        avatar: c.avatar,
+        isVerified: c.isVerified,
+      });
+    }
+  }
+
   return Array.from(byUsername.values());
 }
 
 export function subscribeToLiveSnapsRealtime(handlers: {
   onNewStory?: (story: LiveStoryItem) => void;
   onNewDirectSnap?: (snap: DirectSnapMessage) => void;
+  onMessagesSeen?: (messageIds: string[]) => void;
+  onMessageReaction?: (messageId: string, reactions: Record<string, string[]>) => void;
 }): () => void {
+  let bc: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      bc = new BroadcastChannel(DM_BROADCAST_CHANNEL);
+      bc.onmessage = (ev) => {
+        const data = ev.data as
+          | { type: 'DM_NEW'; message: DirectSnapMessage }
+          | { type: 'DM_SEEN'; messageIds: string[] }
+          | { type: 'DM_REACTION'; messageId: string; reactions: Record<string, string[]> }
+          | undefined;
+        if (!data) return;
+        if (data.type === 'DM_NEW' && data.message?.id) {
+          handlers.onNewDirectSnap?.(data.message);
+        } else if (data.type === 'DM_SEEN' && Array.isArray(data.messageIds)) {
+          handlers.onMessagesSeen?.(data.messageIds);
+        } else if (data.type === 'DM_REACTION' && data.messageId) {
+          handlers.onMessageReaction?.(data.messageId, data.reactions || {});
+        }
+      };
+    }
+  } catch {
+    // ignore BroadcastChannel failures
+  }
+
   if (!supabase || !isSupabaseConfigured) {
-    return () => {};
+    return () => {
+      bc?.close();
+    };
   }
 
   const client = supabase;
@@ -582,9 +866,59 @@ export function subscribeToLiveSnapsRealtime(handlers: {
         }
       }
     })
-    .subscribe();
+    .on('broadcast', { event: 'messages_seen' }, ({ payload }) => {
+      const ids = Array.isArray((payload as { messageIds?: unknown })?.messageIds)
+        ? ((payload as { messageIds: unknown[] }).messageIds.map(String))
+        : [];
+      if (ids.length > 0) {
+        handlers.onMessagesSeen?.(ids);
+      }
+    })
+    .on('broadcast', { event: 'message_reaction' }, ({ payload }) => {
+      if (payload && typeof payload === 'object') {
+        const p = payload as { messageId?: string; reactions?: Record<string, string[]> };
+        if (p.messageId) {
+          handlers.onMessageReaction?.(p.messageId, p.reactions || {});
+        }
+      }
+    });
+
+  if (optionalTablesAvailable.messages) {
+    channel.on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages' },
+      (payload) => {
+        if (payload.new && typeof payload.new === 'object') {
+          const mapped = mapSupabaseDmRow(payload.new as Record<string, unknown>);
+          const existing = getStoredDirectSnaps();
+          if (!existing.some((m) => m.id === mapped.id)) {
+            saveStoredDirectSnaps([mapped, ...existing]);
+          }
+          handlers.onNewDirectSnap?.(mapped);
+        }
+      }
+    );
+    channel.on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'messages' },
+      (payload) => {
+        if (payload.new && typeof payload.new === 'object') {
+          const mapped = mapSupabaseDmRow(payload.new as Record<string, unknown>);
+          if (mapped.isViewed) {
+            handlers.onMessagesSeen?.([mapped.id]);
+          }
+          if (mapped.reactions) {
+            handlers.onMessageReaction?.(mapped.id, mapped.reactions);
+          }
+        }
+      }
+    );
+  }
+
+  channel.subscribe();
 
   return () => {
+    bc?.close();
     void client.removeChannel(channel);
   };
 }

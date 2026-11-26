@@ -20,7 +20,7 @@ import {
   Users,
   ArrowLeftRight,
 } from 'lucide-react';
-import { VideoPost } from '../types';
+import { DirectSnapRecipient, VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
 import { ProceduralCanvas } from './ProceduralCanvas';
 import { formatRelativeTime } from '../lib/supabaseService';
@@ -60,6 +60,7 @@ interface VideoCardProps {
   onDownloadTracked?: (id: string) => void;
   onHashtagClick?: (tag: string) => void;
   onOpenCreatorProfile?: (username: string, creator?: VideoPost['creator'], userId?: string) => void;
+  onMessageCreator?: (recipient: DirectSnapRecipient) => void;
   onShowToast: (msg: string) => void;
 }
 
@@ -97,6 +98,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   onDownloadTracked,
   onHashtagClick,
   onOpenCreatorProfile,
+  onMessageCreator,
   onShowToast,
 }) => {
   const isLeftControls = controlsSide === 'left';
@@ -1465,6 +1467,26 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 ) : (
                   <span>{isFollowerCreator ? 'Follow Back' : 'Follow'}</span>
                 )}
+              </button>
+            )}
+            {!isOwnPost && onMessageCreator && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMessageCreator({
+                    id: video.userId || `creator-${video.creator.username}`,
+                    name: video.creator.name,
+                    username: video.creator.username,
+                    avatar: video.creator.avatar,
+                    isVerified: video.creator.isVerified,
+                  });
+                }}
+                className="px-2 py-0.5 rounded-full text-[10px] font-black border border-white/25 bg-black/55 hover:bg-pink-600/80 hover:border-pink-400 text-white flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
+                title={`Message @${video.creator.username}`}
+              >
+                <MessageCircle className="w-2.5 h-2.5 text-pink-300" />
+                <span>Message</span>
               </button>
             )}
             <span className="text-xs text-neutral-400 font-medium">

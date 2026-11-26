@@ -31,6 +31,53 @@ export type TextAnimationStyle = 'none' | 'pop' | 'neon_pulse' | 'slide_up' | 't
 
 export type TextFontStyleId = 'modern' | 'impact' | 'editorial' | 'cyber' | 'script';
 
+export type EditorMaskShape =
+  | 'none'
+  | 'diamond'
+  | 'circle'
+  | 'heart'
+  | 'star'
+  | 'split'
+  | 'rectangle';
+
+export interface EditorMaskConfig {
+  shape: EditorMaskShape;
+  sizePercent: number; // 15..140
+  xPercent: number; // 10..90
+  yPercent: number; // 10..90
+  rotationDeg: number; // -180..180
+  featherPx: number; // 0..40
+  invert: boolean;
+}
+
+export const DEFAULT_MASK_CONFIG: EditorMaskConfig = {
+  shape: 'none',
+  sizePercent: 72,
+  xPercent: 50,
+  yPercent: 50,
+  rotationDeg: 0,
+  featherPx: 8,
+  invert: false,
+};
+
+export interface EditorOverlayLayer {
+  id: string;
+  sourceId: string;
+  name: string;
+  mediaType: 'video' | 'image';
+  url: string;
+  file: File;
+  naturalDuration: number;
+  xPercent: number; // 8..92
+  yPercent: number; // 8..92
+  scale: number; // 0.2..2.0 (relative to stage width 45%)
+  rotationDeg: number; // -180..180
+  opacity: number; // 0..100
+  startTime: number;
+  endTime: number;
+  mask: EditorMaskConfig;
+}
+
 export interface TimelineClipItem {
   id: string;
   sourceId: string;
@@ -76,6 +123,8 @@ export interface TimelineRenderOptions {
   contrastAdj: number; // -40..+40
   saturateAdj: number; // -60..+60
   vignetteAdj: number; // 0..100
+  mainMask?: EditorMaskConfig;
+  overlays?: EditorOverlayLayer[];
   textLayer: EditorTextLayer;
   stickers: EditorStickerLayer[];
 }
@@ -219,7 +268,7 @@ export const TEXT_FONT_STYLES: {
 export const SPEED_CURVE_PRESETS: {
   id: SpeedCurvePresetId;
   label: string;
-  points: [number, number, number, number, number]; // normalized visual curve multipliers
+  points: [number, number, number, number, number];
 }[] = [
   { id: 'linear', label: 'Constant', points: [1, 1, 1, 1, 1] },
   { id: 'bullet_ramp', label: 'Bullet Ramp', points: [1.5, 1.3, 0.55, 1.25, 1.6] },
@@ -235,10 +284,8 @@ export function evaluateSpeedMultiplierAtProgress(
   const p = Math.max(0, Math.min(1, progress01));
   let factor = 1;
   if (curve === 'bullet_ramp') {
-    // Fast start -> slow mid -> fast exit
     factor = 1 + 0.45 * Math.cos(p * Math.PI * 2);
   } else if (curve === 'hero_slow') {
-    // Slow-mo spotlight through the middle
     const dip = Math.sin(p * Math.PI);
     factor = 1.35 - 0.8 * dip;
   } else if (curve === 'jump_cut') {
@@ -280,7 +327,6 @@ export function mapClipProgressToSourceTime(
 ): number {
   const clamped = Math.max(0, Math.min(1, progress01));
   const span = Math.max(0.1, clip.trimEnd - clip.trimStart);
-  // Subtle non-linear integration approximation for curve feel while staying monotonic
   let warped = clamped;
   if (clip.speedCurve === 'hero_slow') {
     warped = clamped - 0.08 * Math.sin(clamped * Math.PI * 2);
@@ -353,6 +399,121 @@ function drawMediaFit(
   ctx.drawImage(media, dx, dy, drawW, drawH);
 }
 
+// Reusable scratch canvases for buttery 60fps feathered shape masking
+let cachedScratchLayer: HTMLCanvasElement | null = null;
+let cachedScratchMask: HTMLCanvasElement | null = null;
+
+function getMaskScratchCanvases(w: number, h: number): {
+  layerCanvas: HTMLCanvasElement;
+  layerCtx: CanvasRenderingContext2D;
+  maskCanvas: HTMLCanvasElement;
+  maskCtx: CanvasRenderingContext2D;
+} | null {
+  if (typeof document === 'undefined') return null;
+  if (!cachedScratchLayer) cachedScratchLayer = document.createElement('canvas');
+  if (!cachedScratchMask) cachedScratchMask = document.createElement('canvas');
+
+  if (cachedScratchLayer.width !== w || cachedScratchLayer.height !== h) {
+    cachedScratchLayer.width = w;
+    cachedScratchLayer.height = h;
+  }
+  if (cachedScratchMask.width !== w || cachedScratchMask.height !== h) {
+    cachedScratchMask.width = w;
+    cachedScratchMask.height = h;
+  }
+  const layerCtx = cachedScratchLayer.getContext('2d');
+  const maskCtx = cachedScratchMask.getContext('2d');
+  if (!layerCtx || !maskCtx) return null;
+  return {
+    layerCanvas: cachedScratchLayer,
+    layerCtx,
+    maskCanvas: cachedScratchMask,
+    maskCtx,
+  };
+}
+
+function traceMaskShapePath(
+  ctx: CanvasRenderingContext2D,
+  shape: EditorMaskShape,
+  halfW: number,
+  halfH: number,
+  stageW: number,
+  stageH: number
+) {
+  ctx.beginPath();
+  if (shape === 'diamond') {
+    ctx.moveTo(0, -halfH);
+    ctx.lineTo(halfW, 0);
+    ctx.lineTo(0, halfH);
+    ctx.lineTo(-halfW, 0);
+    ctx.closePath();
+  } else if (shape === 'circle') {
+    const r = Math.min(halfW, halfH);
+    ctx.ellipse(0, 0, r, r, 0, 0, Math.PI * 2);
+  } else if (shape === 'rectangle') {
+    const cr = Math.min(halfW, halfH) * 0.14;
+    ctx.roundRect(-halfW, -halfH, halfW * 2, halfH * 2, cr);
+  } else if (shape === 'split') {
+    const big = Math.max(stageW, stageH) * 2.5;
+    ctx.rect(-big, -big, big, big * 2);
+  } else if (shape === 'star') {
+    const outerR = Math.min(halfW, halfH);
+    const innerR = outerR * 0.44;
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+      const px = Math.cos(angle) * r;
+      const py = Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+  } else if (shape === 'heart') {
+    const s = Math.min(halfW, halfH);
+    ctx.moveTo(0, s * 0.85);
+    ctx.bezierCurveTo(-s * 1.15, s * 0.15, -s * 1.1, -s * 0.78, 0, -s * 0.25);
+    ctx.bezierCurveTo(s * 1.1, -s * 0.78, s * 1.15, s * 0.15, 0, s * 0.85);
+    ctx.closePath();
+  }
+}
+
+function buildFeatheredMaskAlpha(
+  maskCtx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  mask: EditorMaskConfig,
+  overrideCenterPx?: { cx: number; cy: number; refHalfW: number; refHalfH: number }
+) {
+  maskCtx.save();
+  maskCtx.clearRect(0, 0, w, h);
+
+  const cx = overrideCenterPx ? overrideCenterPx.cx : (mask.xPercent / 100) * w;
+  const cy = overrideCenterPx ? overrideCenterPx.cy : (mask.yPercent / 100) * h;
+  const k = Math.max(0.12, Math.min(1.8, mask.sizePercent / 100));
+  const halfW = (overrideCenterPx ? overrideCenterPx.refHalfW : w * 0.46) * k;
+  const halfH = (overrideCenterPx ? overrideCenterPx.refHalfH : h * 0.46) * k;
+  const scaledFeather = Math.max(0, (mask.featherPx / 360) * w);
+
+  if (mask.invert) {
+    maskCtx.fillStyle = '#ffffff';
+    maskCtx.fillRect(0, 0, w, h);
+  }
+
+  maskCtx.save();
+  maskCtx.translate(cx, cy);
+  maskCtx.rotate((mask.rotationDeg * Math.PI) / 180);
+  if ('filter' in maskCtx && scaledFeather > 0.5) {
+    maskCtx.filter = `blur(${scaledFeather.toFixed(1)}px)`;
+  }
+  maskCtx.globalCompositeOperation = mask.invert ? 'destination-out' : 'source-over';
+  maskCtx.fillStyle = '#ffffff';
+  traceMaskShapePath(maskCtx, mask.shape, halfW, halfH, w, h);
+  maskCtx.fill();
+  maskCtx.restore();
+
+  maskCtx.restore();
+}
+
 export function drawProTimelineFrame(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -372,7 +533,6 @@ export function drawProTimelineFrame(
     return;
   }
 
-  // Locate current span
   let activeIdx = spans.findIndex(
     (s) => timeSec >= s.timelineStart && timeSec <= s.timelineEnd
   );
@@ -383,107 +543,190 @@ export function drawProTimelineFrame(
   const localTime = Math.max(0, timeSec - activeSpan.timelineStart);
   const filterCss = buildBlendedCssFilter(options);
 
-  const drawSingleSpan = (
-    span: ComputedClipSpan,
-    scale = 1,
-    offsetX = 0,
-    offsetY = 0,
-    alpha = 1
-  ) => {
-    const el = mediaCache.get(span.clip.sourceId);
-    if (!el) return;
-    const isImg = span.clip.mediaType === 'image';
-    const srcW = isImg
-      ? (el as HTMLImageElement).naturalWidth
-      : (el as HTMLVideoElement).videoWidth;
-    const srcH = isImg
-      ? (el as HTMLImageElement).naturalHeight
-      : (el as HTMLVideoElement).videoHeight;
-    if (!srcW || !srcH) return;
+  const renderMainContentTo = (targetCtx: CanvasRenderingContext2D) => {
+    const drawSingleSpan = (
+      span: ComputedClipSpan,
+      scale = 1,
+      offsetX = 0,
+      offsetY = 0,
+      alpha = 1
+    ) => {
+      const el = mediaCache.get(span.clip.sourceId);
+      if (!el) return;
+      const isImg = span.clip.mediaType === 'image';
+      const srcW = isImg
+        ? (el as HTMLImageElement).naturalWidth
+        : (el as HTMLVideoElement).videoWidth;
+      const srcH = isImg
+        ? (el as HTMLImageElement).naturalHeight
+        : (el as HTMLVideoElement).videoHeight;
+      if (!srcW || !srcH) return;
 
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    try {
-      if ('filter' in ctx) {
-        ctx.filter = filterCss;
-      }
-    } catch {
-      // ignore fallback
-    }
-    drawMediaFit(
-      ctx,
-      el,
-      srcW,
-      srcH,
-      w,
-      h,
-      span.clip.mediaType === 'image' ? span.clip.photoFit : 'contain',
-      scale,
-      offsetX,
-      offsetY
-    );
-    ctx.restore();
-  };
-
-  // Check if we are in an incoming transition from the previous clip
-  let renderedWithTransition = false;
-  if (activeIdx > 0) {
-    const prevSpan = spans[activeIdx - 1];
-    const trType = prevSpan.clip.transitionAfter;
-    const trDur = Math.min(
-      prevSpan.clip.transitionDuration || 0.45,
-      activeSpan.effectiveDuration * 0.6,
-      prevSpan.effectiveDuration * 0.6
-    );
-    if (trType !== 'none' && localTime < trDur && trDur > 0.05) {
-      const p = Math.max(0, Math.min(1, localTime / trDur));
-      const ease = easeOutCubic(p);
-      renderedWithTransition = true;
-
-      if (trType === 'fade') {
-        drawSingleSpan(prevSpan, 1, 0, 0, 1 - p);
-        drawSingleSpan(activeSpan, 1, 0, 0, p);
-      } else if (trType === 'zoom_punch') {
-        drawSingleSpan(prevSpan, 1 + ease * 0.35, 0, 0, Math.max(0, 1 - p * 1.4));
-        drawSingleSpan(activeSpan, 1.3 - ease * 0.3, 0, 0, Math.min(1, p * 1.35));
-        if (p > 0.35 && p < 0.72) {
-          const flashA = Math.sin(((p - 0.35) / 0.37) * Math.PI) * 0.42;
-          ctx.fillStyle = `rgba(255,255,255,${flashA})`;
-          ctx.fillRect(0, 0, w, h);
+      targetCtx.save();
+      targetCtx.globalAlpha = alpha;
+      try {
+        if ('filter' in targetCtx) {
+          targetCtx.filter = filterCss;
         }
-      } else if (trType === 'swipe') {
-        drawSingleSpan(prevSpan, 1, -ease * w, 0, 1);
-        drawSingleSpan(activeSpan, 1, (1 - ease) * w, 0, 1);
-        const seamX = (1 - ease) * w;
-        const seam = ctx.createLinearGradient(seamX - w * 0.06, 0, seamX, 0);
-        seam.addColorStop(0, 'rgba(0,0,0,0)');
-        seam.addColorStop(1, 'rgba(0,0,0,0.45)');
-        ctx.fillStyle = seam;
-        ctx.fillRect(seamX - w * 0.06, 0, w * 0.06, h);
-      } else if (trType === 'glitch') {
-        const showNew = p > 0.45;
-        const target = showNew ? activeSpan : prevSpan;
-        drawSingleSpan(target, 1.03, 0, 0, 1);
-        // Horizontal glitch displacement slices
-        const sliceCount = 6;
-        const sliceH = h / sliceCount;
-        for (let s = 0; s < sliceCount; s++) {
-          if ((s + Math.floor(p * 20)) % 2 === 0) {
-            const jitterX = Math.sin(p * 60 + s * 4.1) * (w * 0.065) * (1 - Math.abs(p - 0.5) * 1.6);
-            const bandColor = s % 2 === 0 ? 'rgba(34, 211, 238, 0.24)' : 'rgba(244, 63, 94, 0.24)';
-            ctx.fillStyle = bandColor;
-            ctx.fillRect(jitterX, s * sliceH, w, sliceH * 0.42);
+      } catch {
+        // ignore fallback
+      }
+      drawMediaFit(
+        targetCtx,
+        el,
+        srcW,
+        srcH,
+        w,
+        h,
+        span.clip.mediaType === 'image' ? span.clip.photoFit : 'contain',
+        scale,
+        offsetX,
+        offsetY
+      );
+      targetCtx.restore();
+    };
+
+    let renderedWithTransition = false;
+    if (activeIdx > 0) {
+      const prevSpan = spans[activeIdx - 1];
+      const trType = prevSpan.clip.transitionAfter;
+      const trDur = Math.min(
+        prevSpan.clip.transitionDuration || 0.45,
+        activeSpan.effectiveDuration * 0.6,
+        prevSpan.effectiveDuration * 0.6
+      );
+      if (trType !== 'none' && localTime < trDur && trDur > 0.05) {
+        const p = Math.max(0, Math.min(1, localTime / trDur));
+        const ease = easeOutCubic(p);
+        renderedWithTransition = true;
+
+        if (trType === 'fade') {
+          drawSingleSpan(prevSpan, 1, 0, 0, 1 - p);
+          drawSingleSpan(activeSpan, 1, 0, 0, p);
+        } else if (trType === 'zoom_punch') {
+          drawSingleSpan(prevSpan, 1 + ease * 0.35, 0, 0, Math.max(0, 1 - p * 1.4));
+          drawSingleSpan(activeSpan, 1.3 - ease * 0.3, 0, 0, Math.min(1, p * 1.35));
+          if (p > 0.35 && p < 0.72) {
+            const flashA = Math.sin(((p - 0.35) / 0.37) * Math.PI) * 0.42;
+            targetCtx.fillStyle = `rgba(255,255,255,${flashA})`;
+            targetCtx.fillRect(0, 0, w, h);
+          }
+        } else if (trType === 'swipe') {
+          drawSingleSpan(prevSpan, 1, -ease * w, 0, 1);
+          drawSingleSpan(activeSpan, 1, (1 - ease) * w, 0, 1);
+          const seamX = (1 - ease) * w;
+          const seam = targetCtx.createLinearGradient(seamX - w * 0.06, 0, seamX, 0);
+          seam.addColorStop(0, 'rgba(0,0,0,0)');
+          seam.addColorStop(1, 'rgba(0,0,0,0.45)');
+          targetCtx.fillStyle = seam;
+          targetCtx.fillRect(seamX - w * 0.06, 0, w * 0.06, h);
+        } else if (trType === 'glitch') {
+          const showNew = p > 0.45;
+          const target = showNew ? activeSpan : prevSpan;
+          drawSingleSpan(target, 1.03, 0, 0, 1);
+          const sliceCount = 6;
+          const sliceH = h / sliceCount;
+          for (let s = 0; s < sliceCount; s++) {
+            if ((s + Math.floor(p * 20)) % 2 === 0) {
+              const jitterX =
+                Math.sin(p * 60 + s * 4.1) * (w * 0.065) * (1 - Math.abs(p - 0.5) * 1.6);
+              const bandColor =
+                s % 2 === 0 ? 'rgba(34, 211, 238, 0.24)' : 'rgba(244, 63, 94, 0.24)';
+              targetCtx.fillStyle = bandColor;
+              targetCtx.fillRect(jitterX, s * sliceH, w, sliceH * 0.42);
+            }
           }
         }
       }
     }
+
+    if (!renderedWithTransition) {
+      drawSingleSpan(activeSpan, 1, 0, 0, 1);
+    }
+  };
+
+  // Apply Main Track Shape Mask (Diamond, Circle, Heart, Star, Split, Rectangle) with Feather if active
+  const mainMask = options.mainMask;
+  if (mainMask && mainMask.shape !== 'none') {
+    const scratch = getMaskScratchCanvases(w, h);
+    if (scratch) {
+      scratch.layerCtx.clearRect(0, 0, w, h);
+      renderMainContentTo(scratch.layerCtx);
+      buildFeatheredMaskAlpha(scratch.maskCtx, w, h, mainMask);
+      scratch.layerCtx.save();
+      scratch.layerCtx.globalCompositeOperation = 'destination-in';
+      scratch.layerCtx.drawImage(scratch.maskCanvas, 0, 0);
+      scratch.layerCtx.restore();
+      ctx.drawImage(scratch.layerCanvas, 0, 0);
+    } else {
+      renderMainContentTo(ctx);
+    }
+  } else {
+    renderMainContentTo(ctx);
   }
 
-  if (!renderedWithTransition) {
-    drawSingleSpan(activeSpan, 1, 0, 0, 1);
+  // CapCut Overlay (PIP) Layers: photo/video overlays with drag position, pinch scale, rotation, opacity & shape mask
+  const overlays = options.overlays || [];
+  for (const ov of overlays) {
+    if (timeSec < ov.startTime || timeSec > ov.endTime) continue;
+    const ovEl = mediaCache.get(ov.sourceId);
+    if (!ovEl) continue;
+    const isImg = ov.mediaType === 'image';
+    const srcW = isImg
+      ? (ovEl as HTMLImageElement).naturalWidth
+      : (ovEl as HTMLVideoElement).videoWidth;
+    const srcH = isImg
+      ? (ovEl as HTMLImageElement).naturalHeight
+      : (ovEl as HTMLVideoElement).videoHeight;
+    if (!srcW || !srcH) continue;
+
+    const baseWidth = w * 0.46 * Math.max(0.15, Math.min(2.5, ov.scale));
+    const drawW = baseWidth;
+    const drawH = drawW * (srcH / srcW);
+    const cx = (ov.xPercent / 100) * w;
+    const cy = (ov.yPercent / 100) * h;
+    const alpha = Math.max(0, Math.min(1, ov.opacity / 100));
+
+    if (ov.mask && ov.mask.shape !== 'none') {
+      const scratch = getMaskScratchCanvases(w, h);
+      if (scratch) {
+        scratch.layerCtx.save();
+        scratch.layerCtx.clearRect(0, 0, w, h);
+        scratch.layerCtx.translate(cx, cy);
+        scratch.layerCtx.rotate((ov.rotationDeg * Math.PI) / 180);
+        scratch.layerCtx.drawImage(ovEl, -drawW / 2, -drawH / 2, drawW, drawH);
+        scratch.layerCtx.restore();
+
+        // When masking an overlay, center the mask on the overlay center unless user moved mask coords manually
+        buildFeatheredMaskAlpha(scratch.maskCtx, w, h, ov.mask, {
+          cx: cx + ((ov.mask.xPercent - 50) / 100) * drawW,
+          cy: cy + ((ov.mask.yPercent - 50) / 100) * drawH,
+          refHalfW: drawW * 0.5,
+          refHalfH: drawH * 0.5,
+        });
+
+        scratch.layerCtx.save();
+        scratch.layerCtx.globalCompositeOperation = 'destination-in';
+        scratch.layerCtx.drawImage(scratch.maskCanvas, 0, 0);
+        scratch.layerCtx.restore();
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(scratch.layerCanvas, 0, 0);
+        ctx.restore();
+        continue;
+      }
+    }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(cx, cy);
+    ctx.rotate((ov.rotationDeg * Math.PI) / 180);
+    ctx.drawImage(ovEl, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
   }
 
-  // LUT Tonal Wash Overlay (guarantees rich color look even on mobile WebKit)
+  // LUT Tonal Wash Overlay
   const lutIntensity01 = Math.max(0, Math.min(1, options.lutIntensity / 100));
   const washAlpha = options.filterLut.tintAlpha * lutIntensity01;
   if (washAlpha > 0.005) {
@@ -509,7 +752,7 @@ export function drawProTimelineFrame(
     ctx.restore();
   }
 
-  // Animated Text & Captions Layer (with custom font, neon glow, outline, drag position)
+  // Animated Text & Captions Layer
   const { textLayer } = options;
   const rawText = textLayer.text.trim();
   if (rawText) {

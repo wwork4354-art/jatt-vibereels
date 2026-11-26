@@ -15,8 +15,9 @@ import {
   Clock,
   Users,
   UserMinus,
+  MessageCircle,
 } from 'lucide-react';
-import { CreatorProfileData, VideoPost } from '../types';
+import { CreatorProfileData, DirectSnapRecipient, VideoPost } from '../types';
 import {
   buildCreatorChannelSummary,
   fetchPostsByUser,
@@ -43,6 +44,7 @@ interface PublicCreatorProfileViewProps {
   onRemoveFriend?: (username: string) => void;
   onPlayVideo: (videoId: string) => void;
   onEditOwnProfile: () => void;
+  onMessageCreator?: (recipient: DirectSnapRecipient) => void;
   onShowToast: (msg: string) => void;
 }
 
@@ -62,6 +64,7 @@ const PublicCreatorProfileViewComponent: React.FC<PublicCreatorProfileViewProps>
   onRemoveFriend,
   onPlayVideo,
   onEditOwnProfile,
+  onMessageCreator,
   onShowToast,
 }) => {
   const cleanTarget = normalizeCreatorUsername(username) || username.toLowerCase();
@@ -358,6 +361,25 @@ const PublicCreatorProfileViewComponent: React.FC<PublicCreatorProfileViewProps>
                     </>
                   )}
                 </button>
+
+                {onMessageCreator && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onMessageCreator({
+                        id: summary.id,
+                        name: summary.name,
+                        username: summary.username,
+                        avatar: summary.avatar,
+                        isVerified: summary.isVerified,
+                      })
+                    }
+                    className="px-5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white border border-pink-500/45 hover:border-pink-400 text-xs font-black flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer shadow-sm"
+                  >
+                    <MessageCircle className="w-4 h-4 text-pink-400" />
+                    <span>Message</span>
+                  </button>
+                )}
 
                 {relationship.isMutualFriend && onRemoveFriend && (
                   <button

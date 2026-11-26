@@ -268,6 +268,8 @@ export interface DirectSnapMessage {
   caption?: string;
   filterName?: string;
   textMessage?: string;
+  reactions?: Record<string, string[]>;
+  deliveryStatus?: 'sent' | 'delivered' | 'seen';
   createdAt: string;
   isViewed: boolean;
   isSupabaseBacked?: boolean;

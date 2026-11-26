@@ -19,6 +19,8 @@ import {
   Search,
   Wand2,
   Sliders,
+  Sparkles,
+  MessageCircle,
 } from 'lucide-react';
 import { FeedTab, UserAccount } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
@@ -36,10 +38,13 @@ interface SidebarDesktopProps {
   onOpenLive: () => void;
   onOpenProCamera?: () => void;
   onOpenEditor?: () => void;
+  onOpenAIStudio?: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
   savedCount: number;
   unreadActivityCount?: number;
+  onOpenDirectSnaps?: () => void;
+  unreadDirectSnapsCount?: number;
   currentUser: UserAccount | null;
   onOpenAdmin: () => void;
   onOpenLogin: () => void;
@@ -55,10 +60,13 @@ const SidebarDesktopComponent: React.FC<SidebarDesktopProps> = ({
   onOpenLive,
   onOpenProCamera,
   onOpenEditor,
+  onOpenAIStudio,
   isMuted,
   onToggleMute,
   savedCount,
   unreadActivityCount = 0,
+  onOpenDirectSnaps,
+  unreadDirectSnapsCount = 0,
   currentUser,
   onOpenAdmin,
   onOpenLogin,
@@ -266,6 +274,24 @@ const SidebarDesktopComponent: React.FC<SidebarDesktopProps> = ({
             )}
           </button>
 
+          {onOpenDirectSnaps && (
+            <button
+              type="button"
+              onClick={onOpenDirectSnaps}
+              className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl font-bold text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-all cursor-pointer"
+            >
+              <div className="flex items-center gap-3.5">
+                <MessageCircle className="w-5 h-5 shrink-0 text-pink-400" />
+                <span>Messages</span>
+              </div>
+              {unreadDirectSnapsCount > 0 && (
+                <span className="text-[10px] bg-pink-500 px-2 py-0.5 rounded-full text-white font-black tabular-nums">
+                  {unreadDirectSnapsCount > 99 ? '99+' : unreadDirectSnapsCount}
+                </span>
+              )}
+            </button>
+          )}
+
           {/* Admin Console Item (Main Admin only) */}
           {isMainAdminAccount(currentUser) && (
             <button
@@ -310,6 +336,17 @@ const SidebarDesktopComponent: React.FC<SidebarDesktopProps> = ({
             >
               <Sliders className="w-4 h-4 text-purple-400" />
               <span>Edit Photo &amp; Video</span>
+            </button>
+          )}
+
+          {onOpenAIStudio && (
+            <button
+              type="button"
+              onClick={onOpenAIStudio}
+              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500/20 via-pink-500/20 to-amber-500/20 hover:from-cyan-500/30 hover:to-amber-500/30 text-white font-bold text-xs flex items-center justify-center gap-2 border border-cyan-400/45 active:scale-98 transition-all cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4 text-cyan-300" />
+              <span>AI Image &amp; Video</span>
             </button>
           )}
 

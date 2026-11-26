@@ -12,12 +12,16 @@ import {
   ArrowLeftRight,
   Film,
   Image as ImageIcon,
+  Layers,
+  Sparkles,
 } from 'lucide-react';
 import {
   ComputedClipSpan,
   ClipTransitionType,
   EditorStickerLayer,
   EditorTextLayer,
+  EditorOverlayLayer,
+  EditorMaskShape,
 } from '../utils/proEditorEngine';
 
 interface ProTimelineProps {
@@ -34,6 +38,8 @@ interface ProTimelineProps {
   audioFadeOut?: number;
   textLayer: EditorTextLayer;
   stickers: EditorStickerLayer[];
+  overlays?: EditorOverlayLayer[];
+  activeMaskShape?: EditorMaskShape;
   onTogglePlay: () => void;
   onScrub: (timeSec: number) => void;
   onSelectClip: (clipId: string) => void;
@@ -42,7 +48,7 @@ interface ProTimelineProps {
   onZoomChange: (nextZoom: number) => void;
   onAddClipClick: () => void;
   onOpenTransitionForClip: (clipId: string) => void;
-  onFocusTrackTool: (tool: 'music' | 'text' | 'stickers') => void;
+  onFocusTrackTool: (tool: 'music' | 'text' | 'stickers' | 'overlay' | 'mask') => void;
   onAudioBarClick?: () => void;
 }
 
@@ -83,6 +89,8 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
   audioFadeOut = 0,
   textLayer,
   stickers,
+  overlays = [],
+  activeMaskShape = 'none',
   onTogglePlay,
   onScrub,
   onSelectClip,
@@ -531,6 +539,46 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
                   {stickers.length > 0
                     ? `${stickers.length} Sticker${stickers.length > 1 ? 's' : ''}`
                     : '+ Sticker'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                data-no-scrub="true"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFocusTrackTool('overlay');
+                }}
+                className={`h-7 rounded-md border px-2.5 flex items-center gap-1 text-[10px] font-bold cursor-pointer shrink-0 active:scale-95 transition-all ${
+                  overlays.length > 0
+                    ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200 hover:border-cyan-300'
+                    : 'bg-neutral-900/80 border-neutral-700 text-neutral-200 hover:text-white hover:border-cyan-500/60'
+                }`}
+              >
+                <Layers className="w-3 h-3 shrink-0 text-cyan-400" />
+                <span>
+                  {overlays.length > 0
+                    ? `${overlays.length} Overlay${overlays.length > 1 ? 's' : ''}`
+                    : '+ Overlay'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                data-no-scrub="true"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFocusTrackTool('mask');
+                }}
+                className={`h-7 rounded-md border px-2.5 flex items-center gap-1 text-[10px] font-bold cursor-pointer shrink-0 active:scale-95 transition-all ${
+                  activeMaskShape !== 'none'
+                    ? 'bg-purple-500/25 border-purple-400/60 text-purple-200 hover:border-purple-300'
+                    : 'bg-neutral-900/80 border-neutral-700 text-neutral-200 hover:text-white hover:border-purple-500/60'
+                }`}
+              >
+                <Sparkles className="w-3 h-3 shrink-0 text-purple-400" />
+                <span className="capitalize">
+                  {activeMaskShape !== 'none' ? `Mask: ${activeMaskShape}` : '+ Mask'}
                 </span>
               </button>
             </div>

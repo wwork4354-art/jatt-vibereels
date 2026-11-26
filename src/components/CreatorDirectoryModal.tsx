@@ -15,11 +15,13 @@ import {
   Play,
   Pause,
   Film,
+  MessageCircle,
 } from 'lucide-react';
 import {
   AudioTrackOption,
   CreatorChannelSummary,
   CreatorProfileData,
+  DirectSnapRecipient,
   VideoPost,
 } from '../types';
 import { advancedSearchAll } from '../lib/supabaseService';
@@ -37,6 +39,7 @@ interface CreatorDirectoryModalProps {
   onSelectCreator: (username: string) => void;
   onPlayVideo?: (videoId: string) => void;
   onFollowToggle: (username: string) => void;
+  onMessageCreator?: (recipient: DirectSnapRecipient) => void;
   onShowToast: (msg: string) => void;
 }
 
@@ -57,6 +60,7 @@ export const CreatorDirectoryModal: React.FC<CreatorDirectoryModalProps> = ({
   onSelectCreator,
   onPlayVideo,
   onFollowToggle,
+  onMessageCreator,
 }) => {
   const activeEdges = socialEdges || buildMergedSocialEdges(ownProfile.username);
   const [query, setQuery] = useState('');
@@ -364,6 +368,28 @@ export const CreatorDirectoryModal: React.FC<CreatorDirectoryModalProps> = ({
                                 </button>
                               );
                             })()}
+
+                            {!isOwn && onMessageCreator && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onClose();
+                                  onMessageCreator({
+                                    id: channel.id,
+                                    name: channel.name,
+                                    username: channel.username,
+                                    avatar: channel.avatar,
+                                    isVerified: channel.isVerified,
+                                  });
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-pink-600 text-pink-300 hover:text-white border border-pink-500/35 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                                title={`Message @${channel.username}`}
+                              >
+                                <MessageCircle className="w-3 h-3" />
+                                <span className="hidden sm:inline">Message</span>
+                              </button>
+                            )}
 
                             <button
                               type="button"

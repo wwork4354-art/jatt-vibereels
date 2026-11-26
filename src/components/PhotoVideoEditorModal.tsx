@@ -27,6 +27,9 @@ import {
   Pause,
   Globe,
   SlidersHorizontal,
+  Layers,
+  Diamond,
+  Plus,
 } from 'lucide-react';
 import { AudioTrackOption, CreatorProfileData, UserAccount, VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
@@ -55,6 +58,7 @@ import {
   PRO_FILTER_LUTS,
   TEXT_FONT_STYLES,
   SPEED_CURVE_PRESETS,
+  DEFAULT_MASK_CONFIG,
   ProFilterLut,
   TimelineClipItem,
   ClipTransitionType,
@@ -62,6 +66,9 @@ import {
   TextAnimationStyle,
   EditorTextLayer,
   EditorStickerLayer,
+  EditorOverlayLayer,
+  EditorMaskConfig,
+  EditorMaskShape,
   computeTimelineSpans,
   drawProTimelineFrame,
   evaluateSpeedMultiplierAtProgress,
@@ -88,13 +95,25 @@ interface PhotoVideoEditorModalProps {
 
 type EditorToolTab =
   | 'trim'
-  | 'speed'
-  | 'filters'
-  | 'text'
-  | 'transitions'
-  | 'stickers'
+  | 'overlay'
+  | 'mask'
   | 'music'
+  | 'text'
+  | 'stickers'
+  | 'filters'
+  | 'speed'
+  | 'transitions'
   | 'post';
+
+const MASK_SHAPE_OPTIONS: { id: EditorMaskShape; label: string; desc: string }[] = [
+  { id: 'none', label: 'None', desc: 'Full frame' },
+  { id: 'diamond', label: 'Diamond', desc: '4-point gem' },
+  { id: 'circle', label: 'Circle', desc: 'Spotlight' },
+  { id: 'heart', label: 'Heart', desc: 'Soft romance' },
+  { id: 'star', label: 'Star', desc: '5-point star' },
+  { id: 'split', label: 'Split', desc: 'Linear divider' },
+  { id: 'rectangle', label: 'Film Box', desc: 'Rounded frame' },
+];
 
 type ExportResolution = '1080p' | '4k';
 
@@ -218,7 +237,13 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   // Draggable Stickers
   const [stickers, setStickers] = useState<EditorStickerLayer[]>([]);
   const [activeStickerId, setActiveStickerId] = useState<string | null>(null);
-  const [draggingTarget, setDraggingTarget] = useState<'text' | string | null>(null);
+  const [draggingTarget, setDraggingTarget] = useState<'text' | 'mask' | string | null>(null);
+
+  // CapCut Overlay (PIP) Multi-Layers & Shape Masks (Diamond, Circle, Heart, Star, Split, Rectangle)
+  const [overlays, setOverlays] = useState<EditorOverlayLayer[]>([]);
+  const [activeOverlayId, setActiveOverlayId] = useState<string | null>(null);
+  const [mainMask, setMainMask] = useState<EditorMaskConfig>({ ...DEFAULT_MASK_CONFIG });
+  const [maskTarget, setMaskTarget] = useState<'main' | 'overlay'>('main');
 
   // Audio / Music Mixer + CapCut Sound Picker Drawer
   const [isMusicDrawerOpen, setIsMusicDrawerOpen] = useState(false);
@@ -247,6 +272,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
 
   // Refs for DOM, 60fps Canvas Loop & Media Cache
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const overlayFileInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasStageRef = useRef<HTMLDivElement | null>(null);
@@ -257,6 +283,13 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   const objectUrlsRef = useRef<string[]>([]);
   const playheadRef = useRef<number>(0);
   const exportCancelRef = useRef<boolean>(false);
+  const pinchGestureRef = useRef<{
+    overlayId: string;
+    startDist: number;
+    startScale: number;
+    startAngleDeg: number;
+    startRotDeg: number;
+  } | null>(null);
 
   playheadRef.current = playheadTime;
 
@@ -294,6 +327,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       contrastAdj,
       saturateAdj,
       vignetteAdj,
+      mainMask,
+      overlays,
       textLayer,
       stickers,
     }),
@@ -304,6 +339,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       contrastAdj,
       saturateAdj,
       vignetteAdj,
+      mainMask,
+      overlays,
       textLayer,
       stickers,
     ]
@@ -333,6 +370,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       clips.length > 1 ||
       lutChanged ||
       speedOrTrimChanged ||
+      mainMask.shape !== 'none' ||
+      overlays.length > 0 ||
       textLayer.text.trim().length > 0 ||
       stickers.length > 0
     );
@@ -343,6 +382,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     contrastAdj,
     saturateAdj,
     vignetteAdj,
+    mainMask.shape,
+    overlays.length,
     textLayer.text,
     stickers.length,
   ]);
@@ -448,7 +489,99 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     [onShowToast]
   );
 
-  // Load initialFile if opened with one
+  // Add CapCut Overlay (PIP) photo or video layers on top of main video
+  const addOverlayFiles = useCallback(
+    async (fileList: File[]) => {
+      if (fileList.length === 0) return;
+      const newOverlays: EditorOverlayLayer[] = [];
+      const durSpan = Math.max(4, totalDuration || 8);
+
+      for (const file of fileList) {
+        const check = validateSafeMediaFile(file);
+        if (!check.valid) {
+          onShowToast?.(check.reason || 'Only safe .mp4, .webm, .jpg, .png, .webp allowed.');
+          continue;
+        }
+        const url = URL.createObjectURL(file);
+        objectUrlsRef.current.push(url);
+        const sourceId = `ov-src-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const ovId = `ov-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+        if (check.mediaType === 'image') {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = url;
+          await new Promise<void>((resolve) => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+            window.setTimeout(resolve, 1500);
+          });
+          mediaElementCacheRef.current.set(sourceId, img);
+          newOverlays.push({
+            id: ovId,
+            sourceId,
+            name: file.name,
+            mediaType: 'image',
+            url,
+            file,
+            naturalDuration: durSpan,
+            xPercent: 50 + (overlays.length % 2 === 0 ? 14 : -14),
+            yPercent: 32 + (overlays.length % 3) * 10,
+            scale: 0.9,
+            rotationDeg: 0,
+            opacity: 100,
+            startTime: 0,
+            endTime: 999,
+            mask: { ...DEFAULT_MASK_CONFIG },
+          });
+        } else {
+          const vid = document.createElement('video');
+          vid.src = url;
+          vid.crossOrigin = 'anonymous';
+          vid.muted = true;
+          vid.loop = true;
+          vid.playsInline = true;
+          vid.preload = 'auto';
+          await new Promise<void>((resolve) => {
+            vid.onloadedmetadata = () => resolve();
+            vid.onerror = () => resolve();
+            window.setTimeout(resolve, 2500);
+          });
+          const dur = Number.isFinite(vid.duration) && vid.duration > 0.3 ? vid.duration : 6;
+          mediaElementCacheRef.current.set(sourceId, vid);
+          newOverlays.push({
+            id: ovId,
+            sourceId,
+            name: file.name,
+            mediaType: 'video',
+            url,
+            file,
+            naturalDuration: dur,
+            xPercent: 50 + (overlays.length % 2 === 0 ? 14 : -14),
+            yPercent: 32 + (overlays.length % 3) * 10,
+            scale: 0.9,
+            rotationDeg: 0,
+            opacity: 100,
+            startTime: 0,
+            endTime: 999,
+            mask: { ...DEFAULT_MASK_CONFIG },
+          });
+        }
+      }
+
+      if (newOverlays.length > 0) {
+        setOverlays((prev) => [...prev, ...newOverlays]);
+        setActiveOverlayId(newOverlays[newOverlays.length - 1].id);
+        setActiveTool('overlay');
+        onShowToast?.(
+          `Added ${newOverlays.length} PIP Overlay${newOverlays.length > 1 ? 's' : ''} — Drag or pinch to resize!`
+        );
+      }
+    },
+    [onShowToast, overlays.length, totalDuration]
+  );
+
+  // Load initialFile cleanly when opened with one
   useEffect(() => {
     if (isOpen && initialFile && clips.length === 0) {
       void addMediaFiles([initialFile]);
@@ -561,8 +694,47 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
         progress01
       );
 
+      const overlayVideoSrcIds = new Set(
+        overlays.filter((o) => o.mediaType === 'video').map((o) => o.sourceId)
+      );
+
       mediaElementCacheRef.current.forEach((el, srcId) => {
         if (!(el instanceof HTMLVideoElement)) return;
+        const isOverlayVid = overlayVideoSrcIds.has(srcId);
+        if (isOverlayVid) {
+          const matchedOv = overlays.find((o) => o.sourceId === srcId);
+          if (!matchedOv || tSec < matchedOv.startTime || tSec > matchedOv.endTime) {
+            if (!el.paused) el.pause();
+            return;
+          }
+          el.muted = true;
+          const ovElapsed = Math.max(0, tSec - matchedOv.startTime);
+          const ovDur = Number.isFinite(el.duration) && el.duration > 0.2 ? el.duration : 6;
+          const ovTargetT = ovElapsed % ovDur;
+          if (playing) {
+            if (Math.abs(el.currentTime - ovTargetT) > 0.35) {
+              try {
+                el.currentTime = ovTargetT;
+              } catch {
+                // ignore
+              }
+            }
+            if (el.paused) {
+              void el.play().catch(() => {});
+            }
+          } else {
+            if (!el.paused) el.pause();
+            if (Math.abs(el.currentTime - ovTargetT) > 0.05) {
+              try {
+                el.currentTime = ovTargetT;
+              } catch {
+                // ignore
+              }
+            }
+          }
+          return;
+        }
+
         const isCurrentSource = srcId === span.clip.sourceId;
         if (!isCurrentSource) {
           if (!el.paused) el.pause();
@@ -649,6 +821,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   }, [
     isOpen,
     spans,
+    overlays,
     totalDuration,
     isPlaying,
     isExporting,
@@ -831,6 +1004,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     });
     setStickers([]);
     setActiveStickerId(null);
+    setOverlays([]);
+    setActiveOverlayId(null);
+    setMainMask({ ...DEFAULT_MASK_CONFIG });
+    setMaskTarget('main');
     setClips((prev) =>
       prev.map((c) => ({
         ...c,
@@ -869,7 +1046,29 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     setActiveStickerId(newItem.id);
   };
 
-  // Drag-to-Position Text or Stickers directly on 9:16 Video Canvas
+  // Active Overlay & Mask Helpers
+  const activeOverlay = useMemo(
+    () => overlays.find((o) => o.id === activeOverlayId) || overlays[0] || null,
+    [overlays, activeOverlayId]
+  );
+
+  const effectiveMaskTarget: 'main' | 'overlay' =
+    maskTarget === 'overlay' && activeOverlay ? 'overlay' : 'main';
+
+  const currentMaskConfig: EditorMaskConfig =
+    effectiveMaskTarget === 'overlay' && activeOverlay ? activeOverlay.mask : mainMask;
+
+  const updateCurrentMask = (updater: (prev: EditorMaskConfig) => EditorMaskConfig) => {
+    if (effectiveMaskTarget === 'overlay' && activeOverlay) {
+      setOverlays((prev) =>
+        prev.map((o) => (o.id === activeOverlay.id ? { ...o, mask: updater(o.mask) } : o))
+      );
+    } else {
+      setMainMask((prev) => updater(prev));
+    }
+  };
+
+  // Drag-to-Position Overlays, Masks, Text, or Stickers directly on 9:16 Video Canvas
   const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const stage = canvasStageRef.current;
     if (!stage) return;
@@ -877,14 +1076,50 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     const clickX = ((e.clientX - rect.left) / rect.width) * 100;
     const clickY = ((e.clientY - rect.top) / rect.height) * 100;
 
-    // Check if near any sticker first
+    // 1. Check Mask drag when Mask tab active and shape != none
+    if (activeTool === 'mask' && currentMaskConfig.shape !== 'none') {
+      setDraggingTarget('mask');
+      stage.setPointerCapture?.(e.pointerId);
+      const updateMaskCoords = (clientX: number, clientY: number) => {
+        const r = stage.getBoundingClientRect();
+        const nx = Math.max(10, Math.min(90, ((clientX - r.left) / r.width) * 100));
+        const ny = Math.max(10, Math.min(90, ((clientY - r.top) / r.height) * 100));
+        const sx = Math.abs(nx - 50) < 2.2 ? 50 : Number(nx.toFixed(1));
+        const sy = Math.abs(ny - 50) < 2.2 ? 50 : Number(ny.toFixed(1));
+        updateCurrentMask((m) => ({ ...m, xPercent: sx, yPercent: sy }));
+      };
+      const handleMove = (ev: PointerEvent) => updateMaskCoords(ev.clientX, ev.clientY);
+      const handleUp = () => {
+        setDraggingTarget(null);
+        window.removeEventListener('pointermove', handleMove);
+        window.removeEventListener('pointerup', handleUp);
+        window.removeEventListener('pointercancel', handleUp);
+      };
+      window.addEventListener('pointermove', handleMove);
+      window.addEventListener('pointerup', handleUp);
+      window.addEventListener('pointercancel', handleUp);
+      return;
+    }
+
+    // 2. Check Stickers
     let hitStickerId: string | null = null;
-    let bestDist = 18;
+    let bestStickerDist = 18;
     for (const stk of stickers) {
       const dist = Math.hypot(clickX - stk.xPercent, clickY - stk.yPercent);
-      if (dist < bestDist) {
-        bestDist = dist;
+      if (dist < bestStickerDist) {
+        bestStickerDist = dist;
         hitStickerId = stk.id;
+      }
+    }
+
+    // 3. Check Overlay (PIP) layers
+    let hitOverlayId: string | null = null;
+    let bestOverlayDist = 28;
+    for (const ov of overlays) {
+      const dist = Math.hypot(clickX - ov.xPercent, clickY - ov.yPercent);
+      if (dist < bestOverlayDist * Math.max(0.8, ov.scale)) {
+        bestOverlayDist = dist;
+        hitOverlayId = ov.id;
       }
     }
 
@@ -893,12 +1128,17 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       target = hitStickerId;
       setActiveStickerId(hitStickerId);
       setActiveTool('stickers');
-    } else if (textLayer.text.trim()) {
-      const distText = Math.hypot(clickX - textLayer.xPercent, clickY - textLayer.yPercent);
-      if (distText < 28 || activeTool === 'text') {
-        target = 'text';
-        setActiveTool('text');
-      }
+    } else if (textLayer.text.trim() && Math.hypot(clickX - textLayer.xPercent, clickY - textLayer.yPercent) < 24) {
+      target = 'text';
+      setActiveTool('text');
+    } else if (hitOverlayId) {
+      target = hitOverlayId;
+      setActiveOverlayId(hitOverlayId);
+      setActiveTool('overlay');
+    } else if (textLayer.text.trim() && activeTool === 'text') {
+      target = 'text';
+    } else if (activeOverlay && activeTool === 'overlay') {
+      target = activeOverlay.id;
     }
 
     if (!target) return;
@@ -906,15 +1146,21 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     stage.setPointerCapture?.(e.pointerId);
 
     const updateCoords = (clientX: number, clientY: number) => {
+      if (pinchGestureRef.current) return; // Ignore single drag while 2-finger pinch-to-resize is active
       const r = stage.getBoundingClientRect();
       const nx = Math.max(8, Math.min(92, ((clientX - r.left) / r.width) * 100));
       const ny = Math.max(8, Math.min(92, ((clientY - r.top) / r.height) * 100));
-      // Subtle magnetic center snap within 2%
       const snappedX = Math.abs(nx - 50) < 2 ? 50 : Number(nx.toFixed(1));
       const snappedY = Number(ny.toFixed(1));
 
       if (target === 'text') {
         setTextLayer((prev) => ({ ...prev, xPercent: snappedX, yPercent: snappedY }));
+      } else if (target.startsWith('ov-')) {
+        setOverlays((prev) =>
+          prev.map((o) =>
+            o.id === target ? { ...o, xPercent: snappedX, yPercent: snappedY } : o
+          )
+        );
       } else {
         setStickers((prev) =>
           prev.map((s) =>
@@ -937,6 +1183,67 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
     window.addEventListener('pointercancel', handleUp);
+  };
+
+  // Multi-Touch Pinch-to-Resize & Rotate for CapCut Overlay (PIP) Layers and Shape Masks
+  const handleStageTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 2) return;
+    const t1 = e.touches[0];
+    const t2 = e.touches[1];
+    const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+    const angle = (Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX) * 180) / Math.PI;
+
+    if (activeTool === 'mask' && currentMaskConfig.shape !== 'none') {
+      pinchGestureRef.current = {
+        overlayId: '__mask__',
+        startDist: Math.max(10, dist),
+        startScale: currentMaskConfig.sizePercent,
+        startAngleDeg: angle,
+        startRotDeg: currentMaskConfig.rotationDeg,
+      };
+      return;
+    }
+
+    if (activeOverlay) {
+      pinchGestureRef.current = {
+        overlayId: activeOverlay.id,
+        startDist: Math.max(10, dist),
+        startScale: activeOverlay.scale,
+        startAngleDeg: angle,
+        startRotDeg: activeOverlay.rotationDeg,
+      };
+    }
+  };
+
+  const handleStageTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 2 || !pinchGestureRef.current) return;
+    const g = pinchGestureRef.current;
+    const t1 = e.touches[0];
+    const t2 = e.touches[1];
+    const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+    const angle = (Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX) * 180) / Math.PI;
+    const ratio = dist / g.startDist;
+    const deltaAngle = angle - g.startAngleDeg;
+
+    if (g.overlayId === '__mask__') {
+      const nextSize = Math.max(15, Math.min(140, Math.round(g.startScale * ratio)));
+      const nextRot = Math.max(-180, Math.min(180, Math.round(g.startRotDeg + deltaAngle)));
+      updateCurrentMask((m) => ({ ...m, sizePercent: nextSize, rotationDeg: nextRot }));
+    } else {
+      const nextScale = Math.max(0.25, Math.min(2.2, Number((g.startScale * ratio).toFixed(2))));
+      const nextRot = Math.max(-180, Math.min(180, Math.round(g.startRotDeg + deltaAngle)));
+      setOverlays((prev) =>
+        prev.map((o) =>
+          o.id === g.overlayId ? { ...o, scale: nextScale, rotationDeg: nextRot } : o
+        )
+      );
+    }
+  };
+
+  const handleStageTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length < 2) {
+      pinchGestureRef.current = null;
+    }
   };
 
   const openMusicDrawer = (tab: MusicDrawerTab = 'online') => {
@@ -1321,6 +1628,27 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
               }
               if (vid.paused) {
                 void vid.play().catch(() => {});
+              }
+            }
+          }
+
+          // Sync any video PIP overlays during deterministic export
+          for (const ov of overlays) {
+            if (ov.mediaType === 'video' && elapsed >= ov.startTime && elapsed <= ov.endTime) {
+              const ovEl = mediaElementCacheRef.current.get(ov.sourceId);
+              if (ovEl instanceof HTMLVideoElement) {
+                const ovDur = Number.isFinite(ovEl.duration) && ovEl.duration > 0.2 ? ovEl.duration : 6;
+                const ovT = Math.max(0, elapsed - ov.startTime) % ovDur;
+                if (Math.abs(ovEl.currentTime - ovT) > 0.3) {
+                  try {
+                    ovEl.currentTime = ovT;
+                  } catch {
+                    // ignore
+                  }
+                }
+                if (ovEl.paused) {
+                  void ovEl.play().catch(() => {});
+                }
               }
             }
           }
@@ -1711,6 +2039,18 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
         }}
       />
       <input
+        ref={overlayFileInputRef}
+        type="file"
+        multiple
+        accept=".mp4,.webm,.jpg,.jpeg,.png,.webp,video/mp4,video/webm,image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const picked = Array.from(e.target.files || []);
+          e.target.value = '';
+          if (picked.length > 0) void addOverlayFiles(picked);
+        }}
+      />
+      <input
         ref={audioInputRef}
         type="file"
         accept=".mp3,.m4a,.wav,.ogg,audio/mpeg,audio/mp4,audio/wav,audio/ogg"
@@ -1869,6 +2209,9 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
               <div
                 ref={canvasStageRef}
                 onPointerDown={handleStagePointerDown}
+                onTouchStart={handleStageTouchStart}
+                onTouchMove={handleStageTouchMove}
+                onTouchEnd={handleStageTouchEnd}
                 className="relative h-full max-h-full aspect-[9/16] rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl touch-none select-none gpu-accelerated"
               >
                 <canvas
@@ -1878,7 +2221,58 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   className="w-full h-full object-contain block"
                 />
 
-                {/* Interactive Visual Drag Guides for Text & Stickers (non-exported UI guides) */}
+                {/* Interactive Visual Drag Guides for Text, Stickers, Overlays & Masks */}
+                {activeTool === 'overlay' &&
+                  overlays.map((ov) => {
+                    const isAct = ov.id === (activeOverlay?.id || null);
+                    return (
+                      <div
+                        key={`ov-guide-${ov.id}`}
+                        style={{
+                          left: `${ov.xPercent}%`,
+                          top: `${ov.yPercent}%`,
+                          transform: `translate(-50%, -50%) rotate(${ov.rotationDeg}deg)`,
+                          width: `${Math.min(84, Math.max(18, Math.round(46 * ov.scale)))}%`,
+                          height: `${Math.min(58, Math.max(14, Math.round(28 * ov.scale)))}%`,
+                        }}
+                        className={`absolute rounded-xl border-2 border-dashed pointer-events-none transition-colors ${
+                          isAct
+                            ? 'border-cyan-400 bg-cyan-500/10 shadow-[0_0_12px_rgba(34,211,238,0.25)]'
+                            : 'border-white/30'
+                        }`}
+                      >
+                        {isAct && (
+                          <span className="absolute -top-4 left-1/2 -translate-x-1/2 px-1.5 rounded bg-cyan-400 text-black text-[8px] font-black uppercase tracking-wider whitespace-nowrap">
+                            Drag / Pinch PIP
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                {activeTool === 'mask' && currentMaskConfig.shape !== 'none' && (
+                  <div
+                    style={{
+                      left: `${
+                        effectiveMaskTarget === 'overlay' && activeOverlay
+                          ? activeOverlay.xPercent + ((currentMaskConfig.xPercent - 50) * 0.4)
+                          : currentMaskConfig.xPercent
+                      }%`,
+                      top: `${
+                        effectiveMaskTarget === 'overlay' && activeOverlay
+                          ? activeOverlay.yPercent + ((currentMaskConfig.yPercent - 50) * 0.4)
+                          : currentMaskConfig.yPercent
+                      }%`,
+                      transform: `translate(-50%, -50%) rotate(${currentMaskConfig.rotationDeg}deg)`,
+                    }}
+                    className="absolute w-24 h-24 rounded-full border-2 border-dashed border-purple-400/85 bg-purple-500/10 pointer-events-none flex items-center justify-center"
+                  >
+                    <span className="px-1.5 rounded bg-purple-500 text-white text-[8px] font-black uppercase tracking-wider whitespace-nowrap">
+                      {currentMaskConfig.shape}
+                    </span>
+                  </div>
+                )}
+
                 {activeTool === 'text' && textLayer.text.trim() && (
                   <div
                     style={{ left: `${textLayer.xPercent}%`, top: `${textLayer.yPercent}%` }}
@@ -1906,7 +2300,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                     );
                   })}
 
-                {/* Center Snapping Crosshair Guide while dragging text or sticker */}
+                {/* Center Snapping Crosshair Guide while dragging */}
                 {draggingTarget && (
                   <>
                     <div className="absolute inset-y-0 left-1/2 w-px bg-cyan-400/55 pointer-events-none" />
@@ -1914,18 +2308,27 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   </>
                 )}
 
-                {/* Subtle Drag Affordance when editing Text/Stickers */}
-                {(activeTool === 'text' || activeTool === 'stickers') && (
+                {/* Subtle Drag Affordance */}
+                {(activeTool === 'text' ||
+                  activeTool === 'stickers' ||
+                  activeTool === 'overlay' ||
+                  activeTool === 'mask') && (
                   <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-black/75 border border-white/15 text-[10px] font-bold text-cyan-300 flex items-center gap-1 pointer-events-none">
                     <Move className="w-3 h-3" />
-                    <span>Drag on canvas</span>
+                    <span>
+                      {activeTool === 'overlay'
+                        ? 'Drag & pinch PIP'
+                        : activeTool === 'mask'
+                        ? 'Drag / pinch mask'
+                        : 'Drag on canvas'}
+                    </span>
                   </div>
                 )}
               </div>
             </div>
 
             {/* Right / Lower Editing Inspector Panel */}
-            <aside className="w-full lg:w-[400px] xl:w-[430px] max-h-[40vh] lg:max-h-none bg-[#0d0d13] border-t lg:border-t-0 lg:border-l border-neutral-800/90 flex flex-col shrink-0 overflow-hidden">
+            <aside className="w-full lg:w-[400px] xl:w-[430px] max-h-[42vh] lg:max-h-none bg-[#0d0d13] border-t lg:border-t-0 lg:border-l border-neutral-800/90 flex flex-col shrink-0 overflow-hidden">
               {/* Compact Active Tool Inspector Header */}
               <div className="shrink-0 px-3.5 py-2 border-b border-neutral-800/90 flex items-center justify-between gap-2 bg-[#111119]">
                 <div className="flex items-center gap-2 min-w-0">
@@ -1933,6 +2336,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   <span className="text-[11px] font-black uppercase tracking-wider text-neutral-200 truncate">
                     {activeTool === 'trim'
                       ? 'Edit & Split'
+                      : activeTool === 'overlay'
+                      ? 'Overlay (PIP Layers)'
+                      : activeTool === 'mask'
+                      ? 'CapCut Shape Masks'
                       : activeTool === 'music'
                       ? 'Audio & Sound Controls'
                       : activeTool === 'text'
@@ -2978,6 +3385,387 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                     </div>
                   </div>
                 )}
+                {/* 9. OVERLAY (PIP MULTI-LAYER STUDIO) */}
+                {activeTool === 'overlay' && (
+                  <div className="space-y-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs font-black text-white">Overlay (PIP Layers)</h4>
+                        <p className="text-[10px] text-neutral-400">
+                          Add multiple photos/videos · Drag &amp; pinch on stage
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => overlayFileInputRef.current?.click()}
+                        className="min-h-[38px] px-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:brightness-110 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Overlay</span>
+                      </button>
+                    </div>
+
+                    {overlays.length === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => overlayFileInputRef.current?.click()}
+                        className="w-full p-5 rounded-2xl border-2 border-dashed border-neutral-700 hover:border-cyan-500 bg-neutral-900/60 text-center space-y-2 cursor-pointer transition-colors"
+                      >
+                        <Layers className="w-6 h-6 text-cyan-400 mx-auto" />
+                        <p className="text-xs font-black text-white">
+                          Tap to add Photo or Video Overlay (PIP)
+                        </p>
+                        <p className="text-[10px] text-neutral-400">
+                          Layer reactions, logos, B-roll clips, or cutouts right above your reel
+                        </p>
+                      </button>
+                    ) : (
+                      <>
+                        {/* Overlay Layer Strip */}
+                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                          {overlays.map((ov, idx) => {
+                            const selected = activeOverlay?.id === ov.id;
+                            return (
+                              <button
+                                key={ov.id}
+                                type="button"
+                                onClick={() => setActiveOverlayId(ov.id)}
+                                className={`min-h-[36px] px-2.5 py-1 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 shrink-0 cursor-pointer ${
+                                  selected
+                                    ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
+                                    : 'bg-neutral-900 border-neutral-800 text-neutral-300 hover:border-neutral-600'
+                                }`}
+                              >
+                                {ov.mediaType === 'video' ? (
+                                  <VideoIcon className="w-3 h-3 text-pink-400" />
+                                ) : (
+                                  <ImageIcon className="w-3 h-3 text-cyan-400" />
+                                )}
+                                <span className="truncate max-w-[85px]">
+                                  PIP #{idx + 1}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {activeOverlay && (
+                          <div className="bg-neutral-900/80 border border-neutral-800 rounded-2xl p-3.5 space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-bold text-white truncate max-w-[160px]">
+                                {activeOverlay.name}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setMaskTarget('overlay');
+                                    activateEditorTool('mask');
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-purple-500/20 border border-purple-400/50 text-purple-200 text-[10px] font-black flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Diamond className="w-3 h-3" />
+                                  <span>Mask PIP</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOverlays((prev) =>
+                                      prev.filter((o) => o.id !== activeOverlay.id)
+                                    );
+                                    setActiveOverlayId(null);
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-rose-500/15 text-rose-300 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-[11px]">
+                                <span className="text-neutral-300 font-semibold">Opacity</span>
+                                <span className="text-cyan-400 font-bold tabular-nums">
+                                  {activeOverlay.opacity}%
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min={10}
+                                max={100}
+                                value={activeOverlay.opacity}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value);
+                                  setOverlays((prev) =>
+                                    prev.map((o) =>
+                                      o.id === activeOverlay.id ? { ...o, opacity: val } : o
+                                    )
+                                  );
+                                }}
+                                className="w-full accent-cyan-400 cursor-pointer"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-[11px]">
+                                <span className="text-neutral-300 font-semibold">
+                                  Resize (Scale / Pinch)
+                                </span>
+                                <span className="text-pink-400 font-bold tabular-nums">
+                                  {Math.round(activeOverlay.scale * 100)}%
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min={25}
+                                max={220}
+                                value={Math.round(activeOverlay.scale * 100)}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value) / 100;
+                                  setOverlays((prev) =>
+                                    prev.map((o) =>
+                                      o.id === activeOverlay.id ? { ...o, scale: val } : o
+                                    )
+                                  );
+                                }}
+                                className="w-full accent-pink-500 cursor-pointer"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-[11px]">
+                                <span className="text-neutral-300 font-semibold">Rotation</span>
+                                <span className="text-amber-400 font-bold tabular-nums">
+                                  {activeOverlay.rotationDeg}°
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min={-180}
+                                max={180}
+                                value={activeOverlay.rotationDeg}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value);
+                                  setOverlays((prev) =>
+                                    prev.map((o) =>
+                                      o.id === activeOverlay.id
+                                        ? { ...o, rotationDeg: val }
+                                        : o
+                                    )
+                                  );
+                                }}
+                                className="w-full accent-amber-400 cursor-pointer"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* 10. CAPCUT SHAPE MASKS (DIAMOND, CIRCLE, HEART, STAR, SPLIT, RECTANGLE) */}
+                {activeTool === 'mask' && (
+                  <div className="space-y-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs font-black text-white">Shape Masks &amp; Feather</h4>
+                        <p className="text-[10px] text-neutral-400">
+                          Diamond, Circle, Heart, Star, Split &amp; Feather Edges
+                        </p>
+                      </div>
+                      {currentMaskConfig.shape !== 'none' && (
+                        <button
+                          type="button"
+                          onClick={() => updateCurrentMask(() => ({ ...DEFAULT_MASK_CONFIG }))}
+                          className="px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-700 text-[10px] font-bold text-rose-300 cursor-pointer"
+                        >
+                          Clear Mask
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Apply Target Toggle: Main Video vs Active Overlay Layer */}
+                    {overlays.length > 0 && (
+                      <div className="grid grid-cols-2 gap-1.5 bg-neutral-900 p-1 rounded-xl border border-neutral-800">
+                        <button
+                          type="button"
+                          onClick={() => setMaskTarget('main')}
+                          className={`min-h-[34px] rounded-lg text-[11px] font-bold cursor-pointer ${
+                            effectiveMaskTarget === 'main'
+                              ? 'bg-purple-600 text-white'
+                              : 'text-neutral-400 hover:text-white'
+                          }`}
+                        >
+                          Main Video
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMaskTarget('overlay')}
+                          className={`min-h-[34px] rounded-lg text-[11px] font-bold cursor-pointer ${
+                            effectiveMaskTarget === 'overlay'
+                              ? 'bg-cyan-500 text-black font-black'
+                              : 'text-neutral-400 hover:text-white'
+                          }`}
+                        >
+                          Active Overlay PIP
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Mask Shape Grid */}
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {MASK_SHAPE_OPTIONS.map((opt) => {
+                        const selected = currentMaskConfig.shape === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() =>
+                              updateCurrentMask((prev) => ({
+                                ...prev,
+                                shape: opt.id,
+                              }))
+                            }
+                            className={`p-2 rounded-xl border flex flex-col items-center justify-center gap-1 cursor-pointer transition-all ${
+                              selected
+                                ? 'bg-purple-600/25 border-purple-400 text-white shadow-md shadow-purple-500/20'
+                                : 'bg-neutral-900 border-neutral-800 text-neutral-300 hover:border-neutral-700'
+                            }`}
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="w-5 h-5"
+                              fill={selected ? 'currentColor' : 'none'}
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                            >
+                              {opt.id === 'none' && (
+                                <path d="M4 4l16 16M19 5H5a1 1 0 00-1 1v12a1 1 0 001 1h14a1 1 0 001-1V6a1 1 0 00-1-1z" />
+                              )}
+                              {opt.id === 'diamond' && <polygon points="12,2 22,12 12,22 2,12" />}
+                              {opt.id === 'circle' && <circle cx="12" cy="12" r="9" />}
+                              {opt.id === 'heart' && (
+                                <path d="M12 20.5s-7.5-4.8-9-9.4C1.8 7.5 4.4 4.5 7.6 4.5c2 0 3.6 1.1 4.4 2.5.8-1.4 2.4-2.5 4.4-2.5 3.2 0 5.8 3 4.6 6.6-1.5 4.6-9 9.4-9 9.4z" />
+                              )}
+                              {opt.id === 'star' && (
+                                <polygon points="12,2.5 14.9,8.5 21.5,9.4 16.7,14 17.9,20.5 12,17.4 6.1,20.5 7.3,14 2.5,9.4 9.1,8.5" />
+                              )}
+                              {opt.id === 'split' && (
+                                <>
+                                  <rect x="3" y="4" width="9" height="16" />
+                                  <line x1="12" y1="2" x2="12" y2="22" />
+                                </>
+                              )}
+                              {opt.id === 'rectangle' && (
+                                <rect x="3" y="5" width="18" height="14" rx="3" />
+                              )}
+                            </svg>
+                            <span className="text-[10px] font-black">{opt.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {currentMaskConfig.shape !== 'none' && (
+                      <div className="bg-neutral-900/80 border border-neutral-800 rounded-2xl p-3.5 space-y-3">
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-neutral-300 font-semibold">
+                              Feather / Blur Edges
+                            </span>
+                            <span className="text-purple-300 font-bold tabular-nums">
+                              {currentMaskConfig.featherPx}px
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={40}
+                            value={currentMaskConfig.featherPx}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              updateCurrentMask((m) => ({ ...m, featherPx: val }));
+                            }}
+                            className="w-full accent-purple-500 cursor-pointer"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-neutral-300 font-semibold">Mask Size</span>
+                            <span className="text-cyan-300 font-bold tabular-nums">
+                              {currentMaskConfig.sizePercent}%
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={15}
+                            max={140}
+                            value={currentMaskConfig.sizePercent}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              updateCurrentMask((m) => ({ ...m, sizePercent: val }));
+                            }}
+                            className="w-full accent-cyan-400 cursor-pointer"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-neutral-300 font-semibold">
+                              Rotate Shape
+                            </span>
+                            <span className="text-amber-300 font-bold tabular-nums">
+                              {currentMaskConfig.rotationDeg}°
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={-180}
+                            max={180}
+                            value={currentMaskConfig.rotationDeg}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              updateCurrentMask((m) => ({ ...m, rotationDeg: val }));
+                            }}
+                            className="w-full accent-amber-400 cursor-pointer"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 border-t border-neutral-800">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateCurrentMask((m) => ({ ...m, invert: !m.invert }))
+                            }
+                            className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold cursor-pointer ${
+                              currentMaskConfig.invert
+                                ? 'bg-pink-600/25 border-pink-400 text-pink-200'
+                                : 'bg-neutral-950 border-neutral-800 text-neutral-300'
+                            }`}
+                          >
+                            {currentMaskConfig.invert ? 'Inverted: ON' : 'Invert Cutout'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateCurrentMask((m) => ({
+                                ...m,
+                                xPercent: 50,
+                                yPercent: 50,
+                                rotationDeg: 0,
+                              }))
+                            }
+                            className="px-3 py-1.5 rounded-xl bg-neutral-950 border border-neutral-800 text-[11px] font-bold text-neutral-300 hover:text-white cursor-pointer"
+                          >
+                            Center Shape
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </aside>
           </div>
@@ -2997,6 +3785,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             audioFadeOut={audioFadeOut}
             textLayer={textLayer}
             stickers={stickers}
+            overlays={overlays}
+            activeMaskShape={currentMaskConfig.shape}
             onTogglePlay={handleTogglePlay}
             onScrub={handleScrub}
             onSelectClip={(id) => setSelectedClipId(id)}
@@ -3026,6 +3816,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             {(
               [
                 { id: 'trim', label: 'Edit/Split', icon: Scissors },
+                { id: 'overlay', label: 'Overlay (PIP)', icon: Layers },
+                { id: 'mask', label: 'Mask', icon: Diamond },
                 { id: 'music', label: 'Audio/Sounds', icon: Music },
                 { id: 'text', label: 'Text/Captions', icon: Type },
                 { id: 'stickers', label: 'Stickers', icon: Smile },

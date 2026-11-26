@@ -24,6 +24,8 @@ import {
   Sliders,
   Zap,
   ArrowLeftRight,
+  Sparkles,
+  MessageCircle,
 } from 'lucide-react';
 import { useRamSaverMode } from '../lib/ramSaverMode';
 import { UserAccount, VideoPost, CreatorProfileData, AudioTrackOption } from '../types';
@@ -55,6 +57,7 @@ interface TopBarProps {
   onOpenDownloads?: () => void;
   onOpenProCamera?: () => void;
   onOpenEditor?: () => void;
+  onOpenAIStudio?: () => void;
   onOpenAdmin: () => void;
   onOpenProfile?: () => void;
   onOpenCreatorSearch?: () => void;
@@ -83,6 +86,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
   onOpenDownloads,
   onOpenProCamera,
   onOpenEditor,
+  onOpenAIStudio,
   onOpenAdmin,
   onOpenProfile,
   onOpenCreatorSearch,
@@ -714,19 +718,33 @@ const TopBarComponent: React.FC<TopBarProps> = ({
           </button>
         )}
 
-        {/* Direct Chat / Live Snaps Inbox Button */}
+        {/* AI Image & Video Studio Button */}
+        {onOpenAIStudio && (
+          <button
+            type="button"
+            onClick={onOpenAIStudio}
+            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-gradient-to-r from-cyan-500/20 via-pink-500/20 to-amber-500/20 hover:from-cyan-500/30 hover:to-amber-500/30 text-white border border-cyan-400/45 text-xs font-bold transition-all active:scale-95 shadow-sm cursor-pointer"
+            title="AI Image & Video Generator Studio"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+            <span className="hidden sm:inline">AI Studio</span>
+          </button>
+        )}
+
+        {/* Messages / Direct Chat Inbox Button */}
         {onOpenDirectSnaps && (
           <button
             type="button"
             onClick={onOpenDirectSnaps}
-            className="relative p-2 rounded-xl border bg-neutral-900 hover:bg-neutral-800 border-amber-500/40 text-amber-300 hover:text-amber-200 transition-all active:scale-95 shadow-sm cursor-pointer"
-            title="Direct Chat & Live Snaps Inbox"
-            aria-label="Direct Chat & Live Snaps"
+            className="relative flex items-center gap-1.5 px-2.5 py-2 rounded-xl border bg-neutral-900 hover:bg-neutral-800 border-pink-500/40 text-pink-200 hover:text-white transition-all active:scale-95 shadow-sm cursor-pointer shrink-0"
+            title="Messages / Inbox"
+            aria-label="Messages"
           >
-            <Send className="w-4 h-4" />
+            <MessageCircle className="w-4 h-4 text-pink-400" />
+            <span className="hidden xl:inline text-xs font-bold">Messages</span>
             {unreadDirectSnapsCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-amber-400 text-black text-[9px] font-black flex items-center justify-center">
-                {unreadDirectSnapsCount > 9 ? '9+' : unreadDirectSnapsCount}
+              <span className="absolute -top-1.5 -right-1.5 min-w-[17px] h-4 px-1 rounded-full bg-pink-500 text-white text-[9px] font-black flex items-center justify-center tabular-nums shadow-sm">
+                {unreadDirectSnapsCount > 99 ? '99+' : unreadDirectSnapsCount}
               </span>
             )}
           </button>

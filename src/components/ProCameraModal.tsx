@@ -27,7 +27,6 @@ import {
   Lock,
   Aperture,
   Gauge,
-  Crosshair,
   Layers,
 } from 'lucide-react';
 import {
@@ -341,13 +340,14 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const [nightModeLevel, setNightModeLevel] = useState<number>(0); // 0 = off, 1 = 1.5x, 2 = 3.0x
   const [isFlashOn, setIsFlashOn] = useState<boolean>(false);
   const [showGrid, setShowGrid] = useState<boolean>(false);
-  const [showLevelHorizon, setShowLevelHorizon] = useState<boolean>(true);
-  const [horizonTiltDeg, setHorizonTiltDeg] = useState<number>(0);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isSimulatedFeed, setIsSimulatedFeed] = useState<boolean>(false);
   const [cameraBlockedInWebView, setCameraBlockedInWebView] = useState<boolean>(false);
   const [isCameraReady, setIsCameraReady] = useState<boolean>(false);
+  const hasInitializedOnceRef = useRef<boolean>(false);
+  const cameraDeviceCacheRef = useRef<{ user?: string; environment?: string }>({});
+  const audioTrackRef = useRef<MediaStreamTrack | null>(null);
 
   // 120fps Burst Shot State
   const [isBurstCapturing, setIsBurstCapturing] = useState<boolean>(false);
@@ -442,21 +442,6 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     setBestBurstFrameId(null);
   }, []);
 
-  // Live DeviceOrientation listener for Electronic Level Horizon Line
-  useEffect(() => {
-    if (!isOpen || !showLevelHorizon || recordedClipUrl) return;
-    const handleOrientation = (e: DeviceOrientationEvent) => {
-      if (typeof e.gamma === 'number' && Number.isFinite(e.gamma)) {
-        const clamped = Math.max(-45, Math.min(45, e.gamma));
-        setHorizonTiltDeg((prev) => Number((prev * 0.55 + clamped * 0.45).toFixed(1)));
-      }
-    };
-    window.addEventListener('deviceorientation', handleOrientation, true);
-    return () => {
-      window.removeEventListener('deviceorientation', handleOrientation, true);
-    };
-  }, [isOpen, showLevelHorizon, recordedClipUrl]);
-
   // Compute combined CSS filter string (Sony S-Cinetone / 8K Action LUT + Creative Filter + Night Mode)
   const buildCompositeFilter = useCallback(
     (filterDef: CameraFilterDef, night: number, presetId: SonyProPresetId = sonyPreset): string => {
@@ -500,7 +485,21 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     e.target.value = '';
   };
 
-  // Acquire highest available HD/4K 60fps camera stream with graceful fallback
+  // Release cached audio track on full unmount
+  useEffect(() => {
+    return () => {
+      if (audioTrackRef.current) {
+        try {
+          audioTrackRef.current.stop();
+        } catch {
+          // ignore
+        }
+        audioTrackRef.current = null;
+      }
+    };
+  }, []);
+
+  // Fast camera acquisition + instant front/back lens switching (caches deviceIds & reuses mic track)
   useEffect(() => {
     if (!isOpen) {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -514,10 +513,19 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaStreamRef.current.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
       }
+      if (audioTrackRef.current) {
+        try {
+          audioTrackRef.current.stop();
+        } catch {
+          // ignore
+        }
+        audioTrackRef.current = null;
+      }
       if (animFrameRef.current !== null) {
         cancelAnimationFrame(animFrameRef.current);
         animFrameRef.current = null;
       }
+      hasInitializedOnceRef.current = false;
       setIsRecording(false);
       setRecordingSeconds(0);
       setRecordedClipUrl((prevUrl) => {
@@ -540,7 +548,47 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
 
     let isMounted = true;
-    setIsCameraReady(false);
+    if (!hasInitializedOnceRef.current) {
+      setIsCameraReady(false);
+    }
+
+    async function cacheAvailableCameras(activeTrack?: MediaStreamTrack) {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      try {
+        if (activeTrack) {
+          const settings = activeTrack.getSettings();
+          if (settings.deviceId) {
+            cameraDeviceCacheRef.current[facingMode] = settings.deviceId;
+          }
+        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter((d) => d.kind === 'videoinput' && d.deviceId);
+        for (const dev of videoInputs) {
+          const label = (dev.label || '').toLowerCase();
+          if (!cameraDeviceCacheRef.current.user && /(front|user|selfie|facetime)/.test(label)) {
+            cameraDeviceCacheRef.current.user = dev.deviceId;
+          } else if (
+            !cameraDeviceCacheRef.current.environment &&
+            /(back|rear|environment|world|main)/.test(label)
+          ) {
+            cameraDeviceCacheRef.current.environment = dev.deviceId;
+          }
+        }
+        // Fallback: if 2+ cameras exist and one side is still unmapped, assign the other distinct ID
+        if (videoInputs.length >= 2) {
+          const activeId = activeTrack?.getSettings().deviceId;
+          const otherDev = videoInputs.find((d) => d.deviceId !== activeId);
+          if (otherDev) {
+            const oppositeSide = facingMode === 'user' ? 'environment' : 'user';
+            if (!cameraDeviceCacheRef.current[oppositeSide]) {
+              cameraDeviceCacheRef.current[oppositeSide] = otherDev.deviceId;
+            }
+          }
+        }
+      } catch {
+        // ignore enumerateDevices permission edge cases
+      }
+    }
 
     async function acquireBestCameraStream(): Promise<MediaStream> {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -554,120 +602,88 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       };
 
       const want120Fps = resFps === '1080p/120FPS' || sonyPreset === 'sony_a9_120';
-      const targetConstraints: MediaStreamConstraints[] =
+      const wantW =
         resFps === '8K/60FPS' || resFps === '4K UHD/60FPS'
-          ? [
-              ...(resFps === '8K/60FPS'
-                ? [
-                    {
-                      video: {
-                        facingMode,
-                        width: { ideal: 7680 },
-                        height: { ideal: 4320 },
-                        frameRate: { ideal: want120Fps ? 120 : 60, min: 24 },
-                      },
-                      audio: audioHighQuality,
-                    },
-                  ]
-                : []),
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 3840 },
-                  height: { ideal: 2160 },
-                  frameRate: { ideal: want120Fps ? 120 : 60, min: 24 },
-                },
-                audio: audioHighQuality,
-              },
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 1920 },
-                  height: { ideal: 1080 },
-                  frameRate: { ideal: want120Fps ? 120 : 60, min: 24 },
-                },
-                audio: audioHighQuality,
-              },
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 },
-                  frameRate: { ideal: want120Fps ? 120 : 60, min: 24 },
-                },
-                audio: audioHighQuality,
-              },
-              { video: { facingMode, frameRate: { ideal: 60 } }, audio: true },
-              { video: { facingMode }, audio: false },
-            ]
+          ? 3840
           : resFps === '1080p/120FPS'
-          ? [
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 3840 },
-                  height: { ideal: 2160 },
-                  frameRate: { ideal: 120, min: 30 },
-                },
-                audio: audioHighQuality,
-              },
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 1920 },
-                  height: { ideal: 1080 },
-                  frameRate: { ideal: 120, min: 30 },
-                },
-                audio: audioHighQuality,
-              },
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 },
-                  frameRate: { ideal: 120, min: 24 },
-                },
-                audio: audioHighQuality,
-              },
-              { video: { facingMode, frameRate: { ideal: 60 } }, audio: true },
-              { video: { facingMode }, audio: false },
-            ]
-          : [
-              {
-                video: {
-                  facingMode,
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 },
-                  frameRate: { ideal: 60, min: 24 },
-                },
-                audio: audioHighQuality,
-              },
-              { video: { facingMode, frameRate: { ideal: 60 } }, audio: true },
-              { video: { facingMode }, audio: false },
-            ];
+          ? 1920
+          : 1280;
+      const wantH =
+        resFps === '8K/60FPS' || resFps === '4K UHD/60FPS'
+          ? 2160
+          : resFps === '1080p/120FPS'
+          ? 1080
+          : 720;
+      const targetFps = want120Fps ? 120 : 60;
 
-      let lastErr: unknown = null;
-      for (const constraints of targetConstraints) {
+      const hasLiveAudio = Boolean(audioTrackRef.current && audioTrackRef.current.readyState === 'live');
+      const cachedDeviceId = cameraDeviceCacheRef.current[facingMode];
+
+      const primaryVideo: MediaTrackConstraints = {
+        ...(cachedDeviceId
+          ? { deviceId: { exact: cachedDeviceId } }
+          : { facingMode: { ideal: facingMode } }),
+        width: { ideal: wantW, max: 3840 },
+        height: { ideal: wantH, max: 2160 },
+        frameRate: { ideal: targetFps },
+      };
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: primaryVideo,
+          audio: hasLiveAudio ? false : audioHighQuality,
+        });
+      } catch {
+        // Clear potentially stale cached deviceId and do one fast fallback without audio lock
+        if (cachedDeviceId) {
+          delete cameraDeviceCacheRef.current[facingMode];
+        }
         try {
-          return await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (err) {
-          lastErr = err;
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: facingMode },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              frameRate: { ideal: 60 },
+            },
+            audio: false,
+          });
+        } catch {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
         }
       }
-      throw lastErr;
+
+      const freshAudio = stream.getAudioTracks()[0];
+      if (freshAudio && freshAudio.readyState === 'live') {
+        audioTrackRef.current = freshAudio;
+      } else if (audioTrackRef.current && audioTrackRef.current.readyState === 'live') {
+        stream.addTrack(audioTrackRef.current);
+      }
+
+      return stream;
     }
 
     async function setupCamera() {
-      // Stop existing tracks before switching front/back or resolution
+      // Stop only previous VIDEO tracks before opening new lens; keep live audio track intact for zero-lag flips
       if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current.getVideoTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch {
+            // ignore
+          }
+        });
         mediaStreamRef.current = null;
       }
 
       try {
         const stream = await acquireBestCameraStream();
         if (!isMounted) {
-          stream.getTracks().forEach((t) => t.stop());
+          stream.getVideoTracks().forEach((t) => t.stop());
           return;
         }
 
@@ -680,12 +696,15 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           const fps = Math.round(settings.frameRate || 60);
           setIsHighFpsActive(fps >= 45);
           setStreamInfoLabel(`${w}x${h} · ${fps}fps`);
+          void cacheAvailableCameras(videoTrack);
         }
 
         if (videoPreviewRef.current) {
           videoPreviewRef.current.srcObject = stream;
           videoPreviewRef.current.play().catch(() => {});
         }
+        setIsCameraReady(true);
+        hasInitializedOnceRef.current = true;
         setIsSimulatedFeed(false);
         setCameraBlockedInWebView(false);
       } catch (err) {
@@ -698,12 +717,19 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       }
     }
 
-    setupCamera();
+    void setupCamera();
 
     return () => {
       isMounted = false;
       if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        // Only stop video tracks during lens/FPS switches; mic audio is released on !isOpen or unmount
+        mediaStreamRef.current.getVideoTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch {
+            // ignore
+          }
+        });
         mediaStreamRef.current = null;
       }
     };
@@ -1218,23 +1244,6 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     onShowToast(`${cfg.name} · ${cfg.hudTag}`);
   };
 
-  // Toggle Electronic Level Horizon (requests iOS DeviceOrientation permission cleanly on tap if needed)
-  const handleToggleLevelHorizon = async () => {
-    const devOrientation = typeof window !== 'undefined'
-      ? (window.DeviceOrientationEvent as unknown as {
-          requestPermission?: () => Promise<'granted' | 'denied'>;
-        } | undefined)
-      : undefined;
-
-    if (!showLevelHorizon && devOrientation && typeof devOrientation.requestPermission === 'function') {
-      try {
-        await devOrientation.requestPermission();
-      } catch {
-        // fallback still shows horizon level reticle cleanly
-      }
-    }
-    setShowLevelHorizon((prev) => !prev);
-  };
 
   // Switch Camera (Front / Back)
   const handleFlipCamera = () => {
@@ -1697,7 +1706,6 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const formattedTimer = `00:${recordingSeconds < 10 ? `0${recordingSeconds}` : recordingSeconds}`;
   const activeCanvasFallbackFilter = buildCompositeFilter(selectedFilter, nightModeLevel, sonyPreset);
   const liveIsoValue = nightModeLevel === 0 ? activeSonyConfig.baseIso : nightModeLevel === 1 ? 1600 : 6400;
-  const isHorizonLevel = Math.abs(horizonTiltDeg) <= 1.5;
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col justify-between overflow-hidden select-none [transform:translateZ(0)]">
@@ -1774,20 +1782,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
             </button>
           </div>
 
-          {/* Right: Horizon Level, Flash & Grid */}
+          {/* Right: Flash & Grid */}
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => void handleToggleLevelHorizon()}
-              className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
-                showLevelHorizon
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/60'
-                  : 'bg-neutral-900/90 text-neutral-400 border-white/15'
-              }`}
-              title="Toggle Electronic Level Horizon"
-            >
-              <Crosshair className="w-4 h-4" />
-            </button>
 
             <button
               type="button"
@@ -2378,7 +2374,10 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   autoPlay
                   playsInline
                   muted
-                  onLoadedData={() => setIsCameraReady(true)}
+                  onLoadedData={() => {
+                    hasInitializedOnceRef.current = true;
+                    setIsCameraReady(true);
+                  }}
                   style={{
                     filter: activeCanvasFallbackFilter,
                     transform: `translateZ(0) scale(${zoomLevel}) scaleX(${facingMode === 'user' ? -1 : 1})`,
@@ -2387,7 +2386,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   }}
                   className="w-full h-full object-cover"
                 />
-                {!isCameraReady && (
+                {!isCameraReady && !hasInitializedOnceRef.current && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/75 pointer-events-none">
                     <div className="px-4 py-2 rounded-full bg-neutral-900/90 border border-cyan-500/45 text-xs font-bold text-neutral-200 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
@@ -2444,35 +2443,6 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               </div>
             )}
 
-            {/* Electronic Level Horizon Line Reticle */}
-            {showLevelHorizon && !isSimulatedFeed && (
-              <div className="absolute inset-0 pointer-events-none z-10 flex items-center justify-center">
-                <div className="relative w-52 h-12 flex items-center justify-center">
-                  {/* Fixed reference wings */}
-                  <div className="absolute left-0 w-7 h-[1.5px] bg-white/50" />
-                  <div className="absolute right-0 w-7 h-[1.5px] bg-white/50" />
-                  {/* Dynamic Tilting Level Horizon Bar */}
-                  <div
-                    style={{ transform: `rotate(${horizonTiltDeg}deg) translateZ(0)` }}
-                    className={`w-32 h-[2px] rounded-full transition-colors duration-150 ${
-                      isHorizonLevel
-                        ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
-                        : 'bg-amber-300/90'
-                    }`}
-                  />
-                  <span
-                    className={`absolute -bottom-3 px-1.5 py-0.5 rounded bg-black/75 text-[9px] font-black tabular-nums tracking-wider border ${
-                      isHorizonLevel
-                        ? 'text-emerald-300 border-emerald-400/50'
-                        : 'text-amber-300 border-amber-400/40'
-                    }`}
-                  >
-                    {isHorizonLevel ? 'LEVEL ' : ''}
-                    {horizonTiltDeg > 0 ? `+${horizonTiltDeg.toFixed(1)}` : horizonTiltDeg.toFixed(1)}°
-                  </span>
-                </div>
-              </div>
-            )}
 
             {/* 120fps Burst Capturing Overlay */}
             {isBurstCapturing && (

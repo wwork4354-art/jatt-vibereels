@@ -26,6 +26,7 @@ import {
   Zap,
   Menu,
   ArrowLeftRight,
+  MessageCircle,
 } from 'lucide-react';
 import { useRamSaverMode } from '../lib/ramSaverMode';
 import {
@@ -57,6 +58,7 @@ interface MobileNavigationProps {
   onOpenLive: () => void;
   onOpenProCamera: () => void;
   onOpenEditor?: () => void;
+  onOpenAIStudio?: () => void;
   onQuickVideoUpload?: (file: File, source?: 'live' | 'gallery') => void;
   savedCount: number;
   unreadActivityCount?: number;
@@ -88,6 +90,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
   onOpenLive,
   onOpenProCamera,
   onOpenEditor,
+  onOpenAIStudio,
   onQuickVideoUpload,
   savedCount,
   unreadActivityCount = 0,
@@ -238,14 +241,14 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                 <button
                   type="button"
                   onClick={onOpenDirectSnaps}
-                  className="relative p-1.5 rounded-lg border shrink-0 bg-neutral-900 border-amber-500/40 text-amber-300 cursor-pointer"
-                  title="Direct Chat & Live Snaps Inbox"
-                  aria-label="Direct Chat & Live Snaps"
+                  className="relative p-1.5 rounded-lg border shrink-0 bg-neutral-900 border-pink-500/40 text-pink-300 hover:text-white cursor-pointer"
+                  title="Messages / Inbox"
+                  aria-label="Messages"
                 >
-                  <Send className="w-3.5 h-3.5" />
+                  <MessageCircle className="w-3.5 h-3.5" />
                   {unreadDirectSnapsCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-amber-400 text-black text-[8px] font-black flex items-center justify-center">
-                      {unreadDirectSnapsCount > 9 ? '9+' : unreadDirectSnapsCount}
+                    <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center tabular-nums">
+                      {unreadDirectSnapsCount > 99 ? '99+' : unreadDirectSnapsCount}
                     </span>
                   )}
                 </button>
@@ -403,6 +406,18 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
             <Film className="w-2.5 h-2.5 text-cyan-400" />
             <span>MOVIX</span>
           </button>
+
+          {onOpenAIStudio && (
+            <button
+              type="button"
+              onClick={onOpenAIStudio}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 transition-all cursor-pointer bg-gradient-to-r from-cyan-500/20 to-pink-500/20 border border-cyan-400/45 text-cyan-200 hover:text-white"
+              title="Open AI Image & Video Studio"
+            >
+              <Sparkles className="w-2.5 h-2.5 text-cyan-300" />
+              <span>AI</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -976,12 +991,41 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                         Edit
                       </span>
                       <p className="text-xs text-neutral-400 mt-0.5">
-                        Trim video, apply filters, text, stickers &amp; music
+                        Trim video, apply filters, overlays, masks &amp; music
                       </p>
                     </div>
                   </div>
                   <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/35">
                     Studio
+                  </span>
+                </button>
+              )}
+
+              {/* Option 4: AI Image & Video Studio */}
+              {onOpenAIStudio && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUploadSheetOpen(false);
+                    onOpenAIStudio();
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-cyan-500/20 via-pink-500/20 to-amber-500/20 hover:from-cyan-500/30 hover:to-amber-500/30 border border-cyan-400/45 text-left flex items-center justify-between group active:scale-98 transition-all shadow-lg shadow-cyan-600/10 cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-cyan-500 via-pink-500 to-amber-400 text-white flex items-center justify-center shadow-md shadow-cyan-600/40 group-hover:scale-105 transition-transform">
+                      <Sparkles className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-black text-white group-hover:text-cyan-300 transition-colors">
+                        AI Image &amp; Video
+                      </span>
+                      <p className="text-xs text-neutral-400 mt-0.5">
+                        Generate crisp AI images or cinematic AI videos
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-400/35">
+                    Dual AI
                   </span>
                 </button>
               )}
