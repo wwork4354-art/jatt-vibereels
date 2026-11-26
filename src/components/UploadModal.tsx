@@ -15,6 +15,7 @@ import {
   Trash2,
   Lock,
   Download,
+  Sliders,
 } from 'lucide-react';
 import { VideoPost, UserAccount, CreatorProfileData, AudioTrackOption } from '../types';
 import {
@@ -48,6 +49,7 @@ interface UploadModalProps {
   currentUser: UserAccount | null;
   creatorProfile?: CreatorProfileData;
   preselectedFile?: File | null;
+  onOpenInEditor?: (file: File) => void;
   onUploadSuccess: (newPost: VideoPost) => void;
   onUploadCloudSynced?: (tempId: string, syncedPost: VideoPost) => void;
   onShowToast?: (msg: string) => void;
@@ -59,6 +61,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   currentUser,
   creatorProfile,
   preselectedFile,
+  onOpenInEditor,
   onUploadSuccess,
   onUploadCloudSynced,
   onShowToast,
@@ -652,6 +655,21 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         <span className="absolute bottom-3 left-1.5 right-1.5 px-2 py-0.5 rounded-full bg-black/85 border border-pink-500/50 text-[9px] font-black text-pink-300 text-center truncate">
                           🎵 Audio-Visual
                         </span>
+                      )}
+                      {onOpenInEditor && selectedFile && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenInEditor(selectedFile);
+                          }}
+                          className="absolute -top-2 -right-2 px-2 py-1 rounded-lg bg-neutral-900/95 hover:bg-purple-600 border border-purple-400/60 text-purple-200 hover:text-white text-[10px] font-black flex items-center gap-1 shadow-lg transition-colors cursor-pointer"
+                          title="Optional: Open in Edit (Studio)"
+                          aria-label="Edit in Studio"
+                        >
+                          <Sliders className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
                       )}
                     </div>
                     <p className="text-xs text-pink-400 font-semibold truncate max-w-xs">

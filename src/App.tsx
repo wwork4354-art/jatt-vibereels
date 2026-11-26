@@ -2197,6 +2197,11 @@ export default function App() {
         setIsUploadOpen(true);
         return;
       }
+      if (source === 'live') {
+        setEditorInitialFile(file);
+        setIsEditorOpen(true);
+        return;
+      }
       const rateStatus = checkRateLimit('upload');
       if (!rateStatus.allowed) {
         showToast(
@@ -3204,6 +3209,12 @@ export default function App() {
             currentUser={currentUser}
             creatorProfile={creatorProfile}
             preselectedFile={preselectedUploadFile}
+            onOpenInEditor={(fileToEdit) => {
+              setIsUploadOpen(false);
+              setPreselectedUploadFile(null);
+              setEditorInitialFile(fileToEdit);
+              setIsEditorOpen(true);
+            }}
             onUploadSuccess={handleUploadSuccess}
             onUploadCloudSynced={handleUploadCloudSynced}
             onShowToast={showToast}
@@ -3281,6 +3292,12 @@ export default function App() {
               setTimeout(() => scrollToIndex(0), 60);
             }}
             onRecordSynced={handleUploadCloudSynced}
+            onCaptureToStudio={(capturedFile) => {
+              setIsProCameraOpen(false);
+              setSnapReplyTarget(null);
+              setEditorInitialFile(capturedFile);
+              setIsEditorOpen(true);
+            }}
             onSwitchToUploadFile={() => setIsUploadOpen(true)}
             onShowToast={showToast}
           />

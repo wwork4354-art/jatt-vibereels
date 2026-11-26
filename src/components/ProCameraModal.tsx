@@ -73,6 +73,7 @@ interface ProCameraModalProps {
   onDirectSnapSent?: (snap: DirectSnapMessage) => void;
   onRecordSuccess: (newPost: VideoPost) => void;
   onRecordSynced?: (tempId: string, syncedPost: VideoPost) => void;
+  onCaptureToStudio?: (file: File) => void;
   onSwitchToUploadFile: () => void;
   onShowToast: (msg: string) => void;
 }
@@ -328,6 +329,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   onDirectSnapSent,
   onRecordSuccess,
   onRecordSynced,
+  onCaptureToStudio,
   onSwitchToUploadFile,
   onShowToast,
 }) => {
@@ -463,6 +465,49 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     [sonyPreset]
   );
 
+  const dispatchCaptureToStudio = useCallback(
+    (blobOrFile: Blob | File, mediaType: 'image' | 'video'): boolean => {
+      if (initialSnapRecipient || !onCaptureToStudio) return false;
+
+      let readyFile: File;
+      if (blobOrFile instanceof File) {
+        readyFile = blobOrFile;
+      } else {
+        const rawMime = (blobOrFile.type || '').toLowerCase();
+        const ext =
+          mediaType === 'image'
+            ? rawMime.includes('png')
+              ? 'png'
+              : rawMime.includes('webp')
+              ? 'webp'
+              : 'jpg'
+            : rawMime.includes('mp4')
+            ? 'mp4'
+            : 'webm';
+        const safeMime =
+          mediaType === 'image'
+            ? ext === 'png'
+              ? 'image/png'
+              : ext === 'webp'
+              ? 'image/webp'
+              : 'image/jpeg'
+            : ext === 'mp4'
+            ? 'video/mp4'
+            : 'video/webm';
+        readyFile = new File([blobOrFile], `camera-${mediaType}-${Date.now()}.${ext}`, {
+          type: safeMime,
+        });
+      }
+
+      soundEngine.stopPreviewTrack();
+      setPreviewMusicId(null);
+      onShowToast('Opening capture in Edit (Studio)...');
+      onCaptureToStudio(readyFile);
+      return true;
+    },
+    [initialSnapRecipient, onCaptureToStudio, onShowToast]
+  );
+
   // Fallback native camera capture handler
   const handleNativeCameraCaptured = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -473,9 +518,15 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         e.target.value = '';
         return;
       }
+      const detectedType: 'image' | 'video' =
+        check.mediaType || (file.type.startsWith('image/') ? 'image' : 'video');
+      if (dispatchCaptureToStudio(file, detectedType)) {
+        e.target.value = '';
+        return;
+      }
       const url = URL.createObjectURL(file);
       recordedBlobRef.current = file;
-      setRecordedMediaType(check.mediaType || (file.type.startsWith('image/') ? 'image' : 'video'));
+      setRecordedMediaType(detectedType);
       setRecordedClipUrl(url);
       const rawName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
       const cleanName = sanitizeText(rawName, 80);
@@ -990,6 +1041,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         const mime = recordedMimeRef.current || 'video/webm';
         const blob = new Blob(recordedChunksRef.current, { type: mime });
         if (blob.size > 0) {
+          if (dispatchCaptureToStudio(blob, 'video')) {
+            return;
+          }
           recordedBlobRef.current = blob;
           const url = URL.createObjectURL(blob);
           setRecordedMediaType('video');
@@ -1040,6 +1094,9 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       (blob) => {
         if (!blob) {
           onShowToast('Could not capture photo.');
+          return;
+        }
+        if (dispatchCaptureToStudio(blob, 'image')) {
           return;
         }
         recordedBlobRef.current = blob;
@@ -1139,10 +1196,14 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
   };
 
-  // Promote chosen burst shot into the preview / publish / export screen
+  // Promote chosen burst shot into Studio or preview screen
   const handleSelectBurstPhotoForPreview = () => {
     const chosen = burstFrames[selectedBurstIndex];
     if (!chosen) return;
+    if (dispatchCaptureToStudio(chosen.blob, 'image')) {
+      revokeBurstFrames();
+      return;
+    }
     recordedBlobRef.current = chosen.blob;
     setRecordedMediaType('image');
     setRecordedClipUrl(URL.createObjectURL(chosen.blob));
@@ -1216,6 +1277,10 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       recorder.stop();
       const reelBlob = await stopPromise;
       if (reelBlob.size > 0) {
+        if (dispatchCaptureToStudio(reelBlob, 'video')) {
+          revokeBurstFrames();
+          return;
+        }
         recordedBlobRef.current = reelBlob;
         setRecordedMediaType('video');
         setRecordedClipUrl(URL.createObjectURL(reelBlob));

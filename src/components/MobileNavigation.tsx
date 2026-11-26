@@ -671,11 +671,11 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
           </span>
         </button>
 
-        {/* Option 1: Live Video Recording with capture="environment" */}
+        {/* Option 1: Live Photo/Video Camera Recording with capture="environment" */}
         <input
           ref={liveRecordInputRef}
           type="file"
-          accept=".mp4,.webm,video/mp4,video/webm"
+          accept=".mp4,.webm,.jpg,.jpeg,.png,.webp,video/mp4,video/webm,image/jpeg,image/png,image/webp"
           capture="environment"
           className="hidden"
           style={{ display: 'none' }}

@@ -1357,7 +1357,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   const renderProPhotoExport = async (): Promise<File> => {
     const primary = clips[0];
     if (!primary) throw new Error('No media to export');
-    if (!hasAnyEdits && exportResolution === '1080p') return primary.file;
+    if (!hasAnyEdits) return primary.file;
 
     const outW = exportResolution === '4k' ? 2160 : 1080;
     const outH = exportResolution === '4k' ? 3840 : 1920;
@@ -1372,7 +1372,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       ctx,
       outW,
       outH,
-      0,
+      textLayer.text.trim() ? 0.6 : 0,
       spans,
       mediaElementCacheRef.current,
       renderOptions
@@ -1398,7 +1398,9 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     const isStaticSinglePhoto =
       clips.length === 1 &&
       clips[0].mediaType === 'image' &&
-      (textLayer.text.trim() === '' || textLayer.animation === 'none') &&
+      (textLayer.text.trim() === '' ||
+        textLayer.animation === 'none' ||
+        textLayer.animation === 'pop') &&
       !hasAttachedMusic;
 
     if (isStaticSinglePhoto) {
@@ -1721,7 +1723,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     setExportProgress(5);
     setExportStatusText(`Preparing ${exportResolution.toUpperCase()} export...`);
     try {
-      const { file } = await renderProTimelineVideo();
+      const { file, isVideo } = await renderProTimelineVideo();
       if (exportCancelRef.current) {
         onShowToast?.('Export cancelled');
         return;
@@ -1734,10 +1736,12 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      onShowToast?.(`Exported ${exportResolution.toUpperCase()} edit to your device!`);
+      onShowToast?.(
+        `Saved ${isVideo ? 'video' : 'photo'} (${exportResolution.toUpperCase()}) directly to your device gallery!`
+      );
     } catch (err) {
       console.error('Export failed:', err);
-      onShowToast?.('Could not render export on this device.');
+      onShowToast?.('Could not save media on this device.');
     } finally {
       setIsExporting(false);
       setExportProgress(0);
@@ -2082,7 +2086,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
           </div>
         </div>
 
-        {/* Right Header Controls: Resolution Switcher (1080p / 4K), Reset, Export, Post */}
+        {/* Right Header Controls: Resolution Switcher (1080p / 4K), Reset, Next / Save to Gallery, Post Now */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {clips.length > 0 && (
             <>
@@ -2117,26 +2121,50 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                 type="button"
                 disabled={isExporting}
                 onClick={handleSaveToDevice}
-                className="min-h-[38px] px-2.5 sm:px-3.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-cyan-500/40 text-cyan-300 text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                title="Download edited media"
+                className="hidden md:flex min-h-[38px] px-3.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-cyan-500/50 text-cyan-300 text-xs font-black items-center gap-1.5 cursor-pointer transition-colors"
+                title="Save photo or video directly to your device gallery"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Export</span>
+                <span>Next / Save to Gallery</span>
               </button>
 
               <button
                 type="button"
                 disabled={isExporting}
                 onClick={handlePostToFeed}
-                className="min-h-[38px] px-3 sm:px-4 rounded-xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:brightness-110 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 shadow-lg shadow-pink-600/25 cursor-pointer"
+                className="hidden md:flex min-h-[38px] px-4 rounded-xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:brightness-110 disabled:opacity-50 text-white text-xs font-black items-center gap-1.5 shadow-lg shadow-pink-600/25 cursor-pointer"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Post</span>
+                <span>Post Now</span>
               </button>
             </>
           )}
         </div>
       </header>
+
+      {/* Mobile Clear Action Bar: Next / Save to Gallery & Post Now (editing optional) */}
+      {clips.length > 0 && (
+        <div className="md:hidden shrink-0 px-3 py-2 bg-[#0b0b10] border-b border-neutral-800/80 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            disabled={isExporting}
+            onClick={handleSaveToDevice}
+            className="min-h-[38px] px-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-cyan-500/50 text-cyan-300 text-[11px] font-black flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Next / Save to Gallery</span>
+          </button>
+          <button
+            type="button"
+            disabled={isExporting}
+            onClick={handlePostToFeed}
+            className="min-h-[38px] px-3 rounded-xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:brightness-110 disabled:opacity-50 text-white text-[11px] font-black flex items-center justify-center gap-1.5 shadow-lg shadow-pink-600/25 cursor-pointer"
+          >
+            <Send className="w-3.5 h-3.5 shrink-0" />
+            <span>Post Now</span>
+          </button>
+        </div>
+      )}
 
       {/* Export Rendering Overlay Banner */}
       {isExporting && (
@@ -3382,6 +3410,26 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                           <span>No, Private</span>
                         </button>
                       </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={isExporting}
+                        onClick={handleSaveToDevice}
+                        className="min-h-[42px] px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-cyan-500/50 text-cyan-300 text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 shrink-0" />
+                        <span>Next / Save to Gallery</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isExporting}
+                        onClick={handlePostToFeed}
+                        className="min-h-[42px] px-3 rounded-xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:brightness-110 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-lg shadow-pink-600/25 cursor-pointer"
+                      >
+                        <Send className="w-3.5 h-3.5 shrink-0" />
+                        <span>Post Now</span>
+                      </button>
                     </div>
                   </div>
                 )}
