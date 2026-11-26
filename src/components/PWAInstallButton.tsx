@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { BRAND_CONFIG } from '../config/brandConfig';
 
 interface PWAInstallButtonProps {
   variant?: 'topbar' | 'sidebar' | 'menu' | 'banner' | 'mobile-header';
@@ -49,7 +50,7 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
   const handleClick = async () => {
     const result = await promptInstall();
     if (result === 'accepted') {
-      onShowToast?.('Jatt VibeReels installed to your home screen!');
+      onShowToast?.(`${BRAND_CONFIG.appName} installed to your home screen!`);
     } else if (result === 'ios') {
       setGuideMode('ios');
     } else if (result === 'manual') {
@@ -74,14 +75,14 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
             <div className="flex items-center gap-2.5 min-w-0">
               <img
                 src="/pwa-192x192.png"
-                alt="Jatt VibeReels"
+                alt={BRAND_CONFIG.appName}
                 loading="lazy"
                 decoding="async"
                 className="w-10 h-10 rounded-xl border border-pink-500/40 shrink-0"
               />
               <div className="min-w-0">
                 <p className="text-xs font-black text-white flex items-center gap-1 truncate">
-                  <span>Install Jatt VibeReels</span>
+                  <span>Install {BRAND_CONFIG.appName}</span>
                   <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
                 </p>
                 <p className="text-[10px] text-neutral-300 truncate">
@@ -115,10 +116,10 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
           type="button"
           onClick={handleClick}
           className="w-full py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-emerald-600/20 to-cyan-600/20 hover:from-emerald-600/30 hover:to-cyan-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-black flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer"
-          title="Install Jatt VibeReels app to home screen"
+          title={`Install ${BRAND_CONFIG.appName} app to home screen`}
         >
           <Smartphone className="w-4 h-4 text-emerald-400" />
-          <span>Install Jatt VibeReels</span>
+          <span>Install {BRAND_CONFIG.appName}</span>
         </button>
       ) : variant === 'menu' ? (
         <button
@@ -127,15 +128,15 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
           className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500/20 via-cyan-500/15 to-pink-500/20 hover:from-emerald-500/30 hover:to-pink-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-black flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer"
         >
           <Download className="w-4 h-4 text-emerald-400" />
-          <span>Install Jatt VibeReels</span>
+          <span>Install {BRAND_CONFIG.appName}</span>
         </button>
       ) : variant === 'mobile-header' ? (
         <button
           type="button"
           onClick={handleClick}
           className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/45 text-emerald-300 text-[10px] font-black shrink-0 active:scale-95 cursor-pointer"
-          title="Install Jatt VibeReels App"
-          aria-label="Install Jatt VibeReels"
+          title={`Install ${BRAND_CONFIG.appName} App`}
+          aria-label={`Install ${BRAND_CONFIG.appName}`}
         >
           <Download className="w-3 h-3 text-emerald-400" />
           <span>Install</span>
@@ -149,10 +150,10 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
               ? 'bg-gradient-to-r from-emerald-500/25 to-cyan-500/25 hover:from-emerald-500/35 hover:to-cyan-500/35 border-emerald-400/60 text-emerald-200 shadow-sm shadow-emerald-500/20'
               : 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300'
           }`}
-          title="Install Jatt VibeReels App to Home Screen"
+          title={`Install ${BRAND_CONFIG.appName} App to Home Screen`}
         >
           <Download className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="hidden md:inline">Install Jatt VibeReels</span>
+          <span className="hidden md:inline">Install {BRAND_CONFIG.appName}</span>
         </button>
       )}
 
@@ -169,13 +170,13 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
               <div className="flex items-center gap-2.5">
                 <img
                   src="/pwa-192x192.png"
-                  alt="Jatt VibeReels"
+                  alt={BRAND_CONFIG.appName}
                   loading="lazy"
                   decoding="async"
                   className="w-8 h-8 rounded-lg border border-pink-500/40"
                 />
                 <div>
-                  <h3 className="text-sm font-black text-white">Install Jatt VibeReels</h3>
+                  <h3 className="text-sm font-black text-white">Install {BRAND_CONFIG.appName}</h3>
                   <p className="text-[10px] text-neutral-400">
                     {guideMode === 'ios' ? 'iPhone & iPad Safari' : 'Chrome / Android / Desktop'}
                   </p>

@@ -37,6 +37,7 @@ import {
   AudioTrackOption,
 } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
+import { BRAND_CONFIG } from '../config/brandConfig';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
@@ -187,8 +188,8 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
           const brandLogoNode = (
             <div className="flex items-center shrink-0">
               <img
-                src={BRAND_LOGO_SRC}
-                alt="Jatt VibeReels"
+                src={BRAND_CONFIG.logoUrl || BRAND_LOGO_SRC}
+                alt={BRAND_CONFIG.appName}
                 loading="lazy"
                 decoding="async"
                 className="h-5 min-[380px]:h-6 w-auto max-w-[68px] min-[380px]:max-w-[90px] object-contain rounded-md"

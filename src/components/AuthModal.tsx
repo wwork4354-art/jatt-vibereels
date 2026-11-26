@@ -45,6 +45,7 @@ import {
   touchSessionActivity,
   LockoutStatus,
 } from '../utils/security';
+import { BRAND_CONFIG } from '../config/brandConfig';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -337,7 +338,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         lastActiveAt: nowIso,
         isOnline: true,
         videosCount: 0,
-        bio: safeRole === 'creator' ? 'Video Creator' : 'Jatt VibeReels Member',
+        bio: safeRole === 'creator' ? 'Video Creator' : `${BRAND_CONFIG.appName} Member`,
         passwordHash,
       };
 
@@ -401,7 +402,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-black text-white tracking-tight flex items-center gap-1.5">
-                {mode === 'login' ? 'Sign In to Jatt VibeReels' : 'Create Creator Account'}
+                {mode === 'login' ? `Sign In to ${BRAND_CONFIG.appName}` : 'Create Creator Account'}
               </h2>
               <p className="text-[11px] text-neutral-400">
                 {mode === 'login'

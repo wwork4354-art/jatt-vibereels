@@ -38,6 +38,11 @@ import { MobileNavigation } from './components/MobileNavigation';
 import { TopBar } from './components/TopBar';
 import { OfflineBanner } from './components/OfflineBanner';
 import { PWAInstallButton } from './components/PWAInstallButton';
+import { LicenseLockScreen } from './components/LicenseLockScreen';
+import { GraceWarningBanner } from './components/GraceWarningBanner';
+import { EasyPaymentModal } from './components/EasyPaymentModal';
+import { BRAND_CONFIG, LicenseCheckResult } from './config/brandConfig';
+import { evaluateFullLicenseState, evaluateLicenseSync } from './lib/licenseService';
 import { soundEngine } from './utils/soundEngine';
 import { compressImageFile } from './utils/imageOptimize';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -391,6 +396,44 @@ function filterFeedVideos(
 }
 
 export default function App() {
+  const [licenseStatus, setLicenseStatus] = useState<LicenseCheckResult>(() =>
+    evaluateLicenseSync()
+  );
+  const [isGracePaymentOpen, setIsGracePaymentOpen] = useState(false);
+
+  const refreshRemoteLicense = useCallback(async () => {
+    const next = await evaluateFullLicenseState();
+    setLicenseStatus(next);
+  }, []);
+
+  useEffect(() => {
+    void refreshRemoteLicense();
+    const interval = window.setInterval(() => {
+      void refreshRemoteLicense();
+    }, 60_000);
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState !== 'hidden') {
+        void refreshRemoteLicense();
+      }
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [refreshRemoteLicense]);
+
+  useEffect(() => {
+    document.title = BRAND_CONFIG.appName;
+    document.documentElement.style.setProperty('--brand-accent', BRAND_CONFIG.accentColor);
+    document.documentElement.style.setProperty(
+      '--brand-secondary-accent',
+      BRAND_CONFIG.secondaryAccentColor
+    );
+  }, []);
+
   const [users, setUsers] = useState<UserAccount[]>(getStoredUsers);
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(getStoredCurrentUser);
   const [creatorProfile, setCreatorProfile] = useState<CreatorProfileData>(() =>
@@ -2523,6 +2566,19 @@ export default function App() {
     [videos]
   );
 
+  if (!licenseStatus.isValid || licenseStatus.phase === 'locked') {
+    return (
+      <LicenseLockScreen
+        licenseStatus={licenseStatus}
+        onLicenseUpdated={(nextStatus) => {
+          setLicenseStatus(nextStatus);
+          showToast(`Unlocked for 30 days (Valid until ${nextStatus.expiryDateLabel})`);
+        }}
+        onRefreshRemoteStatus={refreshRemoteLicense}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-neutral-950 text-white overflow-hidden select-none">
       {/* Top Bar with Registration, Login, Video Upload, Go Live & Admin Panel */}
@@ -2557,6 +2613,12 @@ export default function App() {
 
       {/* Offline Mode Connectivity Banner */}
       <OfflineBanner onOpenSavedOffline={handleOpenSavedDownloadsOffline} />
+
+      {/* Non-Dismissible 3-Day Grace Period Billing Warning Banner */}
+      <GraceWarningBanner
+        licenseStatus={licenseStatus}
+        onOpenPayRent={() => setIsGracePaymentOpen(true)}
+      />
 
       {/* Floating PWA Install App Banner (auto-hides when installed) */}
       <PWAInstallButton variant="banner" onShowToast={showToast} />
@@ -3335,6 +3397,14 @@ export default function App() {
           />
         </Suspense>
       )}
+
+      <EasyPaymentModal
+        isOpen={isGracePaymentOpen}
+        onClose={() => setIsGracePaymentOpen(false)}
+        onShowToast={showToast}
+        initialBrandName={BRAND_CONFIG.appName}
+        onLicenseUpdated={(nextStatus) => setLicenseStatus(nextStatus)}
+      />
     </div>
   );
 }

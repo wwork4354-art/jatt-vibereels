@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { BadgeCheck, Sparkles, Code2, ExternalLink, ShieldCheck } from 'lucide-react';
+import { BadgeCheck, Sparkles, ShieldCheck } from 'lucide-react';
+import { BRAND_CONFIG } from '../config/brandConfig';
 
 /**
  * Custom Square Image Path for the Creator's Profile Image.
@@ -89,7 +90,7 @@ const DeveloperCreditBadgeComponent: React.FC<DeveloperCreditBadgeProps> = ({
               Verified Developer
             </span>
             <span className="text-[10px] font-bold text-pink-400 flex items-center gap-0.5">
-              <Sparkles className="w-2.5 h-2.5" /> Official
+              <Sparkles className="w-2.5 h-2.5" /> {BRAND_CONFIG.brandBadge}
             </span>
           </div>
 
@@ -103,9 +104,9 @@ const DeveloperCreditBadgeComponent: React.FC<DeveloperCreditBadgeProps> = ({
 
           {showDetails && (
             <p className="text-[11px] text-neutral-400 truncate mt-0.5 flex items-center gap-1.5">
-              <span>Lead Architect & UI Engineer</span>
+              <span>{BRAND_CONFIG.tagline}</span>
               <span className="text-neutral-600">·</span>
-              <span className="text-neutral-400 font-mono text-[10px]">Jatt VibeReels Pro</span>
+              <span className="text-neutral-400 font-mono text-[10px]">{BRAND_CONFIG.appName}</span>
             </p>
           )}
         </div>

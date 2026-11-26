@@ -10,6 +10,8 @@
  * 6. Clickjacking Frame-Busting, DevTools Deterrence & 30-Min Session Timeout
  */
 
+import { BRAND_CONFIG } from '../config/brandConfig';
+
 export const LOCKOUT_MAX_ATTEMPTS = 3;
 export const LOCKOUT_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes inactivity auto-logout
@@ -20,10 +22,10 @@ export const UPLOAD_RATE_LIMIT = { max: 5, windowMs: 60 * 1000 };
 const LOCKOUT_STORAGE_KEY = 'jatt_sec_lockouts_v1';
 const RATE_LIMIT_STORAGE_KEY = 'jatt_sec_ratelimit_v1';
 const LAST_ACTIVITY_STORAGE_KEY = 'vibereels_last_activity_ts';
+const TRACKER_PIN_OVERRIDE_KEY = 'jatt_tracker_pin_override_v1';
 
 const ADMIN_PIN_SALT = 'jatt_vibereels_admin_pin_v1';
-const ADMIN_PIN_SHA256_HEX =
-  '6da5252377cb7c082bd15e3639edaab212bb01a122b9d8448d591eba186950a9';
+const TRACKER_PIN_SALT = 'jatt_vibereels_tracker_pin_v1';
 
 // =========================================================================
 // 1. XSS & Code Injection Sanitization
@@ -312,7 +314,7 @@ export async function sha256HexAsync(text: string): Promise<string> {
   return sha256HexFallback(text);
 }
 
-function constantTimeEqual(a: string, b: string): boolean {
+export function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) {
@@ -419,20 +421,94 @@ export async function verifyPasswordAsync(
 }
 
 /**
- * Verifies the Admin Security PIN against a salted SHA-256 hash digest.
+ * Verifies the Master Admin Security PIN against BRAND_CONFIG.adminPin using constant-time SHA-256 comparison.
  */
 export async function verifyAdminPinAsync(pinInput: string): Promise<boolean> {
   const cleanPin = (pinInput || '').trim();
+  const configuredPin = (BRAND_CONFIG.adminPin || '').trim();
+  if (!cleanPin || !configuredPin) return false;
+  const [computedInput, computedExpected] = await Promise.all([
+    sha256HexAsync(`${ADMIN_PIN_SALT}:${cleanPin}`),
+    sha256HexAsync(`${ADMIN_PIN_SALT}:${configuredPin}`),
+  ]);
+  return constantTimeEqual(computedInput, computedExpected);
+}
+
+function getStoredTrackerPinOverrideHash(): string {
+  try {
+    return (localStorage.getItem(TRACKER_PIN_OVERRIDE_KEY) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Verifies the Registered App Users Tracker PIN (defaults to BRAND_CONFIG.usersTrackerPin "7860",
+ * also respects an admin-reset custom PIN stored in localStorage or the master adminPin).
+ */
+export async function verifyUsersTrackerPinAsync(pinInput: string): Promise<boolean> {
+  const cleanPin = (pinInput || '').trim();
   if (!cleanPin) return false;
-  const computed = await sha256HexAsync(`${ADMIN_PIN_SALT}:${cleanPin}`);
-  return constantTimeEqual(computed, ADMIN_PIN_SHA256_HEX);
+
+  const overrideHash = getStoredTrackerPinOverrideHash();
+  const computedTracker = await sha256HexAsync(`${TRACKER_PIN_SALT}:${cleanPin}`);
+  if (overrideHash) {
+    if (constantTimeEqual(computedTracker, overrideHash)) {
+      return true;
+    }
+    // Always allow master adminPin as recovery fallback
+    return verifyAdminPinAsync(cleanPin);
+  }
+
+  const configuredTrackerPin = (BRAND_CONFIG.usersTrackerPin || '7860').trim();
+  const expectedTrackerHash = await sha256HexAsync(`${TRACKER_PIN_SALT}:${configuredTrackerPin}`);
+  if (constantTimeEqual(computedTracker, expectedTrackerHash)) {
+    return true;
+  }
+
+  return verifyAdminPinAsync(cleanPin);
+}
+
+/**
+ * Allows the logged-in Main Admin to set a custom 4-8 digit Registered Users Tracker PIN
+ * and immediately clears any active PIN lockout.
+ */
+export async function setCustomUsersTrackerPinAsync(
+  newPin: string
+): Promise<{ ok: boolean; error?: string }> {
+  const clean = (newPin || '').trim();
+  if (!/^\d{4,8}$/.test(clean)) {
+    return { ok: false, error: 'Please enter a 4 to 8 digit numeric PIN.' };
+  }
+  const digest = await sha256HexAsync(`${TRACKER_PIN_SALT}:${clean}`);
+  try {
+    localStorage.setItem(TRACKER_PIN_OVERRIDE_KEY, digest);
+  } catch {
+    return { ok: false, error: 'Unable to save custom PIN in browser storage.' };
+  }
+  resetLockout('admin_pin');
+  return { ok: true };
+}
+
+/**
+ * Resets the Registered Users Tracker PIN back to BRAND_CONFIG.usersTrackerPin ("7860")
+ * and clears any brute-force lockout for the logged-in Main Admin.
+ */
+export function resetUsersTrackerPinToDefault(): string {
+  try {
+    localStorage.removeItem(TRACKER_PIN_OVERRIDE_KEY);
+  } catch {
+    // ignore storage failures
+  }
+  resetLockout('admin_pin');
+  return (BRAND_CONFIG.usersTrackerPin || '7860').trim();
 }
 
 // =========================================================================
 // 3. Brute-Force Lockout Manager (Persisted in localStorage)
 // =========================================================================
 
-export type LockoutScope = 'login' | 'admin_pin';
+export type LockoutScope = 'login' | 'admin_pin' | 'rental_activation_key';
 
 interface LockoutRecord {
   failedAttempts: number;

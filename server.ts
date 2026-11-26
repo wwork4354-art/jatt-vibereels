@@ -1,5 +1,7 @@
 import express, { type Request, type Response } from 'express';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
 import { GoogleGenAI } from '@google/genai';
@@ -64,11 +66,96 @@ function extractErrorDetails(err: unknown): { status: number; message: string } 
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   app.use(express.json({ limit: '25mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
     const keyConfigured = Boolean(createGeminiClient());
     res.json({ ok: true, geminiConfigured: keyConfigured });
+  });
+
+  const RENTAL_KEY_HASHES = new Set<string>([
+    'fc74381319eee9a045043749920a9ca7c8def524bee9e6749eb23ff7fc2d1a93', // JATT-NOV26-PRO
+    'edcbd48e8b2cfacd1efb56f4ba1f147e747a37f6915203d858afec37e8fdf059', // JATT-DEC26-PRO
+    'e5b820633d7883534ce39d35e6631996896c375a2ae12412b8c6ce481683222a', // JATT-JAN27-PRO
+    'e4dceda24c479deca51d896c0528ab17475c977af18d6ecea28890d2d5e21b6f', // JATT-FEB27-PRO
+    '02898be5b3d145a77819161f082d18b2b5c583e021fe3f0a2da3edda359bf694', // JATT-MAR27-PRO
+    'b13195e97eb15616073dd44c5cd040820453208334ca62b89d39a46e7f430188', // JATT-APR27-PRO
+    '0b60581622f78572fc83b883473f2b62c321fa1484b5788eb7fa0918a255f903', // JATT-MAY27-PRO
+    '115acc615791c294a73f520c16ca4c6156c9aaa28b9ff24a00c520320ec7d996', // JATT-JUN27-PRO
+    'acc60a18a01a1b1489afc0eb02f407a60ccd5536f02ae25f0651edf7f2ed061e', // JATT-JUL27-PRO
+    '654ca6361aede47c878e8aa8717b1adfec50a6ba2b342c4e83a60be4f153e0d9', // JATT-AUG27-PRO
+    '47db9815dbc486e7024d00275fa46097dd7c3a6f361a01d5b02afc74e9ebcd44', // JATT-SEP27-PRO
+    'dd6d205c8657e5caebb840eab8b2ce6790c536fc1d319e631dfa89334bff640c', // JATT-OCT27-PRO
+    'a1a3277357b1171b74cbe792addfe3449416e9148cc83d66819a5e4c77fef33f', // JATT-NOV27-PRO
+    '2b901f52ca3358c24f3369a00fd43120298149cb0048ccc194b9e0c5fbedb735', // JATT-DEC27-PRO
+  ]);
+
+  // Authoritative server clock endpoint to prevent client date/time rollback tampering
+  app.get('/api/license/time', (_req: Request, res: Response) => {
+    const now = Date.now();
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.json({
+      ok: true,
+      serverTimeMs: now,
+      serverDateUtc: new Date(now).toISOString().slice(0, 10),
+    });
+  });
+
+  // Server-side renewal activation key verification (+30 days unlock from server time)
+  app.post('/api/license/verify-key', (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const rawKey = typeof req.body?.key === 'string' ? req.body.key.trim().toUpperCase() : '';
+    if (!rawKey || rawKey.length < 6 || rawKey.length > 64) {
+      res.status(400).json({ valid: false, error: 'Please enter a valid renewal activation key.' });
+      return;
+    }
+
+    const inputDigest = crypto
+      .createHash('sha256')
+      .update(`jatt_rental_key_v1:${rawKey}`)
+      .digest('hex');
+
+    let isMatch = false;
+    const inputBuf = Buffer.from(inputDigest, 'utf8');
+    for (const allowedHex of RENTAL_KEY_HASHES) {
+      const allowedBuf = Buffer.from(allowedHex, 'utf8');
+      if (inputBuf.length === allowedBuf.length && crypto.timingSafeEqual(inputBuf, allowedBuf)) {
+        isMatch = true;
+        break;
+      }
+    }
+
+    const envKey = (process.env.RENTAL_ACTIVATION_KEY || '').trim().toUpperCase();
+    if (!isMatch && envKey) {
+      const envDigest = crypto
+        .createHash('sha256')
+        .update(`jatt_rental_key_v1:${envKey}`)
+        .digest('hex');
+      const envBuf = Buffer.from(envDigest, 'utf8');
+      if (inputBuf.length === envBuf.length && crypto.timingSafeEqual(inputBuf, envBuf)) {
+        isMatch = true;
+      }
+    }
+
+    if (!isMatch) {
+      res.status(403).json({
+        valid: false,
+        error: 'Invalid or unrecognized Renewal Activation Key.',
+      });
+      return;
+    }
+
+    const nowMs = Date.now();
+    const unlockUntilMs = nowMs + 30 * 86_400_000;
+    const unlockedUntilDate = new Date(unlockUntilMs).toISOString().slice(0, 10);
+
+    res.json({
+      valid: true,
+      serverTimeMs: nowMs,
+      unlockedUntilDate,
+      keyFingerprint: inputDigest.slice(0, 16),
+    });
   });
 
   // Dual-Mode AI Endpoint 1: AI Image Generation & Editing
@@ -294,9 +381,30 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== 'production') {
+    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: isHmrDisabled ? false : { server: httpServer },
+        ws: isHmrDisabled ? false : { server: httpServer },
+      },
+      plugins: isHmrDisabled
+        ? [
+            {
+              name: 'disable-vite-client-ws-when-hmr-off',
+              transform(code, id) {
+                if (id.includes('/@vite/client') || id.endsWith('vite/dist/client/client.mjs')) {
+                  return code.replace(
+                    /const createWebSocketModuleRunnerTransport\s*=\s*\(options\)\s*=>\s*\{[\s\S]*?send\(data\)\s*\{\s*ws\.send\(JSON\.stringify\(data\)\);\s*\}\s*\};\s*\};/,
+                    'const createWebSocketModuleRunnerTransport = () => ({ async connect() {}, disconnect() {}, send() {} });'
+                  );
+                }
+                return null;
+              },
+            },
+          ]
+        : [],
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -313,7 +421,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Jatt VibeReels server running on http://0.0.0.0:${PORT}`);
   });
 }

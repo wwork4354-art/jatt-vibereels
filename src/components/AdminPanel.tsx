@@ -17,6 +17,8 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
+  Wallet,
+  CalendarCheck,
 } from 'lucide-react';
 import { UserAccount, UserRole, UserStatus } from '../types';
 import {
@@ -29,12 +31,18 @@ import {
   sanitizeText,
   sanitizeUsername,
   verifyAdminPinAsync,
+  verifyUsersTrackerPinAsync,
+  setCustomUsersTrackerPinAsync,
+  resetUsersTrackerPinToDefault,
   getLockoutStatus,
   recordFailedAttempt,
   resetLockout,
   formatLockoutCountdown,
   LockoutStatus,
 } from '../utils/security';
+import { BRAND_CONFIG } from '../config/brandConfig';
+import { evaluateLicenseSync } from '../lib/licenseService';
+import { EasyPaymentModal } from './EasyPaymentModal';
 
 interface AdminPanelProps {
   isOpen: boolean;
@@ -73,12 +81,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const licenseStatus = evaluateLicenseSync();
 
   // Secret Admin PIN Lock Gate states
   const [pinInput, setPinInput] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [pinError, setPinError] = useState('');
   const [verifyingPin, setVerifyingPin] = useState(false);
+  const [showPinReset, setShowPinReset] = useState(false);
+  const [customResetPin, setCustomResetPin] = useState('');
   const [pinLockout, setPinLockout] = useState<LockoutStatus>(() =>
     getLockoutStatus('admin_pin')
   );
@@ -130,7 +142,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <div className="space-y-1">
             <h3 className="text-base font-black text-white">Admin Access Restricted</h3>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              This Live Users Dashboard is private and accessible only to the main Jatt VibeReels Administrator account.
+              This Live Users Dashboard is private and accessible only to the main {BRAND_CONFIG.appName} Administrator account.
             </p>
           </div>
           <button
@@ -164,7 +176,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       setVerifyingPin(true);
       try {
-        const isOk = await verifyAdminPinAsync(pinInput);
+        const isOk =
+          (await verifyAdminPinAsync(pinInput)) ||
+          (await verifyUsersTrackerPinAsync(pinInput));
         if (!isOk) {
           const nextLock = recordFailedAttempt('admin_pin');
           setPinLockout(nextLock);
@@ -286,7 +300,99 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </span>
             </button>
           </form>
+
+          {/* Subtle Forgot / Reset PIN option for logged-in Main Admin */}
+          <div className="pt-1 border-t border-neutral-800/80">
+            {!showPinReset ? (
+              <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                <span>Signed in as Admin</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinError('');
+                    setShowPinReset(true);
+                  }}
+                  className="text-neutral-400 hover:text-pink-400 underline underline-offset-2 cursor-pointer"
+                >
+                  Forgot / Reset PIN
+                </button>
+              </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-neutral-900/90 border border-neutral-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-white">Reset Tracker PIN</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowPinReset(false)}
+                    className="text-[11px] text-neutral-400 hover:text-white cursor-pointer"
+                  >
+                    Back
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={8}
+                    value={customResetPin}
+                    onChange={(e) => setCustomResetPin(e.target.value.replace(/[^\d]/g, ''))}
+                    placeholder="New 4-8 digit PIN"
+                    className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-pink-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const res = await setCustomUsersTrackerPinAsync(customResetPin);
+                      if (!res.ok) {
+                        setPinError(res.error || 'Enter 4-8 digits.');
+                        return;
+                      }
+                      setPinLockout(getLockoutStatus('admin_pin'));
+                      setCustomResetPin('');
+                      setShowPinReset(false);
+                      setPinError('');
+                      onUnlockAdmin();
+                      onShowToast('Custom PIN saved & Admin Panel unlocked');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-[11px] font-bold cursor-pointer shrink-0"
+                  >
+                    Save &amp; Unlock
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetUsersTrackerPinToDefault();
+                    setPinLockout(getLockoutStatus('admin_pin'));
+                    setPinError('');
+                    setShowPinReset(false);
+                    onUnlockAdmin();
+                    onShowToast('Lockout cleared & PIN reset to default');
+                  }}
+                  className="w-full py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-semibold cursor-pointer"
+                >
+                  Reset to Default PIN &amp; Unlock
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsPaymentOpen(true)}
+            className="w-full py-2.5 px-3 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+          >
+            <Wallet className="w-4 h-4 shrink-0" />
+            <span>Easy Payment &amp; Rent Renewal (JazzCash / EasyPaisa)</span>
+          </button>
         </div>
+
+        <EasyPaymentModal
+          isOpen={isPaymentOpen}
+          onClose={() => setIsPaymentOpen(false)}
+          onShowToast={onShowToast}
+          initialBrandName={BRAND_CONFIG.appName}
+        />
       </div>
     );
   }
@@ -469,6 +575,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <p className="text-xl font-black text-white tabular-nums">{totalSuspended}</p>
             </div>
           </div>
+        </div>
+
+        {/* Subscription & Rent Renewal Strip */}
+        <div className="px-5 sm:px-6 py-3 bg-neutral-950/60 border-b border-neutral-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
+              <CalendarCheck className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-white truncate">
+                Subscription &amp; Rental License
+              </p>
+              <p className="text-[11px] text-neutral-400 tabular-nums truncate">
+                {licenseStatus.phase === 'grace'
+                  ? `Grace Period · Expired ${licenseStatus.expiryDateLabel} (${licenseStatus.graceDaysRemaining}d left)`
+                  : licenseStatus.isValid
+                  ? `Active · Expires ${licenseStatus.expiryDateLabel} · ${licenseStatus.daysRemaining} days left`
+                  : `Renewal Required · Expiry: ${licenseStatus.expiryDateLabel}`}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsPaymentOpen(true)}
+            className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-colors cursor-pointer shrink-0"
+          >
+            <Wallet className="w-4 h-4 shrink-0" />
+            <span>Easy Payment &amp; Rent Renewal</span>
+          </button>
         </div>
 
         {/* Search & Filter Toolbar */}
@@ -908,6 +1044,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
         )}
       </div>
+
+      <EasyPaymentModal
+        isOpen={isPaymentOpen}
+        onClose={() => setIsPaymentOpen(false)}
+        onShowToast={onShowToast}
+        initialBrandName={BRAND_CONFIG.appName}
+      />
     </div>
   );
 };

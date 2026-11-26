@@ -39,6 +39,7 @@ import {
   Search,
   Clock,
   MessageCircle,
+  Wallet,
 } from 'lucide-react';
 import {
   ActivityEvent,
@@ -49,6 +50,8 @@ import {
 } from '../types';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { PWAInstallButton } from './PWAInstallButton';
+import { EasyPaymentModal } from './EasyPaymentModal';
+import { BRAND_CONFIG } from '../config/brandConfig';
 import {
   uploadMediaToReelsBucket,
   checkUsernameAvailability,
@@ -88,6 +91,9 @@ import {
   sanitizeSafeUrl,
   validateSafeMediaFile,
   verifyAdminPinAsync,
+  verifyUsersTrackerPinAsync,
+  setCustomUsersTrackerPinAsync,
+  resetUsersTrackerPinToDefault,
   getLockoutStatus,
   recordFailedAttempt,
   resetLockout,
@@ -182,6 +188,7 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
   );
   const [connectionsSearch, setConnectionsSearch] = useState('');
   const [isRegisteredUsersOpen, setIsRegisteredUsersOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [regUsersSearch, setRegUsersSearch] = useState('');
   const [trackerSortOrder, setTrackerSortOrder] = useState<'chronological' | 'newest'>('chronological');
   const [trackerSearch, setTrackerSearch] = useState('');
@@ -189,6 +196,8 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
   const [showAdminPin, setShowAdminPin] = useState(false);
   const [adminPinError, setAdminPinError] = useState('');
   const [verifyingAdminPin, setVerifyingAdminPin] = useState(false);
+  const [showPinResetPanel, setShowPinResetPanel] = useState(false);
+  const [customResetPinInput, setCustomResetPinInput] = useState('');
   const [adminPinLockout, setAdminPinLockout] = useState<LockoutStatus>(() =>
     getLockoutStatus('admin_pin')
   );
@@ -826,6 +835,17 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                 )}
               </button>
             )}
+            {isMainAdmin && (
+              <button
+                type="button"
+                onClick={() => setIsPaymentModalOpen(true)}
+                className="px-3.5 py-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-black flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                title="Open Easy Payment & Rent Renewal Modal"
+              >
+                <Wallet className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Rent Renewal</span>
+              </button>
+            )}
             <PWAInstallButton variant="topbar" onShowToast={onShowToast} />
           </div>
         </div>
@@ -923,7 +943,7 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                     }
                     setVerifyingAdminPin(true);
                     try {
-                      const ok = await verifyAdminPinAsync(adminPinInput);
+                      const ok = await verifyUsersTrackerPinAsync(adminPinInput);
                       if (!ok) {
                         const nextLock = recordFailedAttempt('admin_pin');
                         setAdminPinLockout(nextLock);
@@ -941,6 +961,7 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                       setAdminPinLockout(getLockoutStatus('admin_pin'));
                       setAdminPinInput('');
                       setAdminPinError('');
+                      setShowPinResetPanel(false);
                       onAdminUnlockSuccess?.();
                       onRefreshLiveUsers?.();
                       onShowToast('Joined Users Tracker unlocked');
@@ -977,6 +998,85 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                     {verifyingAdminPin ? 'Verifying...' : 'Unlock Tracker'}
                   </button>
                 </form>
+
+                {/* Subtle Forgot / Reset PIN recovery for logged-in Main Admin */}
+                {!showPinResetPanel ? (
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdminPinError('');
+                        setShowPinResetPanel(true);
+                      }}
+                      className="text-[11px] text-neutral-400 hover:text-pink-400 underline underline-offset-2 cursor-pointer"
+                    >
+                      Forgot / Reset PIN
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-neutral-900/90 border border-neutral-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-white">
+                        Admin PIN Recovery
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowPinResetPanel(false)}
+                        className="text-[11px] text-neutral-400 hover:text-white cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={8}
+                        value={customResetPinInput}
+                        onChange={(e) =>
+                          setCustomResetPinInput(e.target.value.replace(/[^\d]/g, ''))
+                        }
+                        placeholder="Set new 4-8 digit PIN"
+                        className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-pink-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await setCustomUsersTrackerPinAsync(customResetPinInput);
+                          if (!res.ok) {
+                            setAdminPinError(res.error || 'Enter a 4 to 8 digit PIN.');
+                            return;
+                          }
+                          setAdminPinLockout(getLockoutStatus('admin_pin'));
+                          setCustomResetPinInput('');
+                          setShowPinResetPanel(false);
+                          setAdminPinError('');
+                          onAdminUnlockSuccess?.();
+                          onRefreshLiveUsers?.();
+                          onShowToast('Tracker PIN updated & unlocked');
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-[11px] font-bold cursor-pointer shrink-0"
+                      >
+                        Save &amp; Unlock
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        resetUsersTrackerPinToDefault();
+                        setAdminPinLockout(getLockoutStatus('admin_pin'));
+                        setAdminPinError('');
+                        setShowPinResetPanel(false);
+                        onAdminUnlockSuccess?.();
+                        onRefreshLiveUsers?.();
+                        onShowToast('Lockout cleared & tracker unlocked with default PIN');
+                      }}
+                      className="w-full py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-semibold cursor-pointer"
+                    >
+                      Reset to Default PIN &amp; Unlock Now
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
@@ -2130,7 +2230,7 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                   }
                   setVerifyingAdminPin(true);
                   try {
-                    const ok = await verifyAdminPinAsync(adminPinInput);
+                    const ok = await verifyUsersTrackerPinAsync(adminPinInput);
                     if (!ok) {
                       const nextLock = recordFailedAttempt('admin_pin');
                       setAdminPinLockout(nextLock);
@@ -2148,6 +2248,7 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                     setAdminPinLockout(getLockoutStatus('admin_pin'));
                     setAdminPinInput('');
                     setAdminPinError('');
+                    setShowPinResetPanel(false);
                     onAdminUnlockSuccess?.();
                     onRefreshLiveUsers?.();
                     onShowToast('Admin verified · Registered Users unlocked');
@@ -2193,6 +2294,86 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                   </span>
                 </button>
               </form>
+
+              {/* Subtle Forgot / Reset PIN option for logged-in Main Admin */}
+              <div className="pt-2 border-t border-neutral-800/80">
+                {!showPinResetPanel ? (
+                  <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                    <span>Logged-in Admin</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdminPinError('');
+                        setShowPinResetPanel(true);
+                      }}
+                      className="text-neutral-400 hover:text-pink-400 underline underline-offset-2 cursor-pointer"
+                    >
+                      Forgot / Reset PIN
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-neutral-900/90 border border-neutral-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-white">Reset Tracker PIN</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowPinResetPanel(false)}
+                        className="text-[11px] text-neutral-400 hover:text-white cursor-pointer"
+                      >
+                        Back
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={8}
+                        value={customResetPinInput}
+                        onChange={(e) =>
+                          setCustomResetPinInput(e.target.value.replace(/[^\d]/g, ''))
+                        }
+                        placeholder="New 4-8 digit PIN"
+                        className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-pink-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await setCustomUsersTrackerPinAsync(customResetPinInput);
+                          if (!res.ok) {
+                            setAdminPinError(res.error || 'Enter a 4 to 8 digit PIN.');
+                            return;
+                          }
+                          setAdminPinLockout(getLockoutStatus('admin_pin'));
+                          setCustomResetPinInput('');
+                          setShowPinResetPanel(false);
+                          setAdminPinError('');
+                          onAdminUnlockSuccess?.();
+                          onRefreshLiveUsers?.();
+                          onShowToast('Tracker PIN updated & unlocked');
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-[11px] font-bold cursor-pointer shrink-0"
+                      >
+                        Save &amp; Unlock
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        resetUsersTrackerPinToDefault();
+                        setAdminPinLockout(getLockoutStatus('admin_pin'));
+                        setAdminPinError('');
+                        setShowPinResetPanel(false);
+                        onAdminUnlockSuccess?.();
+                        onRefreshLiveUsers?.();
+                        onShowToast('Lockout cleared & tracker unlocked with default PIN');
+                      }}
+                      className="w-full py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-semibold cursor-pointer"
+                    >
+                      Reset to Default PIN &amp; Unlock Now
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <div
@@ -2397,6 +2578,13 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
           )}
         </div>
       )}
+
+      <EasyPaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        onShowToast={onShowToast}
+        initialBrandName={BRAND_CONFIG.appName}
+      />
     </div>
   );
 };
