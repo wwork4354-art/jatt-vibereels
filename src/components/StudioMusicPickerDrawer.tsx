@@ -481,6 +481,7 @@ export const StudioMusicPickerDrawer: React.FC<StudioMusicPickerDrawerProps> = R
                     </div>
                     <iframe
                       title="Song Audio Preview"
+                      loading="lazy"
                       src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(
                         fallbackEmbedVideoId
                       )}?enablejsapi=1&autoplay=1&rel=0&modestbranding=1&playsinline=1`}

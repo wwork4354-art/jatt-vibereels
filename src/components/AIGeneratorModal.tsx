@@ -644,9 +644,19 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
           <div className="lg:col-span-6 p-4 sm:p-5 bg-[#07070b] flex flex-col justify-between gap-4 min-h-[320px]">
             <div className="flex-1 flex flex-col items-center justify-center rounded-2xl border border-neutral-800/90 bg-black overflow-hidden relative p-2 min-h-[260px]">
               {isGenerating ? (
-                <div className="flex flex-col items-center justify-center text-center gap-3 p-6">
-                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-pink-600/25 to-cyan-500/25 border border-pink-500/40 flex items-center justify-center">
-                    <Loader2 className="w-7 h-7 text-pink-400 animate-spin" />
+                <div className="w-full flex flex-col items-center justify-center text-center gap-4 p-5">
+                  <div className="w-full max-w-[260px] aspect-[9/12] rounded-2xl bg-neutral-900 border border-neutral-800 p-3 flex flex-col justify-between animate-pulse">
+                    <div className="flex items-center justify-between">
+                      <div className="h-3 w-16 rounded-full bg-neutral-800" />
+                      <div className="h-3 w-10 rounded-full bg-neutral-800" />
+                    </div>
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-pink-600/25 to-cyan-500/25 border border-pink-500/40 flex items-center justify-center mx-auto">
+                      <Loader2 className="w-6 h-6 text-pink-400 animate-spin" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="h-2.5 w-3/4 rounded-full bg-neutral-800 mx-auto" />
+                      <div className="h-2 w-1/2 rounded-full bg-neutral-800/80 mx-auto" />
+                    </div>
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm font-black text-white">

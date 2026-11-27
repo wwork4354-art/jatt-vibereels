@@ -2245,6 +2245,7 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
                               allowDataImageAudio: false,
                             })}
                             title={previewItem.title}
+                            loading="lazy"
                             onError={() =>
                               setPlayerError('Remote embed blocked playback inside frame.')
                             }

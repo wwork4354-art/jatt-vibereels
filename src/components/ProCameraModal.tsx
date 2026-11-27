@@ -567,6 +567,14 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaStreamRef.current.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
       }
+      if (videoPreviewRef.current) {
+        try {
+          videoPreviewRef.current.pause();
+          videoPreviewRef.current.srcObject = null;
+        } catch {
+          // ignore
+        }
+      }
       if (audioTrackRef.current) {
         try {
           audioTrackRef.current.stop();
@@ -666,9 +674,18 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
 
       const hasLiveAudio = Boolean(audioTrackRef.current && audioTrackRef.current.readyState === 'live');
       const needAudio = !hasLiveAudio;
+      const cachedDeviceId = cameraDeviceCacheRef.current[facingMode];
 
-      // 1. Safe mobile-first initialization WITHOUT strict 4K width/height constraints
+      // 1. Safe mobile-first initialization WITHOUT strict 4K width/height constraints (uses cached deviceId first for instant flip)
       const attempts: MediaStreamConstraints[] = [
+        ...(cachedDeviceId
+          ? [
+              {
+                video: { deviceId: { exact: cachedDeviceId } },
+                audio: needAudio,
+              } as MediaStreamConstraints,
+            ]
+          : []),
         {
           video: { facingMode },
           audio: needAudio,
@@ -827,7 +844,7 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaStreamRef.current = null;
       }
     };
-  }, [isOpen, facingMode, resFps, sonyPreset, cameraRetryNonce, onShowToast, revokeBurstFrames]);
+  }, [isOpen, facingMode, resFps, cameraRetryNonce, onShowToast, revokeBurstFrames]);
 
   // Ensure <video> preview element re-attaches active stream whenever view returns from blocked state
   useEffect(() => {

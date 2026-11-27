@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
+import bundledOfficialLogo from '../assets/images/jatt_vibereels_official_logo.jpg';
 
-export const DEFAULT_BRAND_LOGO_SRC = '/assets/aistudio/image_137fba56_4a00493d.jpg';
+export const BUNDLED_BRAND_LOGO_FALLBACK = bundledOfficialLogo;
+export const BRAND_LOGO_SVG_DATA_URI =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 44" fill="none"><defs><linearGradient id="jv" x1="0" y1="0" x2="120" y2="44" gradientUnits="userSpaceOnUse"><stop stop-color="#22d3ee"/><stop offset="0.5" stop-color="#a855f7"/><stop offset="1" stop-color="#ec4899"/></linearGradient></defs><rect width="120" height="44" rx="10" fill="#050507"/><rect x="1" y="1" width="118" height="42" rx="9" stroke="url(#jv)" stroke-opacity="0.55" stroke-width="1.5"/><path d="M22 10h8v15c0 4.5-3 7.5-7.5 7.5-3.2 0-5.6-1.4-6.9-3.9l4.2-2.6c.5.9 1.3 1.4 2.4 1.4 1.3 0 2.1-.8 2.1-2.3V10z" fill="url(#jv)"/><polygon points="36,13 48,21 36,29" fill="url(#jv)"/><text x="55" y="26" fill="#ffffff" font-family="system-ui,sans-serif" font-size="13" font-weight="900" letter-spacing="0.4">JATT</text></svg>`
+  );
+export const DEFAULT_BRAND_LOGO_SRC = bundledOfficialLogo;
 const CUSTOM_BRAND_LOGO_STORAGE_KEY = 'jatt_custom_brand_logo_v1';
 const BRAND_LOGO_CHANGE_EVENT = 'jatt-brand-logo-changed';
 
@@ -72,7 +79,7 @@ export interface BrandConfig {
 export const BRAND_CONFIG: BrandConfig = {
   appName: 'JATT VibeReels',
   tagline: 'Create & Share AI Reels',
-  logoUrl: '/assets/aistudio/image_137fba56_4a00493d.jpg',
+  logoUrl: bundledOfficialLogo,
   brandBadge: 'Official',
   accentColor: '#ec4899',
   secondaryAccentColor: '#06b6d4',
@@ -96,6 +103,7 @@ function isValidLogoString(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
   const lower = trimmed.toLowerCase();
+  if (lower.startsWith('/src/assets/')) return false;
   if (lower.startsWith('https://') || lower.startsWith('http://')) return true;
   if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
   if (/^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(trimmed)) return true;

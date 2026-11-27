@@ -795,6 +795,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           mode="grid"
           isRamSaverMode={isRamSaverMode}
           fallbackGradient={video.fallbackGradient}
+          disableVideoFallback={true}
           className="w-full h-full object-cover sm:object-contain sm:max-w-md opacity-45"
         />
       </div>
@@ -853,7 +854,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             />
             {isPlaying && !cleanMode && (
               <div
-                className={`absolute top-16 z-20 px-2.5 py-1 rounded-full bg-neutral-950/85 border border-pink-500/40 flex items-center gap-1.5 pointer-events-none ${
+                className={`absolute top-20 z-20 px-2.5 py-1 rounded-full bg-neutral-950/90 backdrop-blur-md border border-pink-500/40 flex items-center gap-1.5 pointer-events-none shadow-md ${
                   isLeftControls ? 'right-4' : 'left-4'
                 }`}
               >
@@ -931,12 +932,13 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   mode={isRamSaverMode ? 'grid' : 'hero'}
                   isRamSaverMode={isRamSaverMode}
                   fallbackGradient={video.fallbackGradient}
+                  disableVideoFallback={!isNext}
                   className="w-full h-full object-cover sm:object-contain opacity-90 gpu-accelerated"
                 />
                 {isNext && !isActive && video.videoUrl && (
                   <video
                     src={video.videoUrl}
-                    preload={isRamSaverMode ? 'none' : 'metadata'}
+                    preload="metadata"
                     muted
                     playsInline
                     crossOrigin="anonymous"
@@ -955,7 +957,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 }`}
               >
                 {!isRamSaverMode && <ProceduralCanvas theme={video.category} isPlaying={isPlaying} />}
-                <div className="absolute top-16 left-4 z-20 bg-neutral-900/90 px-3 py-1.5 rounded-full border border-neutral-700/60 flex items-center gap-2 [transform:translateZ(0)]">
+                <div className="absolute top-20 left-4 z-20 bg-neutral-950/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 flex items-center gap-2 shadow-lg [transform:translateZ(0)]">
                   <span className={`w-2 h-2 rounded-full bg-pink-500 ${isRamSaverMode ? '' : 'animate-ping'}`} />
                   <span className="text-[11px] font-semibold text-neutral-300">Live Visual Reel</span>
                 </div>
@@ -991,15 +993,15 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         ))}
       </div>
 
-      {/* Top Scrim Bar & Floating Quick-Action Pill (Hide/Show UI + Swap L/R) */}
+      {/* Top Scrim Bar & Floating Quick-Action Pill (spaced cleanly below Live Snaps pill, high-contrast frosted surface) */}
       <div
-        className={`absolute top-0 left-0 right-0 h-24 pointer-events-none z-40 flex items-start justify-between px-3 sm:px-4 pt-4 sm:mx-auto transition-all duration-200 [transform:translateZ(0)] ${
-          cleanMode ? 'bg-transparent' : 'bg-gradient-to-b from-black/80 via-black/30 to-transparent'
+        className={`absolute top-0 left-0 right-0 h-28 pointer-events-none z-40 flex items-start justify-between gap-2 px-2.5 sm:px-4 pt-10 sm:mx-auto transition-all duration-200 [transform:translateZ(0)] ${
+          cleanMode ? 'bg-transparent' : 'bg-gradient-to-b from-black/85 via-black/45 to-transparent'
         } ${isLandscape ? 'sm:max-w-4xl' : 'sm:max-w-[440px]'}`}
       >
         {/* Left: Audio Mute / Unmute (hidden in Clean Screen Mode) */}
         <div
-          className={`flex items-center gap-1.5 transition-all duration-200 [transform:translateZ(0)] ${
+          className={`flex items-center gap-1.5 shrink-0 transition-all duration-200 [transform:translateZ(0)] ${
             cleanMode ? 'opacity-0 pointer-events-none scale-95' : 'pointer-events-auto opacity-100'
           }`}
         >
@@ -1010,32 +1012,36 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               onToggleMute();
               soundEngine.setMuted(!isMuted);
             }}
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white hover:bg-neutral-800 active:scale-95 transition-all text-xs font-semibold [transform:translateZ(0)]"
+            className="flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full bg-neutral-950/90 backdrop-blur-md border border-white/20 text-white hover:bg-neutral-900 active:scale-95 transition-all text-xs font-semibold shadow-lg shadow-black/50 [transform:translateZ(0)]"
             aria-label={isMuted ? 'Unmute video' : 'Mute video'}
           >
             {isMuted ? (
               <>
-                <VolumeX className="w-4 h-4 text-neutral-300" />
-                <span className="text-[11px] text-neutral-300 hidden xs:inline">Tap to unmute</span>
+                <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-neutral-300 shrink-0" />
+                <span className="text-[10px] sm:text-[11px] text-neutral-200 hidden min-[380px]:inline whitespace-nowrap">
+                  Unmute
+                </span>
               </>
             ) : (
               <>
-                <Volume2 className="w-4 h-4 text-pink-400 animate-pulse" />
-                <span className="text-[11px] text-pink-400 hidden xs:inline">Audio on</span>
+                <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-pink-400 animate-pulse shrink-0" />
+                <span className="text-[10px] sm:text-[11px] text-pink-300 hidden min-[380px]:inline whitespace-nowrap">
+                  Audio on
+                </span>
               </>
             )}
           </button>
         </div>
 
         {/* Center/Right: Floating Quick-Action Pill + Views + Delete */}
-        <div className="pointer-events-auto flex items-center gap-1.5">
+        <div className="pointer-events-auto flex items-center gap-1 sm:gap-1.5 shrink-0">
           {/* Floating Quick-Action Pill: (1) Hide/Show UI  (2) Swap Left/Right */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className={`inline-flex items-center rounded-full border shadow-lg transition-all [transform:translateZ(0)] ${
+            className={`inline-flex items-center rounded-full border shadow-lg shadow-black/50 backdrop-blur-md transition-all [transform:translateZ(0)] ${
               cleanMode
-                ? 'bg-neutral-950/85 border-white/25 hover:bg-neutral-900'
-                : 'bg-neutral-900/95 border-white/15'
+                ? 'bg-neutral-950/90 border-white/25 hover:bg-neutral-900'
+                : 'bg-neutral-950/90 border-white/20'
             }`}
           >
             <button
@@ -1052,7 +1058,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
               aria-pressed={cleanMode}
               aria-label={cleanMode ? 'Show video UI' : 'Hide video UI'}
               title={cleanMode ? 'Show UI controls' : 'Clean Screen Mode (Hide UI)'}
-              className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold transition-colors cursor-pointer ${
+              className={`flex items-center gap-1 px-2 sm:px-2.5 py-1.5 text-[10px] sm:text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
                 cleanMode
                   ? 'text-cyan-300 hover:text-white rounded-full'
                   : 'text-white hover:text-cyan-300 rounded-l-full'
@@ -1060,12 +1066,12 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             >
               {cleanMode ? (
                 <>
-                  <Eye className="w-3.5 h-3.5 text-cyan-300" />
+                  <Eye className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
                   <span>Show UI</span>
                 </>
               ) : (
                 <>
-                  <EyeOff className="w-3.5 h-3.5 text-cyan-300" />
+                  <EyeOff className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
                   <span>Hide UI</span>
                 </>
               )}
@@ -1073,7 +1079,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
 
             {onSwapControlsSide && !cleanMode && (
               <>
-                <span className="w-px h-3.5 bg-white/15" aria-hidden="true" />
+                <span className="w-px h-3.5 bg-white/20" aria-hidden="true" />
                 <button
                   type="button"
                   onClick={(e) => {
@@ -1092,13 +1098,13 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                       ? 'Controls on Left — tap to switch to Right side'
                       : 'Controls on Right — tap to switch to Left side'
                   }
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-r-full text-[11px] font-bold transition-colors cursor-pointer ${
+                  className={`flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-r-full text-[10px] sm:text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
                     isLeftControls
                       ? 'text-white hover:text-pink-300'
                       : 'text-pink-300 hover:text-white'
                   }`}
                 >
-                  <ArrowLeftRight className="w-3.5 h-3.5 text-pink-400" />
+                  <ArrowLeftRight className="w-3.5 h-3.5 text-pink-400 shrink-0" />
                   <span>Swap</span>
                 </button>
               </>
@@ -1108,10 +1114,10 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           {!cleanMode && (
             <>
               <div
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-neutral-900/90 border border-white/15 text-white text-[11px] font-bold tabular-nums [transform:translateZ(0)]"
+                className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-full bg-neutral-950/90 backdrop-blur-md border border-white/20 text-white text-[10px] sm:text-[11px] font-bold tabular-nums shadow-lg shadow-black/50 [transform:translateZ(0)]"
                 title="Total Views"
               >
-                <Eye className="w-3.5 h-3.5 text-cyan-400" />
+                <Eye className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                 <span>{formatCount(video.stats.views)}</span>
               </div>
 
@@ -1122,7 +1128,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                     e.stopPropagation();
                     setIsConfirmingDelete(true);
                   }}
-                  className="p-1.5 rounded-full bg-rose-600/85 hover:bg-rose-500 text-white border border-rose-300/40 shadow-md active:scale-95 transition-all cursor-pointer [transform:translateZ(0)]"
+                  className="p-1.5 rounded-full bg-rose-600/90 hover:bg-rose-500 backdrop-blur-md text-white border border-rose-300/45 shadow-lg shadow-black/50 active:scale-95 transition-all cursor-pointer [transform:translateZ(0)]"
                   title="Delete this uploaded post"
                   aria-label="Delete post"
                 >

@@ -331,6 +331,7 @@ export const LiteYouTubePlayer: React.FC<LiteYouTubePlayerProps> = ({
             key={`${youtubeId}-${serverIndex}-${reloadNonce}`}
             src={embedSrc}
             title={title}
+            loading="lazy"
             onLoad={() => {
               setIframeLoaded(true);
               sendPlaybackQualityCommand(iframeRef.current, qualityOption.ytQuality);

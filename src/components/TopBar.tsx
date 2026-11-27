@@ -36,7 +36,13 @@ import { PWAInstallButton } from './PWAInstallButton';
 import { soundEngine } from '../utils/soundEngine';
 import { isMainAdminAccount } from '../data/mockUsers';
 import { sanitizeSearchQuery } from '../utils/security';
-import { BRAND_CONFIG, DEFAULT_BRAND_LOGO_SRC, useBrandLogo } from '../config/brandConfig';
+import {
+  BRAND_CONFIG,
+  BRAND_LOGO_SVG_DATA_URI,
+  BUNDLED_BRAND_LOGO_FALLBACK,
+  DEFAULT_BRAND_LOGO_SRC,
+  useBrandLogo,
+} from '../config/brandConfig';
 import { VideoThumbnail } from './VideoThumbnail';
 
 /**
@@ -374,13 +380,18 @@ const TopBarComponent: React.FC<TopBarProps> = ({
       <div className="flex items-center gap-3 shrink-0">
         {isProfileOnLeft && profileAuthCluster}
         <img
-          src={activeLogoSrc || BRAND_LOGO_SRC}
+          src={activeLogoSrc || BRAND_LOGO_SRC || BUNDLED_BRAND_LOGO_FALLBACK}
           alt={BRAND_CONFIG.appName}
-          loading="lazy"
-          decoding="async"
+          loading="eager"
+          decoding="sync"
           onError={(e) => {
-            if (e.currentTarget.src !== DEFAULT_BRAND_LOGO_SRC) {
-              e.currentTarget.src = DEFAULT_BRAND_LOGO_SRC;
+            const stage = e.currentTarget.dataset.fallbackStage || '0';
+            if (stage === '0') {
+              e.currentTarget.dataset.fallbackStage = '1';
+              e.currentTarget.src = BUNDLED_BRAND_LOGO_FALLBACK;
+            } else if (stage === '1') {
+              e.currentTarget.dataset.fallbackStage = '2';
+              e.currentTarget.src = BRAND_LOGO_SVG_DATA_URI;
             }
           }}
           className="h-8 sm:h-9 w-auto max-w-[155px] object-contain bg-black rounded-lg px-1 shadow-sm"

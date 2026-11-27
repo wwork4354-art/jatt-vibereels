@@ -57,7 +57,7 @@ export default defineConfig(() => {
           cleanupOutdatedCaches: true,
           skipWaiting: true,
           clientsClaim: true,
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,jpg,jpeg,webp,svg,woff,woff2}'],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           runtimeCaching: [
             {
@@ -75,13 +75,41 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/i,
+              urlPattern: /\.(?:woff2?|ttf|otf|eot)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'static-fonts-cache',
+                expiration: {
+                  maxEntries: 30,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i,
               handler: 'CacheFirst',
               options: {
                 cacheName: 'images-cache',
                 expiration: {
-                  maxEntries: 120,
+                  maxEntries: 150,
                   maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /^https:\/\/i\.ytimg\.com\/.*/i,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'yt-thumbnails-cache',
+                expiration: {
+                  maxEntries: 150,
+                  maxAgeSeconds: 60 * 60 * 24 * 7,
                 },
                 cacheableResponse: {
                   statuses: [0, 200],

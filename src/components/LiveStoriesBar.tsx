@@ -359,7 +359,7 @@ const LiveStoriesBarComponent: React.FC<LiveStoriesBarProps> = ({
     <>
       {/* Subtle top pull-down handle / pill indicator when Live Stories Bar is collapsed */}
       <div
-        className={`absolute top-1.5 left-1/2 -translate-x-1/2 z-30 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        className={`absolute top-1.5 left-1/2 -translate-x-1/2 z-[45] transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
           showPullHandle
             ? 'opacity-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 -translate-y-2 pointer-events-none'
@@ -399,7 +399,7 @@ const LiveStoriesBarComponent: React.FC<LiveStoriesBarProps> = ({
               setExpanded(true);
             }
           }}
-          className="group touch-none select-none flex flex-col items-center gap-0.5 px-3 py-1 rounded-full bg-neutral-950/90 hover:bg-neutral-900 border border-white/15 shadow-lg shadow-black/40 cursor-grab active:cursor-grabbing active:scale-95 transition-transform"
+          className="group touch-none select-none flex flex-col items-center gap-0.5 px-3 py-1 rounded-full bg-neutral-950/92 backdrop-blur-md hover:bg-neutral-900 border border-white/20 shadow-lg shadow-black/60 cursor-grab active:cursor-grabbing active:scale-95 transition-transform"
           title="Swipe down or tap to open Live Snaps & 24h Stories"
           aria-label="Open Live Snaps bar"
         >

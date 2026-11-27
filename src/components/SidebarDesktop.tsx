@@ -27,7 +27,13 @@ import { BRAND_LOGO_SRC } from './TopBar';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { PWAInstallButton } from './PWAInstallButton';
 import { isMainAdminAccount } from '../data/mockUsers';
-import { BRAND_CONFIG, DEFAULT_BRAND_LOGO_SRC, getBrandNameParts, useBrandLogo } from '../config/brandConfig';
+import {
+  BRAND_CONFIG,
+  BRAND_LOGO_SVG_DATA_URI,
+  BUNDLED_BRAND_LOGO_FALLBACK,
+  getBrandNameParts,
+  useBrandLogo,
+} from '../config/brandConfig';
 
 
 interface SidebarDesktopProps {
@@ -80,13 +86,18 @@ const SidebarDesktopComponent: React.FC<SidebarDesktopProps> = ({
         {/* Brand Logo */}
         <div className="flex items-center gap-3 px-1">
           <img
-            src={activeLogoSrc || BRAND_LOGO_SRC}
+            src={activeLogoSrc || BRAND_LOGO_SRC || BUNDLED_BRAND_LOGO_FALLBACK}
             alt={`${BRAND_CONFIG.appName} Logo`}
-            loading="lazy"
-            decoding="async"
+            loading="eager"
+            decoding="sync"
             onError={(e) => {
-              if (e.currentTarget.src !== DEFAULT_BRAND_LOGO_SRC) {
-                e.currentTarget.src = DEFAULT_BRAND_LOGO_SRC;
+              const stage = e.currentTarget.dataset.fallbackStage || '0';
+              if (stage === '0') {
+                e.currentTarget.dataset.fallbackStage = '1';
+                e.currentTarget.src = BUNDLED_BRAND_LOGO_FALLBACK;
+              } else if (stage === '1') {
+                e.currentTarget.dataset.fallbackStage = '2';
+                e.currentTarget.src = BRAND_LOGO_SVG_DATA_URI;
               }
             }}
             className="w-12 h-10 rounded-xl object-contain bg-black shrink-0 border border-pink-500/40 p-0.5 shadow-lg shadow-pink-500/15"

@@ -17,6 +17,7 @@ interface VideoThumbnailProps {
   isRamSaverMode?: boolean;
   className?: string;
   fallbackGradient?: string;
+  disableVideoFallback?: boolean;
 }
 
 export const VideoThumbnail: React.FC<VideoThumbnailProps> = ({
@@ -28,6 +29,7 @@ export const VideoThumbnail: React.FC<VideoThumbnailProps> = ({
   isRamSaverMode = false,
   className = 'w-full h-full object-cover',
   fallbackGradient = 'from-neutral-900 via-fuchsia-950/50 to-neutral-950',
+  disableVideoFallback = false,
 }) => {
   const isImagePost = mediaType === 'image';
   const optimizedImageSrc = optimizeThumbnailUrl(
@@ -96,8 +98,8 @@ export const VideoThumbnail: React.FC<VideoThumbnailProps> = ({
     );
   }
 
-  // Priority 2: Metadata-preloaded video preview at #t=0.5 (never blank black frame)
-  if (!isImagePost && videoUrl && !videoFailed) {
+  // Priority 2: Metadata-preloaded video preview at #t=0.5 (never blank black frame when enabled)
+  if (!isImagePost && videoUrl && !videoFailed && !disableVideoFallback) {
     return (
       <video
         ref={previewVideoRef}

@@ -60,6 +60,20 @@ export function revokeBlobsForPost(postId: string): void {
   trackedPostBlobs.delete(postId);
 }
 
+export function pruneOrphanedBlobs(activeKeepIds: Set<string>): number {
+  let revoked = 0;
+  for (const [postId, urls] of Array.from(trackedPostBlobs.entries())) {
+    if (!activeKeepIds.has(postId)) {
+      for (const url of Array.from(urls)) {
+        safeRevokeBlobUrl(url);
+        revoked += 1;
+      }
+      trackedPostBlobs.delete(postId);
+    }
+  }
+  return revoked;
+}
+
 export function getTrackedBlobCount(): number {
   return blobRegistry.size;
 }

@@ -92,6 +92,7 @@ import {
 import { getIsRamSaverMode, useRamSaverMode } from './lib/ramSaverMode';
 import {
   getRegisteredCloudUrl,
+  pruneOrphanedBlobs,
   registerPostBlobUrl,
   registerPostCloudUrl,
   revokeBlobsForPost,
@@ -173,6 +174,28 @@ const LazyTabFallback = () => (
           <div className="h-3 w-1/2 rounded-md bg-neutral-800/70" />
         </div>
       ))}
+    </div>
+  </div>
+);
+
+const LazyModalFallback = () => (
+  <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="w-full max-w-lg rounded-3xl bg-neutral-950 border border-neutral-800 p-5 space-y-4 animate-pulse shadow-2xl">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-neutral-900" />
+          <div className="space-y-1.5">
+            <div className="h-4 w-36 rounded-md bg-neutral-800" />
+            <div className="h-3 w-24 rounded-md bg-neutral-900" />
+          </div>
+        </div>
+        <div className="w-8 h-8 rounded-full bg-neutral-900" />
+      </div>
+      <div className="w-full aspect-video rounded-2xl bg-neutral-900/90" />
+      <div className="grid grid-cols-2 gap-2.5">
+        <div className="h-10 rounded-xl bg-neutral-900" />
+        <div className="h-10 rounded-xl bg-neutral-800" />
+      </div>
     </div>
   </div>
 );
@@ -1445,10 +1468,15 @@ export default function App() {
       if (mutated) {
         setVideos(updatedVideos);
       }
+
+      const activeKeepIds = new Set<string>(updatedVideos.map((v) => v.id));
+      liveStories.forEach((s) => activeKeepIds.add(s.id));
+      directSnaps.forEach((d) => activeKeepIds.add(d.id));
+      pruneOrphanedBlobs(activeKeepIds);
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [activeIndex, currentTab, displayedVideos, isRamSaverMode, selectedTag]);
+  }, [activeIndex, currentTab, displayedVideos, isRamSaverMode, selectedTag, liveStories, directSnaps]);
 
   // Smooth touch + desktop mouse/wheel swipe gestures for collapsible Live Stories Bar
   const beginStoriesSwipe = useCallback(
@@ -2601,7 +2629,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-[100dvh] w-full bg-neutral-950 text-white overflow-hidden select-none">
+    <div className="flex flex-col h-[100dvh] w-full max-w-full overflow-x-hidden bg-neutral-950 text-white overflow-hidden select-none">
       {/* Top Bar with Registration, Login, Video Upload, Go Live & Admin Panel */}
       <TopBar
         currentUser={currentUser}
@@ -3217,7 +3245,7 @@ export default function App() {
       )}
 
       {isUploadOpen && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<LazyModalFallback />}>
           <UploadModal
             isOpen={isUploadOpen}
             onClose={() => {
@@ -3241,7 +3269,7 @@ export default function App() {
       )}
 
       {isEditorOpen && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<LazyModalFallback />}>
           <PhotoVideoEditorModal
             isOpen={isEditorOpen}
             onClose={() => {
@@ -3259,7 +3287,7 @@ export default function App() {
       )}
 
       {isAIGeneratorOpen && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<LazyModalFallback />}>
           <AIGeneratorModal
             isOpen={isAIGeneratorOpen}
             onClose={() => setIsAIGeneratorOpen(false)}
@@ -3323,7 +3351,7 @@ export default function App() {
       )}
 
       {isDirectSnapsOpen && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<LazyModalFallback />}>
           <DirectSnapsModal
             isOpen={isDirectSnapsOpen}
             onClose={() => {
@@ -3376,7 +3404,7 @@ export default function App() {
       )}
 
       {isTrendsOpen && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<LazyModalFallback />}>
           <TrendsDashboard
             isOpen={isTrendsOpen}
             onClose={() => setIsTrendsOpen(false)}
@@ -3403,7 +3431,7 @@ export default function App() {
       )}
 
       {isLiveOpen && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<LazyModalFallback />}>
           <LiveStreamModal
             isOpen={isLiveOpen}
             onClose={() => setIsLiveOpen(false)}
@@ -3414,7 +3442,7 @@ export default function App() {
       )}
 
       {isCreatorSearchOpen && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<LazyModalFallback />}>
           <CreatorDirectoryModal
             isOpen={isCreatorSearchOpen}
             onClose={() => setIsCreatorSearchOpen(false)}

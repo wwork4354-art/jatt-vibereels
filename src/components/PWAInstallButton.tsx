@@ -135,11 +135,11 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
         <button
           type="button"
           onClick={handleClick}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/45 text-emerald-300 text-[10px] font-black shrink-0 active:scale-95 cursor-pointer"
+          className="flex items-center gap-0.5 min-[420px]:gap-1 px-1.5 py-0.5 min-[420px]:px-2 min-[420px]:py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/45 text-emerald-300 text-[9px] min-[420px]:text-[10px] font-black shrink-0 active:scale-95 cursor-pointer"
           title={`Install ${BRAND_CONFIG.appName} App`}
           aria-label={`Install ${BRAND_CONFIG.appName}`}
         >
-          <Download className="w-3 h-3 text-emerald-400" />
+          <Download className="w-2.5 h-2.5 min-[420px]:w-3 min-[420px]:h-3 text-emerald-400" />
           <span>Install</span>
         </button>
       ) : (

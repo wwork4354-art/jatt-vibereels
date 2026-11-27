@@ -37,7 +37,12 @@ import {
   AudioTrackOption,
 } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
-import { BRAND_CONFIG, DEFAULT_BRAND_LOGO_SRC, useBrandLogo } from '../config/brandConfig';
+import {
+  BRAND_CONFIG,
+  BRAND_LOGO_SVG_DATA_URI,
+  BUNDLED_BRAND_LOGO_FALLBACK,
+  useBrandLogo,
+} from '../config/brandConfig';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
@@ -181,31 +186,36 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
 
   return (
     <>
-      {/* Mobile Top Header (Notch/Status-bar safe + Never clips Profile/Logout on narrow phones + Swap Left/Right) */}
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 w-full max-w-full overflow-x-hidden bg-neutral-950/95 border-b border-neutral-800/80 pt-[max(0.65rem,env(safe-area-inset-top))] pb-1.5 px-3 flex flex-col gap-1.5">
-        {/* Top Row: Swappable Profile/Logout cluster & Brand Logo with overflow-safe utility strip */}
+      {/* Mobile Top Header (Notch/Status-bar safe + 100% viewport fit + Zero right-edge clipping) */}
+      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 w-full max-w-full overflow-x-hidden bg-neutral-950/95 border-b border-neutral-800/80 pt-[max(0.5rem,env(safe-area-inset-top))] pb-1.5 px-1.5 min-[420px]:px-3 flex flex-col gap-1">
+        {/* Top Row: Swappable Profile/Logout cluster & Brand Logo with compact utility strip */}
         {(() => {
           const isLeftHeaderProfile = feedControlsSide === 'left';
 
           const brandLogoNode = (
             <div className="flex items-center shrink-0">
               <img
-                src={activeLogoSrc || BRAND_LOGO_SRC}
+                src={activeLogoSrc || BRAND_LOGO_SRC || BUNDLED_BRAND_LOGO_FALLBACK}
                 alt={BRAND_CONFIG.appName}
-                loading="lazy"
-                decoding="async"
+                loading="eager"
+                decoding="sync"
                 onError={(e) => {
-                  if (e.currentTarget.src !== DEFAULT_BRAND_LOGO_SRC) {
-                    e.currentTarget.src = DEFAULT_BRAND_LOGO_SRC;
+                  const stage = e.currentTarget.dataset.fallbackStage || '0';
+                  if (stage === '0') {
+                    e.currentTarget.dataset.fallbackStage = '1';
+                    e.currentTarget.src = BUNDLED_BRAND_LOGO_FALLBACK;
+                  } else if (stage === '1') {
+                    e.currentTarget.dataset.fallbackStage = '2';
+                    e.currentTarget.src = BRAND_LOGO_SVG_DATA_URI;
                   }
                 }}
-                className="h-5 min-[380px]:h-6 w-auto max-w-[78px] min-[380px]:max-w-[96px] object-contain bg-black rounded-md px-0.5"
+                className="h-6 min-[420px]:h-7 w-auto max-w-[54px] min-[375px]:max-w-[66px] min-[420px]:max-w-[92px] object-contain bg-black rounded-md px-0.5 shrink-0"
               />
             </div>
           );
 
           const utilityIconsNode = (
-            <div className="flex items-center gap-1 min-w-0 overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-0.5 min-[420px]:gap-1 min-w-0">
               <button
                 type="button"
                 onClick={() => {
@@ -216,7 +226,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                       : 'Lite / RAM Saver Mode OFF (Full Visuals)'
                   );
                 }}
-                className={`px-1.5 py-1 rounded-lg border text-[10px] font-black flex items-center gap-0.5 shrink-0 cursor-pointer ${
+                className={`px-1 py-0.5 min-[420px]:px-1.5 min-[420px]:py-1 rounded-lg border text-[9px] min-[420px]:text-[10px] font-black flex items-center gap-0.5 shrink-0 cursor-pointer ${
                   isRamSaverMode
                     ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
                     : 'bg-neutral-900 border-neutral-800 text-neutral-400'
@@ -224,7 +234,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                 title="Toggle Lite / RAM Saver Mode for 3GB RAM Android devices"
                 aria-label="Toggle Lite RAM Saver Mode"
               >
-                <Zap className="w-3 h-3 shrink-0" />
+                <Zap className="w-2.5 h-2.5 min-[420px]:w-3 min-[420px]:h-3 shrink-0" />
                 <span className="hidden min-[360px]:inline">
                   {isRamSaverMode ? 'Lite' : 'RAM'}
                 </span>
@@ -235,7 +245,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
               <button
                 type="button"
                 onClick={() => setIsMobileSearchOpen((prev) => !prev)}
-                className={`p-1.5 rounded-lg border shrink-0 transition-colors ${
+                className={`p-1 min-[420px]:p-1.5 rounded-lg border shrink-0 transition-colors ${
                   isMobileSearchOpen
                     ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
                     : 'bg-neutral-900 border-neutral-800 text-cyan-400 hover:text-white'
@@ -243,19 +253,23 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                 title="Search User ID (@username) or Creator Name"
                 aria-label="Search Creators"
               >
-                {isMobileSearchOpen ? <X className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
+                {isMobileSearchOpen ? (
+                  <X className="w-3 h-3 min-[420px]:w-3.5 min-[420px]:h-3.5" />
+                ) : (
+                  <Search className="w-3 h-3 min-[420px]:w-3.5 min-[420px]:h-3.5" />
+                )}
               </button>
               {onOpenDirectSnaps && (
                 <button
                   type="button"
                   onClick={onOpenDirectSnaps}
-                  className="relative p-1.5 rounded-lg border shrink-0 bg-neutral-900 border-pink-500/40 text-pink-300 hover:text-white cursor-pointer"
+                  className="relative p-1 min-[420px]:p-1.5 rounded-lg border shrink-0 bg-neutral-900 border-pink-500/40 text-pink-300 hover:text-white cursor-pointer"
                   title="Messages / Inbox"
                   aria-label="Messages"
                 >
-                  <MessageCircle className="w-3.5 h-3.5" />
+                  <MessageCircle className="w-3 h-3 min-[420px]:w-3.5 min-[420px]:h-3.5" />
                   {unreadDirectSnapsCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center tabular-nums">
+                    <span className="absolute -top-1 -right-1 min-w-[13px] h-3.5 px-0.5 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center tabular-nums">
                       {unreadDirectSnapsCount > 99 ? '99+' : unreadDirectSnapsCount}
                     </span>
                   )}
@@ -264,7 +278,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
               <button
                 type="button"
                 onClick={() => onSelectTab('activity')}
-                className={`relative p-1.5 rounded-lg border shrink-0 transition-colors ${
+                className={`relative p-1 min-[420px]:p-1.5 rounded-lg border shrink-0 transition-colors ${
                   currentTab === 'activity'
                     ? 'bg-pink-600/25 border-pink-500/50 text-pink-300'
                     : 'bg-neutral-900 border-neutral-800 text-neutral-300'
@@ -272,9 +286,9 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                 title="Notifications & Activity"
                 aria-label="Activity"
               >
-                <Bell className="w-3.5 h-3.5" />
+                <Bell className="w-3 h-3 min-[420px]:w-3.5 min-[420px]:h-3.5" />
                 {unreadActivityCount > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-1 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center">
+                  <span className="absolute -top-1 -right-1 min-w-[13px] h-3.5 px-0.5 rounded-full bg-pink-500 text-white text-[8px] font-black flex items-center justify-center">
                     {unreadActivityCount > 9 ? '9+' : unreadActivityCount}
                   </span>
                 )}
@@ -286,21 +300,21 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
             <button
               type="button"
               onClick={onOpenLogin}
-              className="px-2.5 py-1 bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 text-white rounded-lg text-[10px] font-black border border-pink-400/50 shadow-md shadow-pink-600/25 active:scale-95 shrink-0 cursor-pointer"
+              className="px-2 py-0.5 min-[420px]:px-2.5 min-[420px]:py-1 bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-500 text-white rounded-lg text-[9.5px] min-[420px]:text-[10px] font-black border border-pink-400/50 shadow-md shadow-pink-600/25 active:scale-95 shrink-0 cursor-pointer"
             >
               Log In
             </button>
           ) : (
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-0.5 min-[420px]:gap-1 shrink-0">
               {isMainAdminAccount(currentUser) && (
                 <button
                   type="button"
                   onClick={onOpenAdmin}
-                  className="p-1.5 bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-lg text-xs shrink-0 cursor-pointer"
+                  className="p-1 min-[420px]:p-1.5 bg-pink-500/20 text-pink-400 border border-pink-500/30 rounded-lg text-xs shrink-0 cursor-pointer"
                   title="Admin Panel"
                   aria-label="Admin Panel"
                 >
-                  <Shield className="w-3.5 h-3.5" />
+                  <Shield className="w-3 h-3 min-[420px]:w-3.5 min-[420px]:h-3.5" />
                 </button>
               )}
               <button
@@ -315,7 +329,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                   alt={currentUser.name}
                   loading="lazy"
                   decoding="async"
-                  className="w-6 h-6 min-[380px]:w-7 min-[380px]:h-7 rounded-full object-cover bg-neutral-800"
+                  className="w-5.5 h-5.5 min-[420px]:w-7 min-[420px]:h-7 rounded-full object-cover bg-neutral-800"
                   referrerPolicy="no-referrer"
                 />
                 <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-neutral-950" />
@@ -324,22 +338,22 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="p-1.5 rounded-lg bg-neutral-900 hover:bg-rose-500/20 border border-neutral-800 hover:border-rose-500/40 text-rose-400 shrink-0 cursor-pointer active:scale-95 transition-colors"
+                  className="p-1 min-[420px]:p-1.5 rounded-lg bg-neutral-900 hover:bg-rose-500/20 border border-neutral-800 hover:border-rose-500/40 text-rose-400 shrink-0 cursor-pointer active:scale-95 transition-colors"
                   title="Log Out"
                   aria-label="Log Out"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  <LogOut className="w-3 h-3 min-[420px]:w-3.5 min-[420px]:h-3.5" />
                 </button>
               )}
             </div>
           );
 
           return (
-            <div className="flex items-center justify-between gap-1.5 w-full min-w-0">
+            <div className="flex items-center justify-between gap-1 min-[420px]:gap-1.5 w-full max-w-full min-w-0">
               {isLeftHeaderProfile ? (
                 <>
                   {profileAuthClusterNode}
-                  <div className="flex items-center gap-1.5 min-w-0 justify-end">
+                  <div className="flex items-center gap-1 min-[420px]:gap-1.5 min-w-0 flex-1 justify-end">
                     {utilityIconsNode}
                     {brandLogoNode}
                   </div>
@@ -347,7 +361,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
               ) : (
                 <>
                   {brandLogoNode}
-                  <div className="flex items-center gap-1.5 min-w-0 justify-end">
+                  <div className="flex items-center gap-1 min-[420px]:gap-1.5 min-w-0 flex-1 justify-end">
                     {utilityIconsNode}
                     {profileAuthClusterNode}
                   </div>
@@ -357,91 +371,93 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
           );
         })()}
 
-        {/* Lower Compact Tabs Row: LIVE / Following / For You / Movie Box (never clipped by phone notch) */}
+        {/* Lower Compact Tabs Row: LIVE / Following / For You / MOVIX / AI / Menu (100% visible on mobile without clipping Menu) */}
         <nav
           aria-label="Feed feeds"
-          className="flex items-center justify-center gap-2 sm:gap-3.5 pt-0.5 pb-0.5 overflow-x-auto no-scrollbar"
+          className="w-full max-w-full overflow-x-auto no-scrollbar pt-0.5 pb-0.5"
         >
-          <button
-            type="button"
-            onClick={onOpenLive}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 transition-all cursor-pointer ${
-              currentTab === 'live'
-                ? 'bg-red-600 text-white shadow-sm shadow-red-600/35 border border-red-400'
-                : 'bg-red-600/20 border border-red-500/40 text-red-400'
-            }`}
-            title="Open TikTok-style Live Stream"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
-            <Radio className="w-2.5 h-2.5" />
-            <span>Live</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onSelectTab('following')}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 transition-all cursor-pointer ${
-              currentTab === 'following'
-                ? 'bg-white/15 text-white border border-white/30'
-                : 'text-neutral-400 hover:text-white border border-transparent'
-            }`}
-          >
-            Following
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onSelectTab('foryou')}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 transition-all cursor-pointer ${
-              currentTab === 'foryou'
-                ? 'bg-white/15 text-white border border-white/30'
-                : 'text-neutral-400 hover:text-white border border-transparent'
-            }`}
-          >
-            For You
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onSelectTab('downloads')}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 transition-all cursor-pointer ${
-              currentTab === 'downloads'
-                ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white shadow-sm border border-cyan-400'
-                : 'bg-cyan-600/15 border border-cyan-500/30 text-cyan-300'
-            }`}
-            title="Open MOVIX (Movie Box)"
-          >
-            <Film className="w-2.5 h-2.5 text-cyan-400" />
-            <span>MOVIX</span>
-          </button>
-
-          {onOpenAIStudio && (
+          <div className="flex items-center justify-between min-[420px]:justify-center gap-0.5 min-[375px]:gap-1 min-[420px]:gap-2 sm:gap-3 w-full min-w-max mx-auto px-0.5">
             <button
               type="button"
-              onClick={onOpenAIStudio}
-              className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 transition-all cursor-pointer bg-gradient-to-r from-cyan-500/20 to-pink-500/20 border border-cyan-400/45 text-cyan-200 hover:text-white"
-              title="Open AI Image & Video Studio"
+              onClick={onOpenLive}
+              className={`flex items-center gap-0.5 min-[400px]:gap-1 px-1.5 min-[400px]:px-2 py-0.5 rounded-full text-[9px] min-[390px]:text-[10px] font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                currentTab === 'live'
+                  ? 'bg-red-600 text-white shadow-sm shadow-red-600/35 border border-red-400'
+                  : 'bg-red-600/20 border border-red-500/40 text-red-400'
+              }`}
+              title="Open TikTok-style Live Stream"
             >
-              <Sparkles className="w-2.5 h-2.5 text-cyan-300" />
-              <span>AI</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+              <Radio className="w-2.5 h-2.5 shrink-0" />
+              <span>Live</span>
             </button>
-          )}
 
-          <button
-            type="button"
-            onClick={onToggleBottomNav}
-            aria-expanded={isBottomNavOpen}
-            aria-label={isBottomNavOpen ? 'Hide bottom navigation menu' : 'Show bottom navigation menu'}
-            title={isBottomNavOpen ? 'Hide Navigation Bar' : 'Open Bottom Menu'}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 transition-all cursor-pointer border ${
-              isBottomNavOpen
-                ? 'bg-pink-600 border-pink-400 text-white shadow-sm shadow-pink-600/30'
-                : 'bg-neutral-900 border-neutral-700/80 text-neutral-200 hover:text-white'
-            }`}
-          >
-            {isBottomNavOpen ? <X className="w-2.5 h-2.5" /> : <Menu className="w-2.5 h-2.5 text-pink-400" />}
-            <span>{isBottomNavOpen ? 'Hide' : 'Menu'}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => onSelectTab('following')}
+              className={`px-1.5 min-[400px]:px-2 py-0.5 rounded-full text-[9.5px] min-[390px]:text-[10.5px] font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                currentTab === 'following'
+                  ? 'bg-white/15 text-white border border-white/30'
+                  : 'text-neutral-400 hover:text-white border border-transparent'
+              }`}
+            >
+              Following
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectTab('foryou')}
+              className={`px-1.5 min-[400px]:px-2 py-0.5 rounded-full text-[9.5px] min-[390px]:text-[10.5px] font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                currentTab === 'foryou'
+                  ? 'bg-white/15 text-white border border-white/30'
+                  : 'text-neutral-400 hover:text-white border border-transparent'
+              }`}
+            >
+              For You
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectTab('downloads')}
+              className={`flex items-center gap-0.5 min-[400px]:gap-1 px-1.5 min-[400px]:px-2 py-0.5 rounded-full text-[9px] min-[390px]:text-[10px] font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                currentTab === 'downloads'
+                  ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-cyan-600 text-white shadow-sm border border-cyan-400'
+                  : 'bg-cyan-600/15 border border-cyan-500/30 text-cyan-300'
+              }`}
+              title="Open MOVIX (Movie Box)"
+            >
+              <Film className="w-2.5 h-2.5 text-cyan-400 shrink-0" />
+              <span>MOVIX</span>
+            </button>
+
+            {onOpenAIStudio && (
+              <button
+                type="button"
+                onClick={onOpenAIStudio}
+                className="flex items-center gap-0.5 min-[400px]:gap-1 px-1.5 min-[400px]:px-2 py-0.5 rounded-full text-[9px] min-[390px]:text-[10px] font-black whitespace-nowrap shrink-0 transition-all cursor-pointer bg-gradient-to-r from-cyan-500/20 to-pink-500/20 border border-cyan-400/45 text-cyan-200 hover:text-white"
+                title="Open AI Image & Video Studio"
+              >
+                <Sparkles className="w-2.5 h-2.5 text-cyan-300 shrink-0" />
+                <span>AI</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onToggleBottomNav}
+              aria-expanded={isBottomNavOpen}
+              aria-label={isBottomNavOpen ? 'Hide bottom navigation menu' : 'Show bottom navigation menu'}
+              title={isBottomNavOpen ? 'Hide Navigation Bar' : 'Open Bottom Menu'}
+              className={`flex items-center gap-0.5 min-[400px]:gap-1 px-1.5 min-[400px]:px-2 py-0.5 rounded-full text-[9px] min-[390px]:text-[10px] font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer border ${
+                isBottomNavOpen
+                  ? 'bg-pink-600 border-pink-400 text-white shadow-sm shadow-pink-600/30'
+                  : 'bg-neutral-900 border-neutral-700/80 text-neutral-200 hover:text-white'
+              }`}
+            >
+              {isBottomNavOpen ? <X className="w-2.5 h-2.5 shrink-0" /> : <Menu className="w-2.5 h-2.5 text-pink-400 shrink-0" />}
+              <span>{isBottomNavOpen ? 'Hide' : 'Menu'}</span>
+            </button>
+          </div>
         </nav>
       </header>
 
