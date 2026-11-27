@@ -3,6 +3,7 @@ import {
   LicenseCheckResult,
   checkLicenseStatus,
   parseExpiryEndMs,
+  resolveConfiguredExpiryDate,
 } from '../config/brandConfig';
 import {
   constantTimeEqual,
@@ -322,6 +323,11 @@ export async function fetchAuthoritativeClock(): Promise<{
 export async function fetchMasterProviderLicense(): Promise<StoredMasterCache | null> {
   const endpointUrl = isAllowedMasterUrl(BRAND_CONFIG.masterLicenseUrl);
   if (!endpointUrl) {
+    try {
+      localStorage.removeItem(MASTER_CACHE_KEY);
+    } catch {
+      // ignore
+    }
     return null;
   }
 
@@ -366,7 +372,7 @@ export async function fetchMasterProviderLicense(): Promise<StoredMasterCache | 
       rawStatus === 'suspended' ? 'suspended' : 'active';
 
     const rawExpiry = (clientEntry.expiryDate || clientEntry.expiry_date || '').trim();
-    const defaultExpiry = (BRAND_CONFIG.licenseExpiryDate || BRAND_CONFIG.expiryDate || '').trim();
+    const defaultExpiry = resolveConfiguredExpiryDate(BRAND_CONFIG);
     const remoteExpiry = rawExpiry ? rawExpiry.slice(0, 10) : defaultExpiry;
 
     const rawKey = (clientEntry.activationKey || clientEntry.activation_key || '').trim();
@@ -402,12 +408,19 @@ export async function fetchMasterProviderLicense(): Promise<StoredMasterCache | 
 export function evaluateLicenseSync(): LicenseCheckResult {
   const localNow = Date.now();
   const hwmMs = readLocalHighWaterMark();
-  const clockTamperDetected = hwmMs > 0 && localNow < hwmMs - 120_000;
-  const effectiveNowMs = Math.max(localNow, hwmMs);
-
   const masterEndpoint = isAllowedMasterUrl(BRAND_CONFIG.masterLicenseUrl);
   const masterCache = masterEndpoint ? readMasterCacheSync(masterEndpoint) : null;
   const unlockGrant = readUnlockGrantUnsafeSync();
+
+  const defaultExpiry = resolveConfiguredExpiryDate(BRAND_CONFIG);
+  const isOwnerLongTermBuild =
+    !masterEndpoint &&
+    BRAND_CONFIG.isLicenseActive &&
+    BRAND_CONFIG.status === 'active' &&
+    defaultExpiry >= '2030-01-01';
+
+  const clockTamperDetected = !isOwnerLongTermBuild && hwmMs > 0 && localNow < hwmMs - 120_000;
+  const effectiveNowMs = isOwnerLongTermBuild ? localNow : Math.max(localNow, hwmMs);
 
   const remoteSuspendedAfterGrant = Boolean(
     masterCache?.status === 'suspended' &&
@@ -419,7 +432,6 @@ export function evaluateLicenseSync(): LicenseCheckResult {
   const baseStatus: 'active' | 'suspended' =
     remoteSuspendedAfterGrant || configSuspendedWithoutGrant ? 'suspended' : 'active';
 
-  const defaultExpiry = (BRAND_CONFIG.licenseExpiryDate || BRAND_CONFIG.expiryDate || '').trim();
   let bestExpiryDate = masterCache?.expiryDate || defaultExpiry;
   let source: 'config' | 'remote' | 'activation_key' = masterCache ? 'remote' : 'config';
 
@@ -451,6 +463,14 @@ export async function evaluateFullLicenseState(): Promise<LicenseCheckResult> {
     readVerifiedUnlockGrant(),
   ]);
 
+  const masterEndpoint = isAllowedMasterUrl(BRAND_CONFIG.masterLicenseUrl);
+  const defaultExpiry = resolveConfiguredExpiryDate(BRAND_CONFIG);
+  const isOwnerLongTermBuild =
+    !masterEndpoint &&
+    BRAND_CONFIG.isLicenseActive &&
+    BRAND_CONFIG.status === 'active' &&
+    defaultExpiry >= '2030-01-01';
+
   const remoteSuspendedAfterGrant = Boolean(
     masterState?.status === 'suspended' &&
       (!unlockGrant || (masterState.updatedAtMs || 0) > unlockGrant.activatedAtMs)
@@ -461,7 +481,6 @@ export async function evaluateFullLicenseState(): Promise<LicenseCheckResult> {
   const baseStatus: 'active' | 'suspended' =
     remoteSuspendedAfterGrant || configSuspendedWithoutGrant ? 'suspended' : 'active';
 
-  const defaultExpiry = (BRAND_CONFIG.licenseExpiryDate || BRAND_CONFIG.expiryDate || '').trim();
   let bestExpiryDate = masterState?.expiryDate || defaultExpiry;
   let source: 'config' | 'remote' | 'activation_key' = masterState ? 'remote' : 'config';
 
@@ -474,10 +493,14 @@ export async function evaluateFullLicenseState(): Promise<LicenseCheckResult> {
     }
   }
 
-  return checkLicenseStatus(BRAND_CONFIG, clock.effectiveNowMs, {
+  const effectiveNowMs = isOwnerLongTermBuild
+    ? clock.serverTimeMs ?? Date.now()
+    : clock.effectiveNowMs;
+
+  return checkLicenseStatus(BRAND_CONFIG, effectiveNowMs, {
     expiryDate: bestExpiryDate,
     status: baseStatus,
-    clockTamperDetected: clock.clockTamperDetected,
+    clockTamperDetected: isOwnerLongTermBuild ? false : clock.clockTamperDetected,
     source,
   });
 }

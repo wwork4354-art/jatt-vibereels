@@ -643,9 +643,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       ) : (
                         <video
                           src={previewUrl}
-                          preload="auto"
+                          preload="metadata"
                           playsInline
-                          className="w-28 h-44 object-cover rounded-xl shadow-lg mb-2 border border-neutral-700 [transform:translate3d(0,0,0)]"
+                          className="w-28 h-44 object-cover rounded-xl shadow-lg mb-2 border border-neutral-700"
                           muted
                           autoPlay
                           loop

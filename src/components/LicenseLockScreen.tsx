@@ -110,6 +110,8 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
               <img
                 src={BRAND_CONFIG.logoUrl}
                 alt={BRAND_CONFIG.appName}
+                loading="lazy"
+                decoding="async"
                 referrerPolicy="no-referrer"
                 onError={() => setLogoError(true)}
                 className="w-11 h-11 rounded-full object-cover border border-neutral-700 shrink-0 bg-neutral-950"

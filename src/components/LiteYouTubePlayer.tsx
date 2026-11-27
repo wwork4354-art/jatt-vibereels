@@ -237,6 +237,48 @@ export const LiteYouTubePlayer: React.FC<LiteYouTubePlayerProps> = ({
 
   const shouldMountIframe = isActivated && (isInViewport || isCinemaMode);
 
+  // Immediately pause & mute YouTube iframe when screen locks, tab switches, or app minimizes
+  useEffect(() => {
+    if (!shouldMountIframe) return;
+
+    const pauseYouTubeIframe = () => {
+      const iframe = iframeRef.current;
+      if (!iframe?.contentWindow) return;
+      try {
+        iframe.contentWindow.postMessage(
+          JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }),
+          '*'
+        );
+        iframe.contentWindow.postMessage(
+          JSON.stringify({ event: 'command', func: 'mute', args: [] }),
+          '*'
+        );
+      } catch {
+        // ignore cross-origin postMessage restrictions
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        pauseYouTubeIframe();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility, { passive: true });
+    document.addEventListener('freeze', pauseYouTubeIframe as EventListener, { passive: true });
+    window.addEventListener('pagehide', pauseYouTubeIframe, { passive: true });
+    window.addEventListener('blur', pauseYouTubeIframe, { passive: true });
+    window.addEventListener('jatt-app-backgrounded', pauseYouTubeIframe as EventListener);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      document.removeEventListener('freeze', pauseYouTubeIframe as EventListener);
+      window.removeEventListener('pagehide', pauseYouTubeIframe);
+      window.removeEventListener('blur', pauseYouTubeIframe);
+      window.removeEventListener('jatt-app-backgrounded', pauseYouTubeIframe as EventListener);
+    };
+  }, [shouldMountIframe]);
+
   // Explicitly clear iframe src on unmount or off-screen destruction to release native decoder RAM
   useEffect(() => {
     if (shouldMountIframe) {

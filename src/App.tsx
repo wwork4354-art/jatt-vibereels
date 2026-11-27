@@ -44,6 +44,10 @@ import { EasyPaymentModal } from './components/EasyPaymentModal';
 import { BRAND_CONFIG, LicenseCheckResult } from './config/brandConfig';
 import { evaluateFullLicenseState, evaluateLicenseSync } from './lib/licenseService';
 import { soundEngine } from './utils/soundEngine';
+import {
+  pauseAndMuteAllActiveMedia,
+  registerGlobalMediaLifecycleListeners,
+} from './utils/mediaLifecycle';
 import { compressImageFile } from './utils/imageOptimize';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import {
@@ -2499,18 +2503,31 @@ export default function App() {
     };
 
     const handleVisibility = () => {
-      if (document.visibilityState === 'hidden') {
+      if (document.hidden || document.visibilityState === 'hidden') {
         persistSnapshot();
+        pauseAndMuteAllActiveMedia('app-visibility');
       }
     };
 
+    const handleBackground = () => {
+      persistSnapshot();
+      pauseAndMuteAllActiveMedia('app-background');
+    };
+
+    const unregisterMediaLifecycle = registerGlobalMediaLifecycleListeners();
+
     document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('pagehide', persistSnapshot);
-    window.addEventListener('beforeunload', persistSnapshot);
+    document.addEventListener('freeze', handleBackground as EventListener);
+    window.addEventListener('pagehide', handleBackground);
+    window.addEventListener('blur', handleBackground);
+    window.addEventListener('beforeunload', handleBackground);
     return () => {
+      unregisterMediaLifecycle();
       document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('pagehide', persistSnapshot);
-      window.removeEventListener('beforeunload', persistSnapshot);
+      document.removeEventListener('freeze', handleBackground as EventListener);
+      window.removeEventListener('pagehide', handleBackground);
+      window.removeEventListener('blur', handleBackground);
+      window.removeEventListener('beforeunload', handleBackground);
     };
   }, []);
 

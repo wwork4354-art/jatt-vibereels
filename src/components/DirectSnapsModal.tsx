@@ -623,6 +623,8 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
                       <img
                         src={optimizeThumbnailUrl(activeConversation.partner.avatar, 'grid')}
                         alt={activeConversation.partner.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-16 h-16 rounded-full object-cover border-2 border-pink-500/40"
                         referrerPolicy="no-referrer"
                       />
@@ -679,6 +681,8 @@ export const DirectSnapsModal: React.FC<DirectSnapsModalProps> = ({
                                 <img
                                   src={optimizeThumbnailUrl(activeConversation.partner.avatar, 'grid')}
                                   alt={activeConversation.partner.name}
+                                  loading="lazy"
+                                  decoding="async"
                                   className="w-6 h-6 rounded-full object-cover shrink-0 mb-1 border border-neutral-800"
                                   referrerPolicy="no-referrer"
                                 />

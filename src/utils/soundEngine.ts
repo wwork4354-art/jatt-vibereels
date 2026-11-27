@@ -11,6 +11,7 @@ class SoundEngine {
   private masterGain: GainNode | null = null;
 
   private initContext() {
+    if (typeof document !== 'undefined' && document.hidden) return;
     if (!this.ctx) {
       const AudioContextClass =
         window.AudioContext ||
@@ -21,7 +22,7 @@ class SoundEngine {
       this.masterGain.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') {
-      void this.ctx.resume();
+      void this.ctx.resume().catch(() => {});
     }
   }
 
@@ -33,6 +34,24 @@ class SoundEngine {
     if (muted && this.currentTrackStop) {
       this.currentTrackStop();
       this.currentTrackStop = null;
+    }
+  }
+
+  /**
+   * Immediately halts all synthesized loops, preview beats, and suspends Web Audio context
+   * when screen locks, browser minimizes, or tab is hidden.
+   */
+  public suspendAll() {
+    if (this.currentTrackStop) {
+      this.currentTrackStop();
+      this.currentTrackStop = null;
+    }
+    if (this.previewTrackStop) {
+      this.previewTrackStop();
+      this.previewTrackStop = null;
+    }
+    if (this.ctx && this.ctx.state === 'running') {
+      void this.ctx.suspend().catch(() => {});
     }
   }
 

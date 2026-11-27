@@ -122,6 +122,28 @@ export const StudioMusicPickerDrawer: React.FC<StudioMusicPickerDrawerProps> = R
       }
     }, [isOpen, initialTab]);
 
+    useEffect(() => {
+      if (!isOpen) return;
+      const handleBackground = () => stopDrawerPreviews();
+      const handleVisibility = () => {
+        if (document.hidden || document.visibilityState === 'hidden') {
+          stopDrawerPreviews();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibility);
+      document.addEventListener('freeze', handleBackground as EventListener);
+      window.addEventListener('pagehide', handleBackground);
+      window.addEventListener('blur', handleBackground);
+      window.addEventListener('jatt-app-backgrounded', handleBackground as EventListener);
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibility);
+        document.removeEventListener('freeze', handleBackground as EventListener);
+        window.removeEventListener('pagehide', handleBackground);
+        window.removeEventListener('blur', handleBackground);
+        window.removeEventListener('jatt-app-backgrounded', handleBackground as EventListener);
+      };
+    }, [isOpen]);
+
     // Auto-run initial lightweight search when opening Online tab with empty list
     useEffect(() => {
       if (isOpen && activeTab === 'online' && onlineResults.length === 0 && !isSearchingOnline) {
@@ -461,7 +483,7 @@ export const StudioMusicPickerDrawer: React.FC<StudioMusicPickerDrawerProps> = R
                       title="Song Audio Preview"
                       src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(
                         fallbackEmbedVideoId
-                      )}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+                      )}?enablejsapi=1&autoplay=1&rel=0&modestbranding=1&playsinline=1`}
                       allow="autoplay; encrypted-media"
                       className="w-full h-16 rounded-xl border-0"
                     />

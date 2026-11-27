@@ -2331,6 +2331,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
               <img
                 src={burstFrames[selectedBurstIndex]?.url}
                 alt={`Burst frame ${selectedBurstIndex + 1}`}
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-contain gpu-accelerated"
               />
               <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2">
@@ -2371,6 +2373,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                       <img
                         src={frame.url}
                         alt={`Shot ${idx + 1}`}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover"
                       />
                       <span className="absolute bottom-0.5 right-0.5 px-1 rounded bg-black/80 text-[9px] font-black text-white tabular-nums">

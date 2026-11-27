@@ -30,6 +30,13 @@ import {
   Layers,
   Diamond,
   Plus,
+  Captions,
+  Megaphone,
+  Wand2,
+  Eraser,
+  Crop,
+  Zap,
+  RotateCw,
 } from 'lucide-react';
 import { AudioTrackOption, CreatorProfileData, UserAccount, VideoPost } from '../types';
 import { soundEngine } from '../utils/soundEngine';
@@ -59,6 +66,11 @@ import {
   TEXT_FONT_STYLES,
   SPEED_CURVE_PRESETS,
   DEFAULT_MASK_CONFIG,
+  DEFAULT_BG_REMOVAL_CONFIG,
+  DEFAULT_TICKER_CONFIG,
+  DEFAULT_CROP_CONFIG,
+  DEFAULT_ANIMATION_CONFIG,
+  DEFAULT_ENHANCE_CONFIG,
   ProFilterLut,
   TimelineClipItem,
   ClipTransitionType,
@@ -69,13 +81,24 @@ import {
   EditorOverlayLayer,
   EditorMaskConfig,
   EditorMaskShape,
+  VisualEffectConfig,
+  BgRemovalConfig,
+  SubtitleSegment,
+  TickerConfig,
+  CropConfig,
+  AnimationConfig,
+  KeyframeMarker,
+  EnhanceConfig,
   computeTimelineSpans,
   drawProTimelineFrame,
   evaluateSpeedMultiplierAtProgress,
   mapClipProgressToSourceTime,
+  applyEnhanceSharpen,
+  getStageDimensions,
   TimelineRenderOptions,
 } from '../utils/proEditorEngine';
 import { ProTimeline } from './ProTimeline';
+import { StudioProToolPanels } from './StudioProToolPanels';
 import {
   AttachedOnlineSong,
   MusicDrawerTab,
@@ -95,13 +118,22 @@ interface PhotoVideoEditorModalProps {
 
 type EditorToolTab =
   | 'trim'
+  | 'text'
+  | 'captions'
+  | 'ticker'
+  | 'effects'
+  | 'filters'
+  | 'bg_remove'
+  | 'music'
+  | 'volume'
+  | 'speed'
+  | 'crop'
+  | 'animation'
+  | 'keyframe'
+  | 'enhance'
   | 'overlay'
   | 'mask'
-  | 'music'
-  | 'text'
   | 'stickers'
-  | 'filters'
-  | 'speed'
   | 'transitions'
   | 'post';
 
@@ -145,10 +177,12 @@ const TRANSITION_PRESETS: { id: ClipTransitionType; label: string; desc: string 
 ];
 
 const SPEED_QUICK_PRESETS = [
-  { val: 0.5, label: '0.5x Slow-Mo' },
+  { val: 0.25, label: '0.25x Slow-Mo' },
+  { val: 0.5, label: '0.5x Slow' },
   { val: 1, label: '1x Normal' },
   { val: 1.5, label: '1.5x Fast' },
-  { val: 2, label: '2x Turbo' },
+  { val: 2, label: '2x Speed' },
+  { val: 4, label: '4x Hyper' },
 ];
 
 const STICKER_OPTIONS = [
@@ -220,24 +254,48 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   const [saturateAdj, setSaturateAdj] = useState<number>(0);
   const [vignetteAdj, setVignetteAdj] = useState<number>(0);
 
-  // Animated & Draggable Text Overlay
+  // Draggable, Resizable, Rotatable Text Overlays (supports multi-layer + duplicate/delete)
   const [textLayer, setTextLayer] = useState<EditorTextLayer>({
+    id: 'txt-main',
     text: '',
     fontId: 'modern',
     color: '#ffffff',
     size: 30,
     xPercent: 50,
     yPercent: 72,
+    rotationDeg: 0,
     neonGlow: false,
     outline: true,
     backdrop: true,
     animation: 'pop',
+    animConfig: { ...DEFAULT_ANIMATION_CONFIG },
+  });
+  const [extraTextLayers, setExtraTextLayers] = useState<EditorTextLayer[]>([]);
+  const [selectedTextIndex, setSelectedTextIndex] = useState<number>(0);
+
+  // Auto-Captions, Ticker, Visual Effects, BG Remove, Crop, Animations, Keyframes, Enhance
+  const [captions, setCaptions] = useState<SubtitleSegment[]>([]);
+  const [ticker, setTicker] = useState<TickerConfig>({ ...DEFAULT_TICKER_CONFIG });
+  const [visualEffect, setVisualEffect] = useState<VisualEffectConfig>({
+    type: 'none',
+    intensity: 70,
+  });
+  const [bgRemoval, setBgRemoval] = useState<BgRemovalConfig>({ ...DEFAULT_BG_REMOVAL_CONFIG });
+  const [captionsAndEffectsActive] = useState(true);
+  void captionsAndEffectsActive;
+  const [cropConfig, setCropConfig] = useState<CropConfig>({ ...DEFAULT_CROP_CONFIG });
+  const [clipAnimation, setClipAnimation] = useState<AnimationConfig>({
+    ...DEFAULT_ANIMATION_CONFIG,
+  });
+  const [keyframes, setKeyframes] = useState<KeyframeMarker[]>([]);
+  const [enhanceConfig, setEnhanceConfig] = useState<EnhanceConfig>({
+    ...DEFAULT_ENHANCE_CONFIG,
   });
 
   // Draggable Stickers
   const [stickers, setStickers] = useState<EditorStickerLayer[]>([]);
   const [activeStickerId, setActiveStickerId] = useState<string | null>(null);
-  const [draggingTarget, setDraggingTarget] = useState<'text' | 'mask' | string | null>(null);
+  const [draggingTarget, setDraggingTarget] = useState<'text' | 'mask' | 'crop' | string | null>(null);
 
   // CapCut Overlay (PIP) Multi-Layers & Shape Masks (Diamond, Circle, Heart, Star, Split, Rectangle)
   const [overlays, setOverlays] = useState<EditorOverlayLayer[]>([]);
@@ -283,6 +341,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   const objectUrlsRef = useRef<string[]>([]);
   const playheadRef = useRef<number>(0);
   const exportCancelRef = useRef<boolean>(false);
+  const audioBoostCtxRef = useRef<AudioContext | null>(null);
+  const audioGainNodeMapRef = useRef<WeakMap<HTMLMediaElement, GainNode>>(new WeakMap());
   const pinchGestureRef = useRef<{
     overlayId: string;
     startDist: number;
@@ -319,6 +379,33 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     selectedAudioFile || selectedLibraryTrack || selectedOnlineSong
   );
 
+  const allTextLayers = useMemo(() => {
+    return [textLayer, ...extraTextLayers];
+  }, [textLayer, extraTextLayers]);
+
+  const activeTextLayer = useMemo(() => {
+    return allTextLayers[selectedTextIndex] || textLayer;
+  }, [allTextLayers, selectedTextIndex, textLayer]);
+
+  const updateActiveTextLayer = useCallback(
+    (updater: (prev: EditorTextLayer) => EditorTextLayer) => {
+      if (selectedTextIndex === 0 || selectedTextIndex >= allTextLayers.length) {
+        setTextLayer((prev) => updater(prev));
+      } else {
+        const extraIdx = selectedTextIndex - 1;
+        setExtraTextLayers((prev) =>
+          prev.map((layer, idx) => (idx === extraIdx ? updater(layer) : layer))
+        );
+      }
+    },
+    [selectedTextIndex, allTextLayers.length]
+  );
+
+  const stagePreviewDims = useMemo(
+    () => getStageDimensions(cropConfig.aspect, 'preview'),
+    [cropConfig.aspect]
+  );
+
   const renderOptions: TimelineRenderOptions = useMemo(
     () => ({
       filterLut: selectedLut,
@@ -330,7 +417,16 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       mainMask,
       overlays,
       textLayer,
+      textLayers: allTextLayers,
       stickers,
+      visualEffect,
+      bgRemoval,
+      captions,
+      ticker,
+      crop: cropConfig,
+      clipAnimation,
+      keyframes,
+      enhance: enhanceConfig,
     }),
     [
       selectedLut,
@@ -342,7 +438,16 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       mainMask,
       overlays,
       textLayer,
+      allTextLayers,
       stickers,
+      visualEffect,
+      bgRemoval,
+      captions,
+      ticker,
+      cropConfig,
+      clipAnimation,
+      keyframes,
+      enhanceConfig,
     ]
   );
 
@@ -366,14 +471,32 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
         Math.abs(c.naturalDuration - c.trimEnd) > 0.25 ||
         c.photoFit === 'cover'
     );
+    const cropChanged =
+      cropConfig.aspect !== '9:16' ||
+      cropConfig.zoom !== 1 ||
+      cropConfig.panXPercent !== 0 ||
+      cropConfig.panYPercent !== 0;
+    const animChanged =
+      clipAnimation.inAnim !== 'none' ||
+      clipAnimation.outAnim !== 'none' ||
+      clipAnimation.comboAnim !== 'none';
     return (
       clips.length > 1 ||
       lutChanged ||
       speedOrTrimChanged ||
       mainMask.shape !== 'none' ||
       overlays.length > 0 ||
-      textLayer.text.trim().length > 0 ||
-      stickers.length > 0
+      allTextLayers.some((t) => t.text.trim().length > 0) ||
+      stickers.length > 0 ||
+      captions.length > 0 ||
+      ticker.enabled ||
+      visualEffect.type !== 'none' ||
+      bgRemoval.mode !== 'off' ||
+      cropChanged ||
+      animChanged ||
+      keyframes.length > 0 ||
+      enhanceConfig.enabled ||
+      originalVolume !== 100
     );
   }, [
     clips,
@@ -384,8 +507,17 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     vignetteAdj,
     mainMask.shape,
     overlays.length,
-    textLayer.text,
+    allTextLayers,
     stickers.length,
+    captions.length,
+    ticker.enabled,
+    visualEffect.type,
+    bgRemoval.mode,
+    cropConfig,
+    clipAnimation,
+    keyframes.length,
+    enhanceConfig.enabled,
+    originalVolume,
   ]);
 
   // Add one or multiple media files cleanly onto the timeline
@@ -588,19 +720,52 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     }
   }, [isOpen, initialFile, clips.length, addMediaFiles]);
 
-  // Cleanup URLs and audio on unmount or close
+  // Cleanup URLs and audio on unmount, close, or app backgrounding
   useEffect(() => {
-    if (!isOpen) {
-      soundEngine.stopPreviewTrack();
+    const pauseStudioPlayback = () => {
+      setIsPlaying(false);
+      soundEngine.suspendAll();
       setPreviewingAudioId(null);
-      if (previewAudioRef.current) previewAudioRef.current.pause();
+      if (previewAudioRef.current) {
+        previewAudioRef.current.muted = true;
+        previewAudioRef.current.pause();
+      }
       mediaElementCacheRef.current.forEach((el) => {
         if (el instanceof HTMLVideoElement) {
+          el.muted = true;
           el.pause();
         }
       });
+      if (audioBoostCtxRef.current && audioBoostCtxRef.current.state === 'running') {
+        void audioBoostCtxRef.current.suspend().catch(() => {});
+      }
+    };
+
+    if (!isOpen) {
+      pauseStudioPlayback();
+      return () => {
+        soundEngine.stopPreviewTrack();
+      };
     }
+
+    const handleVisibility = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        pauseStudioPlayback();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    document.addEventListener('freeze', pauseStudioPlayback as EventListener);
+    window.addEventListener('pagehide', pauseStudioPlayback);
+    window.addEventListener('blur', pauseStudioPlayback);
+    window.addEventListener('jatt-app-backgrounded', pauseStudioPlayback as EventListener);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      document.removeEventListener('freeze', pauseStudioPlayback as EventListener);
+      window.removeEventListener('pagehide', pauseStudioPlayback);
+      window.removeEventListener('blur', pauseStudioPlayback);
+      window.removeEventListener('jatt-app-backgrounded', pauseStudioPlayback as EventListener);
       soundEngine.stopPreviewTrack();
     };
   }, [isOpen]);
@@ -634,8 +799,33 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       audioFadeOut > 0.05 && totalDuration > audioFadeOut
         ? Math.min(1, Math.max(0, (totalDuration - playheadTime) / audioFadeOut))
         : 1;
-    const envelopeVol = (bgAudioVolume / 100) * Math.min(fadeInGain, fadeOutGain);
-    el.volume = Math.max(0, Math.min(1, envelopeVol));
+    const targetBoostGain = Math.max(0, Math.min(2, (bgAudioVolume / 100) * Math.min(fadeInGain, fadeOutGain)));
+    el.volume = Math.max(0, Math.min(1, targetBoostGain));
+    if (bgAudioVolume > 100) {
+      try {
+        let gainNode = audioGainNodeMapRef.current.get(el);
+        if (!gainNode) {
+          const ACtx =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          if (!audioBoostCtxRef.current) audioBoostCtxRef.current = new ACtx();
+          const src = audioBoostCtxRef.current.createMediaElementSource(el);
+          gainNode = audioBoostCtxRef.current.createGain();
+          src.connect(gainNode);
+          gainNode.connect(audioBoostCtxRef.current.destination);
+          audioGainNodeMapRef.current.set(el, gainNode);
+        }
+        if (audioBoostCtxRef.current?.state === 'suspended') {
+          void audioBoostCtxRef.current.resume().catch(() => {});
+        }
+        gainNode.gain.value = targetBoostGain;
+      } catch {
+        // fallback cleanly to native HTMLMediaElement volume
+      }
+    } else {
+      const existingGain = audioGainNodeMapRef.current.get(el);
+      if (existingGain) existingGain.gain.value = targetBoostGain;
+    }
 
     const maxAudioDur = Number.isFinite(el.duration) && el.duration > 1 ? el.duration : 0;
     const desiredRawTime = audioStartOffset + playheadTime;
@@ -740,8 +930,35 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
           if (!el.paused) el.pause();
           return;
         }
-        el.volume = Math.max(0, Math.min(1, originalVolume / 100));
+        const clipGainFactor = Math.max(0, Math.min(2, originalVolume / 100));
+        el.volume = Math.max(0, Math.min(1, clipGainFactor));
         el.muted = originalVolume <= 1 || !playing;
+        if (originalVolume > 100 && playing) {
+          try {
+            let vGain = audioGainNodeMapRef.current.get(el);
+            if (!vGain) {
+              const ACtx =
+                window.AudioContext ||
+                (window as unknown as { webkitAudioContext: typeof AudioContext })
+                  .webkitAudioContext;
+              if (!audioBoostCtxRef.current) audioBoostCtxRef.current = new ACtx();
+              const src = audioBoostCtxRef.current.createMediaElementSource(el);
+              vGain = audioBoostCtxRef.current.createGain();
+              src.connect(vGain);
+              vGain.connect(audioBoostCtxRef.current.destination);
+              audioGainNodeMapRef.current.set(el, vGain);
+            }
+            if (audioBoostCtxRef.current?.state === 'suspended') {
+              void audioBoostCtxRef.current.resume().catch(() => {});
+            }
+            vGain.gain.value = clipGainFactor;
+          } catch {
+            // ignore WebAudio boost fallback
+          }
+        } else {
+          const existingVGain = audioGainNodeMapRef.current.get(el);
+          if (existingVGain) existingVGain.gain.value = clipGainFactor;
+        }
         try {
           el.playbackRate = instantSpeed;
         } catch {
@@ -796,6 +1013,9 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
         mediaElementCacheRef.current,
         renderOptions
       );
+      if (enhanceConfig.enabled) {
+        applyEnhanceSharpen(ctx, canvas.width, canvas.height, enhanceConfig.sharpness / 100);
+      }
 
       if (isPlaying && !isExporting) {
         rafId = requestAnimationFrame(tick);
@@ -815,6 +1035,9 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
         mediaElementCacheRef.current,
         renderOptions
       );
+      if (enhanceConfig.enabled) {
+        applyEnhanceSharpen(ctx, canvas.width, canvas.height, enhanceConfig.sharpness / 100);
+      }
     }
 
     return () => cancelAnimationFrame(rafId);
@@ -973,6 +1196,168 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       return filtered;
     });
     setPlayheadTime(0);
+    onShowToast?.('Deleted selected clip');
+  };
+
+  // Contextual 1-Click Duplicate & Delete across Clip, Text, Sticker, or Overlay
+  const handleDuplicateActiveItem = () => {
+    if (activeTool === 'stickers' && activeStickerId) {
+      const target = stickers.find((s) => s.id === activeStickerId);
+      if (target) {
+        const clone: EditorStickerLayer = {
+          ...target,
+          id: `stk-dup-${Date.now()}`,
+          xPercent: Math.min(88, target.xPercent + 8),
+          yPercent: Math.min(88, target.yPercent + 6),
+        };
+        setStickers((prev) => [...prev, clone]);
+        setActiveStickerId(clone.id);
+        onShowToast?.('Duplicated sticker');
+        return;
+      }
+    }
+    if (activeTool === 'overlay' && activeOverlayId) {
+      const target = overlays.find((o) => o.id === activeOverlayId);
+      if (target) {
+        const clone: EditorOverlayLayer = {
+          ...target,
+          id: `ov-dup-${Date.now()}`,
+          xPercent: Math.min(86, target.xPercent + 8),
+          yPercent: Math.min(86, target.yPercent + 6),
+        };
+        setOverlays((prev) => [...prev, clone]);
+        setActiveOverlayId(clone.id);
+        onShowToast?.('Duplicated overlay layer');
+        return;
+      }
+    }
+    if (activeTool === 'text' && activeTextLayer.text.trim()) {
+      const clone: EditorTextLayer = {
+        ...activeTextLayer,
+        id: `txt-dup-${Date.now()}`,
+        xPercent: Math.min(86, activeTextLayer.xPercent + 6),
+        yPercent: Math.max(14, activeTextLayer.yPercent - 10),
+      };
+      setExtraTextLayers((prev) => [...prev, clone]);
+      setSelectedTextIndex(allTextLayers.length);
+      onShowToast?.('Duplicated text layer');
+      return;
+    }
+    handleDuplicateSelectedClip();
+  };
+
+  const handleDeleteActiveItem = () => {
+    if (activeTool === 'stickers' && activeStickerId) {
+      setStickers((prev) => prev.filter((s) => s.id !== activeStickerId));
+      setActiveStickerId(null);
+      onShowToast?.('Deleted sticker');
+      return;
+    }
+    if (activeTool === 'overlay' && activeOverlayId) {
+      setOverlays((prev) => prev.filter((o) => o.id !== activeOverlayId));
+      setActiveOverlayId(null);
+      onShowToast?.('Deleted overlay layer');
+      return;
+    }
+    if (activeTool === 'text' && activeTextLayer.text.trim()) {
+      if (selectedTextIndex > 0 && selectedTextIndex - 1 < extraTextLayers.length) {
+        const dropIdx = selectedTextIndex - 1;
+        setExtraTextLayers((prev) => prev.filter((_, i) => i !== dropIdx));
+        setSelectedTextIndex(0);
+      } else if (extraTextLayers.length > 0) {
+        const [promoted, ...rest] = extraTextLayers;
+        setTextLayer(promoted);
+        setExtraTextLayers(rest);
+        setSelectedTextIndex(0);
+      } else {
+        setTextLayer((p) => ({ ...p, text: '' }));
+      }
+      onShowToast?.('Deleted text layer');
+      return;
+    }
+    if (activeTool === 'captions' && captions.length > 0) {
+      setCaptions((prev) => prev.slice(0, -1));
+      onShowToast?.('Removed last caption block');
+      return;
+    }
+    handleDeleteSelectedClip();
+  };
+
+  const handlePickBgReplacementImage = async (file: File) => {
+    const check = validateSafeMediaFile(file);
+    if (!check.valid || check.mediaType !== 'image') {
+      onShowToast?.('Please choose a safe image (.jpg, .png, .webp) for background replacement.');
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    objectUrlsRef.current.push(url);
+    const srcId = `bg-rep-${Date.now()}`;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+    await new Promise<void>((resolve) => {
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+      window.setTimeout(resolve, 1500);
+    });
+    mediaElementCacheRef.current.set(srcId, img);
+    setBgRemoval((prev) => ({
+      ...prev,
+      mode: prev.mode === 'off' ? 'person_cutout' : prev.mode,
+      replaceMode: 'image',
+      replaceImageSourceId: srcId,
+    }));
+    onShowToast?.('Background image applied!');
+  };
+
+  const handleAddOrUpdateKeyframe = (target: 'main' | 'text' | 'overlay') => {
+    const t = Number(playheadTime.toFixed(2));
+    const existing = keyframes.find(
+      (k) => k.target === target && Math.abs(k.timeSec - t) < 0.25
+    );
+    const snapshot: Omit<KeyframeMarker, 'id'> =
+      target === 'text'
+        ? {
+            target,
+            timeSec: t,
+            xPercent: activeTextLayer.xPercent,
+            yPercent: activeTextLayer.yPercent,
+            scale: 1,
+            rotationDeg: activeTextLayer.rotationDeg || 0,
+            opacity: 100,
+          }
+        : target === 'overlay' && activeOverlay
+        ? {
+            target,
+            timeSec: t,
+            xPercent: activeOverlay.xPercent,
+            yPercent: activeOverlay.yPercent,
+            scale: activeOverlay.scale,
+            rotationDeg: activeOverlay.rotationDeg,
+            opacity: activeOverlay.opacity,
+          }
+        : {
+            target: 'main',
+            timeSec: t,
+            xPercent: 50,
+            yPercent: 50,
+            scale: cropConfig.zoom,
+            rotationDeg: 0,
+            opacity: 100,
+          };
+
+    if (existing) {
+      setKeyframes((prev) =>
+        prev.map((k) => (k.id === existing.id ? { ...k, ...snapshot } : k))
+      );
+      onShowToast?.(`Updated ◆ keyframe at ${t.toFixed(1)}s`);
+    } else {
+      setKeyframes((prev) => [
+        ...prev,
+        { id: `kf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, ...snapshot },
+      ]);
+      onShowToast?.(`Added ◆ keyframe at ${t.toFixed(1)}s`);
+    }
   };
 
   const handleTrimClip = (clipId: string, nextTrimStart: number, nextTrimEnd: number) => {
@@ -991,17 +1376,32 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     setSaturateAdj(0);
     setVignetteAdj(0);
     setTextLayer({
+      id: 'txt-main',
       text: '',
       fontId: 'modern',
       color: '#ffffff',
       size: 30,
       xPercent: 50,
       yPercent: 72,
+      rotationDeg: 0,
       neonGlow: false,
       outline: true,
       backdrop: true,
       animation: 'pop',
+      animConfig: { ...DEFAULT_ANIMATION_CONFIG },
     });
+    setExtraTextLayers([]);
+    setSelectedTextIndex(0);
+    setCaptions([]);
+    setTicker({ ...DEFAULT_TICKER_CONFIG });
+    setVisualEffect({ type: 'none', intensity: 70 });
+    setBgRemoval({ ...DEFAULT_BG_REMOVAL_CONFIG });
+    setCropConfig({ ...DEFAULT_CROP_CONFIG });
+    setClipAnimation({ ...DEFAULT_ANIMATION_CONFIG });
+    setKeyframes([]);
+    setEnhanceConfig({ ...DEFAULT_ENHANCE_CONFIG });
+    setOriginalVolume(100);
+    setBgAudioVolume(80);
     setStickers([]);
     setActiveStickerId(null);
     setOverlays([]);
@@ -1101,6 +1501,36 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       return;
     }
 
+    // 1.5 Check Crop drag-to-pan when Crop tool active
+    if (activeTool === 'crop') {
+      setDraggingTarget('crop');
+      stage.setPointerCapture?.(e.pointerId);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const origPanX = cropConfig.panXPercent;
+      const origPanY = cropConfig.panYPercent;
+      const handleMove = (ev: PointerEvent) => {
+        const r = stage.getBoundingClientRect();
+        const dxPct = ((ev.clientX - startX) / r.width) * 100;
+        const dyPct = ((ev.clientY - startY) / r.height) * 100;
+        setCropConfig((c) => ({
+          ...c,
+          panXPercent: Math.max(-40, Math.min(40, Math.round(origPanX + dxPct))),
+          panYPercent: Math.max(-40, Math.min(40, Math.round(origPanY + dyPct))),
+        }));
+      };
+      const handleUp = () => {
+        setDraggingTarget(null);
+        window.removeEventListener('pointermove', handleMove);
+        window.removeEventListener('pointerup', handleUp);
+        window.removeEventListener('pointercancel', handleUp);
+      };
+      window.addEventListener('pointermove', handleMove);
+      window.addEventListener('pointerup', handleUp);
+      window.addEventListener('pointercancel', handleUp);
+      return;
+    }
+
     // 2. Check Stickers
     let hitStickerId: string | null = null;
     let bestStickerDist = 18;
@@ -1112,7 +1542,17 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       }
     }
 
-    // 3. Check Overlay (PIP) layers
+    // 3. Check Text Layers
+    let hitTextIdx: number | null = null;
+    for (let i = 0; i < allTextLayers.length; i++) {
+      const tl = allTextLayers[i];
+      if (tl.text.trim() && Math.hypot(clickX - tl.xPercent, clickY - tl.yPercent) < 24) {
+        hitTextIdx = i;
+        break;
+      }
+    }
+
+    // 4. Check Overlay (PIP) layers
     let hitOverlayId: string | null = null;
     let bestOverlayDist = 28;
     for (const ov of overlays) {
@@ -1123,20 +1563,21 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       }
     }
 
-    let target: 'text' | string | null = null;
+    let target: string | null = null;
     if (hitStickerId) {
       target = hitStickerId;
       setActiveStickerId(hitStickerId);
       setActiveTool('stickers');
-    } else if (textLayer.text.trim() && Math.hypot(clickX - textLayer.xPercent, clickY - textLayer.yPercent) < 24) {
-      target = 'text';
+    } else if (hitTextIdx !== null) {
+      target = `txtidx-${hitTextIdx}`;
+      setSelectedTextIndex(hitTextIdx);
       setActiveTool('text');
     } else if (hitOverlayId) {
       target = hitOverlayId;
       setActiveOverlayId(hitOverlayId);
       setActiveTool('overlay');
-    } else if (textLayer.text.trim() && activeTool === 'text') {
-      target = 'text';
+    } else if (activeTextLayer.text.trim() && activeTool === 'text') {
+      target = `txtidx-${selectedTextIndex}`;
     } else if (activeOverlay && activeTool === 'overlay') {
       target = activeOverlay.id;
     }
@@ -1153,8 +1594,17 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       const snappedX = Math.abs(nx - 50) < 2 ? 50 : Number(nx.toFixed(1));
       const snappedY = Number(ny.toFixed(1));
 
-      if (target === 'text') {
-        setTextLayer((prev) => ({ ...prev, xPercent: snappedX, yPercent: snappedY }));
+      if (target.startsWith('txtidx-')) {
+        const idx = Number(target.replace('txtidx-', ''));
+        if (idx === 0) {
+          setTextLayer((prev) => ({ ...prev, xPercent: snappedX, yPercent: snappedY }));
+        } else {
+          setExtraTextLayers((prev) =>
+            prev.map((layer, li) =>
+              li === idx - 1 ? { ...layer, xPercent: snappedX, yPercent: snappedY } : layer
+            )
+          );
+        }
       } else if (target.startsWith('ov-')) {
         setOverlays((prev) =>
           prev.map((o) =>
@@ -1185,7 +1635,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     window.addEventListener('pointercancel', handleUp);
   };
 
-  // Multi-Touch Pinch-to-Resize & Rotate for CapCut Overlay (PIP) Layers and Shape Masks
+  // Multi-Touch Pinch-to-Resize & Rotate for Text, Overlay (PIP) Layers, and Shape Masks
   const handleStageTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length !== 2) return;
     const t1 = e.touches[0];
@@ -1200,6 +1650,17 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
         startScale: currentMaskConfig.sizePercent,
         startAngleDeg: angle,
         startRotDeg: currentMaskConfig.rotationDeg,
+      };
+      return;
+    }
+
+    if (activeTool === 'text' && activeTextLayer.text.trim()) {
+      pinchGestureRef.current = {
+        overlayId: '__text__',
+        startDist: Math.max(10, dist),
+        startScale: activeTextLayer.size,
+        startAngleDeg: angle,
+        startRotDeg: activeTextLayer.rotationDeg || 0,
       };
       return;
     }
@@ -1229,6 +1690,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       const nextSize = Math.max(15, Math.min(140, Math.round(g.startScale * ratio)));
       const nextRot = Math.max(-180, Math.min(180, Math.round(g.startRotDeg + deltaAngle)));
       updateCurrentMask((m) => ({ ...m, sizePercent: nextSize, rotationDeg: nextRot }));
+    } else if (g.overlayId === '__text__') {
+      const nextFontSize = Math.max(16, Math.min(64, Math.round(g.startScale * ratio)));
+      const nextRot = Math.max(-180, Math.min(180, Math.round(g.startRotDeg + deltaAngle)));
+      updateActiveTextLayer((t) => ({ ...t, size: nextFontSize, rotationDeg: nextRot }));
     } else {
       const nextScale = Math.max(0.25, Math.min(2.2, Number((g.startScale * ratio).toFixed(2))));
       const nextRot = Math.max(-180, Math.min(180, Math.round(g.startRotDeg + deltaAngle)));
@@ -1359,8 +1824,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     if (!primary) throw new Error('No media to export');
     if (!hasAnyEdits) return primary.file;
 
-    const outW = exportResolution === '4k' ? 2160 : 1080;
-    const outH = exportResolution === '4k' ? 3840 : 1920;
+    const { width: outW, height: outH } = getStageDimensions(cropConfig.aspect, exportResolution);
 
     const canvas = document.createElement('canvas');
     canvas.width = outW;
@@ -1368,15 +1832,19 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return primary.file;
 
+    const hasText = allTextLayers.some((t) => t.text.trim().length > 0);
     drawProTimelineFrame(
       ctx,
       outW,
       outH,
-      textLayer.text.trim() ? 0.6 : 0,
+      hasText ? 0.6 : 0,
       spans,
       mediaElementCacheRef.current,
       renderOptions
     );
+    if (enhanceConfig.enabled) {
+      applyEnhanceSharpen(ctx, outW, outH, enhanceConfig.sharpness / 100);
+    }
 
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob((b) => resolve(b), 'image/png', 0.96)
@@ -1395,12 +1863,31 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
   }> => {
     if (clips.length === 0) throw new Error('Add at least 1 clip before exporting.');
 
+    const hasAnimatedText = allTextLayers.some(
+      (t) =>
+        t.text.trim().length > 0 &&
+        ((t.animation !== 'none' && t.animation !== 'pop') ||
+          Boolean(
+            t.animConfig &&
+              (t.animConfig.inAnim !== 'none' ||
+                t.animConfig.outAnim !== 'none' ||
+                t.animConfig.comboAnim !== 'none')
+          ))
+    );
+    const hasMotionFeatures =
+      hasAnimatedText ||
+      captions.length > 0 ||
+      ticker.enabled ||
+      visualEffect.type !== 'none' ||
+      keyframes.length > 0 ||
+      clipAnimation.inAnim !== 'none' ||
+      clipAnimation.outAnim !== 'none' ||
+      clipAnimation.comboAnim !== 'none';
+
     const isStaticSinglePhoto =
       clips.length === 1 &&
       clips[0].mediaType === 'image' &&
-      (textLayer.text.trim() === '' ||
-        textLayer.animation === 'none' ||
-        textLayer.animation === 'pop') &&
+      !hasMotionFeatures &&
       !hasAttachedMusic;
 
     if (isStaticSinglePhoto) {
@@ -1424,8 +1911,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
     }
 
     const attemptRender = async (res: ExportResolution): Promise<{ file: File; posterDataUrl: string }> => {
-      const outW = res === '4k' ? 2160 : 1080;
-      const outH = res === '4k' ? 3840 : 1920;
+      const { width: outW, height: outH } = getStageDimensions(cropConfig.aspect, res);
       const bps = res === '4k' ? 22_000_000 : 12_000_000;
 
       const canvas = document.createElement('canvas');
@@ -1448,6 +1934,9 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
         mediaElementCacheRef.current,
         renderOptions
       );
+      if (enhanceConfig.enabled) {
+        applyEnhanceSharpen(ctx, outW, outH, enhanceConfig.sharpness / 100);
+      }
       let posterDataUrl = '';
       try {
         posterDataUrl = canvas.toDataURL('image/jpeg', 0.88);
@@ -1461,7 +1950,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
           : null;
       if (!canvasStream) throw new Error('captureStream unsupported');
 
-      // Best-effort attach background song (device MP3 / online stream) or synth stream with start offset & Fade-In / Fade-Out
+      // Best-effort attach background song (device MP3 / online stream) or synth stream with start offset & Fade-In / Fade-Out + 200% boost
       const renderDur = Math.max(0.5, totalDuration);
       let audioCtx: AudioContext | null = null;
       let exportAudioEl: HTMLAudioElement | null = null;
@@ -1500,7 +1989,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
 
           const srcNode = audioCtx.createMediaElementSource(exportAudioEl);
           const gainNode = audioCtx.createGain();
-          const targetVol = Math.max(0.001, Math.min(1, bgAudioVolume / 100));
+          const targetVol = Math.max(0.001, Math.min(2, bgAudioVolume / 100));
           const now = audioCtx.currentTime;
 
           if (audioFadeIn > 0.05) {
@@ -1533,7 +2022,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
         if (!attachedElementAudio) {
           synthHandle = soundEngine.createExportAudioStream(
             selectedLibraryTrack?.trackType || 'punjabi_dhol',
-            bgAudioVolume / 100,
+            Math.min(2, bgAudioVolume / 100),
             {
               fadeInSec: audioFadeIn,
               fadeOutSec: audioFadeOut,
@@ -1547,7 +2036,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
       } else if ((selectedLibraryTrack || selectedOnlineSong) && bgAudioVolume > 1) {
         synthHandle = soundEngine.createExportAudioStream(
           selectedLibraryTrack?.trackType || 'punjabi_dhol',
-          bgAudioVolume / 100,
+          Math.min(2, bgAudioVolume / 100),
           {
             fadeInSec: audioFadeIn,
             fadeOutSec: audioFadeOut,
@@ -1664,6 +2153,9 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             mediaElementCacheRef.current,
             renderOptions
           );
+          if (enhanceConfig.enabled) {
+            applyEnhanceSharpen(ctx, outW, outH, enhanceConfig.sharpness / 100);
+          }
 
           if (elapsed >= renderDuration) {
             resolve();
@@ -2240,12 +2732,18 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                 onTouchStart={handleStageTouchStart}
                 onTouchMove={handleStageTouchMove}
                 onTouchEnd={handleStageTouchEnd}
-                className="relative h-full max-h-full aspect-[9/16] rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl touch-none select-none gpu-accelerated"
+                className={`relative max-h-full rounded-2xl overflow-hidden bg-black border border-neutral-800 shadow-2xl touch-none select-none gpu-accelerated ${
+                  cropConfig.aspect === '16:9'
+                    ? 'aspect-video w-full max-w-full'
+                    : cropConfig.aspect === '1:1'
+                    ? 'aspect-square h-full'
+                    : 'aspect-[9/16] h-full'
+                }`}
               >
                 <canvas
                   ref={previewCanvasRef}
-                  width={360}
-                  height={640}
+                  width={stagePreviewDims.width}
+                  height={stagePreviewDims.height}
                   className="w-full h-full object-contain block"
                 />
 
@@ -2301,13 +2799,17 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   </div>
                 )}
 
-                {activeTool === 'text' && textLayer.text.trim() && (
+                {activeTool === 'text' && activeTextLayer.text.trim() && (
                   <div
-                    style={{ left: `${textLayer.xPercent}%`, top: `${textLayer.yPercent}%` }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 px-3 py-2 min-w-[90px] min-h-[34px] rounded-xl border-2 border-dashed border-cyan-400/85 bg-cyan-500/10 pointer-events-none flex items-center justify-center"
+                    style={{
+                      left: `${activeTextLayer.xPercent}%`,
+                      top: `${activeTextLayer.yPercent}%`,
+                      transform: `translate(-50%, -50%) rotate(${activeTextLayer.rotationDeg || 0}deg)`,
+                    }}
+                    className="absolute px-3 py-2 min-w-[90px] min-h-[34px] rounded-xl border-2 border-dashed border-cyan-400/85 bg-cyan-500/10 pointer-events-none flex items-center justify-center"
                   >
                     <span className="absolute -top-4 left-1/2 -translate-x-1/2 px-1.5 py-0.2 rounded bg-cyan-500 text-black text-[8px] font-black uppercase tracking-wider whitespace-nowrap">
-                      Drag Text
+                      Drag / Pinch Text #{selectedTextIndex + 1}
                     </span>
                   </div>
                 )}
@@ -2340,7 +2842,8 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                 {(activeTool === 'text' ||
                   activeTool === 'stickers' ||
                   activeTool === 'overlay' ||
-                  activeTool === 'mask') && (
+                  activeTool === 'mask' ||
+                  activeTool === 'crop') && (
                   <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-black/75 border border-white/15 text-[10px] font-bold text-cyan-300 flex items-center gap-1 pointer-events-none">
                     <Move className="w-3 h-3" />
                     <span>
@@ -2348,6 +2851,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                         ? 'Drag & pinch PIP'
                         : activeTool === 'mask'
                         ? 'Drag / pinch mask'
+                        : activeTool === 'crop'
+                        ? 'Drag stage to pan crop'
+                        : activeTool === 'text'
+                        ? 'Drag / 2-finger pinch & rotate'
                         : 'Drag on canvas'}
                     </span>
                   </div>
@@ -2364,20 +2871,38 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   <span className="text-[11px] font-black uppercase tracking-wider text-neutral-200 truncate">
                     {activeTool === 'trim'
                       ? 'Edit & Split'
+                      : activeTool === 'text'
+                      ? 'Text Overlays'
+                      : activeTool === 'captions'
+                      ? 'Auto-Captions & Subtitles'
+                      : activeTool === 'ticker'
+                      ? 'Scrolling Ticker Bar'
+                      : activeTool === 'effects'
+                      ? 'Visual Effects & Shaders'
+                      : activeTool === 'filters'
+                      ? 'Filters, LUTs & Color'
+                      : activeTool === 'bg_remove'
+                      ? 'BG Remove & Chroma Key'
+                      : activeTool === 'music'
+                      ? 'Audio Track & Mixer'
+                      : activeTool === 'volume'
+                      ? 'Volume & Audio Boost'
+                      : activeTool === 'speed'
+                      ? 'Speed (0.25x – 4x)'
+                      : activeTool === 'crop'
+                      ? 'Crop & Aspect Ratio'
+                      : activeTool === 'animation'
+                      ? 'In / Out / Combo Anim'
+                      : activeTool === 'keyframe'
+                      ? 'Keyframe Animation'
+                      : activeTool === 'enhance'
+                      ? 'Enhance 4K / Full HD'
                       : activeTool === 'overlay'
                       ? 'Overlay (PIP Layers)'
                       : activeTool === 'mask'
                       ? 'CapCut Shape Masks'
-                      : activeTool === 'music'
-                      ? 'Audio & Sound Controls'
-                      : activeTool === 'text'
-                      ? 'Text & Captions'
                       : activeTool === 'stickers'
                       ? 'Stickers & Emojis'
-                      : activeTool === 'filters'
-                      ? 'Filters & LUTs'
-                      : activeTool === 'speed'
-                      ? 'Speed (0.5x – 2x)'
                       : activeTool === 'transitions'
                       ? 'Transitions'
                       : 'Publish Settings'}
@@ -2554,13 +3079,13 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       {SPEED_QUICK_PRESETS.map((opt) => (
                         <button
                           key={opt.val}
                           type="button"
                           onClick={() => updateSelectedClip((c) => ({ ...c, speed: opt.val }))}
-                          className={`min-h-[44px] px-2 rounded-xl border text-[11px] font-black cursor-pointer transition-all ${
+                          className={`min-h-[42px] px-2 rounded-xl border text-[11px] font-black cursor-pointer transition-all ${
                             selectedClip.speed === opt.val
                               ? 'bg-amber-500/20 border-amber-400 text-amber-200'
                               : 'bg-neutral-900 border-neutral-800 text-neutral-300 hover:border-neutral-700'
@@ -2573,7 +3098,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
 
                     <div className="bg-neutral-900/75 border border-neutral-800 rounded-2xl p-3.5 space-y-2">
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-neutral-300 font-semibold">Fine Speed Control</span>
+                        <span className="text-neutral-300 font-semibold">Fine Speed Control (0.25x–4x)</span>
                         <span className="text-cyan-400 font-bold tabular-nums">
                           {selectedClip.speed.toFixed(2)}x
                         </span>
@@ -2581,7 +3106,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                       <input
                         type="range"
                         min={0.25}
-                        max={2.5}
+                        max={4}
                         step={0.05}
                         value={selectedClip.speed}
                         onChange={(e) => {
@@ -2754,49 +3279,90 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                   </div>
                 )}
 
-                {/* 4. ANIMATED TEXT & CAPTIONS */}
+                {/* 4. MULTI-LAYER DRAGGABLE, RESIZABLE & ROTATABLE TEXT OVERLAYS */}
                 {activeTool === 'text' && (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-xs font-black text-white">Animated Text &amp; Captions</h4>
-                      <div className="flex items-center gap-2">
-                        {textLayer.text.trim() && (
+                      <h4 className="text-xs font-black text-white">Text Overlays</h4>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextLayer: EditorTextLayer = {
+                              id: `txt-${Date.now()}`,
+                              text: 'NEW TEXT ✨',
+                              fontId: activeTextLayer.fontId,
+                              color: '#ffffff',
+                              size: 28,
+                              xPercent: 50,
+                              yPercent: 28 + ((allTextLayers.length * 14) % 42),
+                              rotationDeg: 0,
+                              neonGlow: false,
+                              outline: true,
+                              backdrop: true,
+                              animation: 'pop',
+                              animConfig: { ...DEFAULT_ANIMATION_CONFIG },
+                            };
+                            setExtraTextLayers((prev) => [...prev, nextLayer]);
+                            setSelectedTextIndex(allTextLayers.length);
+                          }}
+                          className="px-2 py-1 rounded-lg bg-pink-600/25 border border-pink-500/50 text-pink-200 text-[10px] font-black flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Add Layer</span>
+                        </button>
+                        {activeTextLayer.text.trim() && (
                           <button
                             type="button"
-                            onClick={() =>
-                              setTextLayer((p) => ({ ...p, xPercent: 50, yPercent: 72 }))
-                            }
-                            className="text-[10px] font-bold text-neutral-300 hover:text-white cursor-pointer"
+                            onClick={handleDuplicateActiveItem}
+                            className="p-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white cursor-pointer"
+                            title="Duplicate text layer"
                           >
-                            Center
+                            <Copy className="w-3 h-3" />
                           </button>
                         )}
-                        {textLayer.text.trim() && (
+                        {activeTextLayer.text.trim() && (
                           <button
                             type="button"
-                            onClick={() => setTextLayer((p) => ({ ...p, text: '' }))}
-                            className="text-[10px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer"
+                            onClick={handleDeleteActiveItem}
+                            className="p-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-rose-400 hover:text-rose-300 cursor-pointer"
+                            title="Delete text layer"
                           >
-                            Clear
+                            <Trash2 className="w-3 h-3" />
                           </button>
                         )}
-                        <span className="text-[10px] font-semibold text-cyan-300">
-                          Drag on preview
-                        </span>
                       </div>
                     </div>
+
+                    {/* Multi-Text Layer Selector */}
+                    {allTextLayers.length > 1 && (
+                      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                        {allTextLayers.map((tl, idx) => (
+                          <button
+                            key={tl.id || `tl-${idx}`}
+                            type="button"
+                            onClick={() => setSelectedTextIndex(idx)}
+                            className={`px-2.5 py-1 rounded-lg border text-[10px] font-bold whitespace-nowrap cursor-pointer shrink-0 ${
+                              selectedTextIndex === idx
+                                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
+                                : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+                            }`}
+                          >
+                            Text #{idx + 1}: {tl.text.trim().slice(0, 12) || 'Empty'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
                     <input
                       ref={textInputRef}
                       type="text"
-                      value={textLayer.text}
-                      onChange={(e) =>
-                        setTextLayer((prev) => ({
-                          ...prev,
-                          text: sanitizeInputLive(e.target.value, 80),
-                        }))
-                      }
-                      placeholder="Type animated headline or caption..."
+                      value={activeTextLayer.text}
+                      onChange={(e) => {
+                        const val = sanitizeInputLive(e.target.value, 80);
+                        updateActiveTextLayer((prev) => ({ ...prev, text: val }));
+                      }}
+                      placeholder="Type headline or caption (drag/pinch on stage)..."
                       className="w-full bg-neutral-900 border border-neutral-700 focus:border-pink-500 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-hidden"
                     />
 
@@ -2806,12 +3372,28 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                         <button
                           key={preset}
                           type="button"
-                          onClick={() => setTextLayer((prev) => ({ ...prev, text: preset }))}
+                          onClick={() => updateActiveTextLayer((prev) => ({ ...prev, text: preset }))}
                           className="px-2.5 py-1 rounded-full bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-[10px] font-bold text-neutral-300 hover:text-white whitespace-nowrap cursor-pointer shrink-0"
                         >
                           + {preset}
                         </button>
                       ))}
+                      {activeTextLayer.text.trim() && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateActiveTextLayer((p) => ({
+                              ...p,
+                              xPercent: 50,
+                              yPercent: 72,
+                              rotationDeg: 0,
+                            }))
+                          }
+                          className="px-2.5 py-1 rounded-full bg-neutral-900 border border-neutral-800 text-[10px] font-bold text-cyan-300 whitespace-nowrap cursor-pointer shrink-0"
+                        >
+                          Center
+                        </button>
+                      )}
                     </div>
 
                     {/* Stylish Fonts */}
@@ -2824,9 +3406,9 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                           <button
                             key={f.id}
                             type="button"
-                            onClick={() => setTextLayer((p) => ({ ...p, fontId: f.id }))}
+                            onClick={() => updateActiveTextLayer((p) => ({ ...p, fontId: f.id }))}
                             className={`px-3 min-h-[36px] rounded-lg border text-[11px] font-bold whitespace-nowrap cursor-pointer ${
-                              textLayer.fontId === f.id
+                              activeTextLayer.fontId === f.id
                                 ? 'bg-pink-600/20 border-pink-400 text-white'
                                 : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
                             }`}
@@ -2840,16 +3422,16 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                     {/* Animation Presets */}
                     <div className="space-y-1.5">
                       <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
-                        Caption Animation
+                        Text Style Animation
                       </span>
                       <div className="grid grid-cols-3 gap-1.5">
                         {TEXT_ANIMATION_OPTIONS.map((anim) => (
                           <button
                             key={anim.id}
                             type="button"
-                            onClick={() => setTextLayer((p) => ({ ...p, animation: anim.id }))}
+                            onClick={() => updateActiveTextLayer((p) => ({ ...p, animation: anim.id }))}
                             className={`min-h-[36px] px-2 rounded-lg border text-[11px] font-bold cursor-pointer ${
-                              textLayer.animation === anim.id
+                              activeTextLayer.animation === anim.id
                                 ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
                                 : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
                             }`}
@@ -2867,10 +3449,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                           <button
                             key={hex}
                             type="button"
-                            onClick={() => setTextLayer((p) => ({ ...p, color: hex }))}
+                            onClick={() => updateActiveTextLayer((p) => ({ ...p, color: hex }))}
                             style={{ backgroundColor: hex }}
                             className={`w-6 h-6 rounded-full border-2 cursor-pointer ${
-                              textLayer.color === hex
+                              activeTextLayer.color === hex
                                 ? 'border-cyan-400 scale-110'
                                 : 'border-neutral-700'
                             }`}
@@ -2883,10 +3465,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                         <button
                           type="button"
                           onClick={() =>
-                            setTextLayer((p) => ({ ...p, neonGlow: !p.neonGlow }))
+                            updateActiveTextLayer((p) => ({ ...p, neonGlow: !p.neonGlow }))
                           }
                           className={`px-2.5 py-1 rounded-lg border text-[10px] font-bold cursor-pointer ${
-                            textLayer.neonGlow
+                            activeTextLayer.neonGlow
                               ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
                               : 'bg-neutral-900 border-neutral-800 text-neutral-400'
                           }`}
@@ -2896,10 +3478,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                         <button
                           type="button"
                           onClick={() =>
-                            setTextLayer((p) => ({ ...p, outline: !p.outline }))
+                            updateActiveTextLayer((p) => ({ ...p, outline: !p.outline }))
                           }
                           className={`px-2.5 py-1 rounded-lg border text-[10px] font-bold cursor-pointer ${
-                            textLayer.outline
+                            activeTextLayer.outline
                               ? 'bg-pink-500/20 border-pink-400 text-pink-200'
                               : 'bg-neutral-900 border-neutral-800 text-neutral-400'
                           }`}
@@ -2909,10 +3491,10 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                         <button
                           type="button"
                           onClick={() =>
-                            setTextLayer((p) => ({ ...p, backdrop: !p.backdrop }))
+                            updateActiveTextLayer((p) => ({ ...p, backdrop: !p.backdrop }))
                           }
                           className={`px-2.5 py-1 rounded-lg border text-[10px] font-bold cursor-pointer ${
-                            textLayer.backdrop
+                            activeTextLayer.backdrop
                               ? 'bg-amber-500/20 border-amber-400 text-amber-200'
                               : 'bg-neutral-900 border-neutral-800 text-neutral-400'
                           }`}
@@ -2922,24 +3504,47 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Size slider */}
-                    <div className="bg-neutral-900/75 border border-neutral-800 rounded-2xl p-3 space-y-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-neutral-300 font-semibold">Font Size</span>
-                        <span className="text-pink-400 font-bold tabular-nums">
-                          {textLayer.size}px
-                        </span>
+                    {/* Size & Rotation sliders */}
+                    <div className="grid grid-cols-2 gap-2.5 bg-neutral-900/75 border border-neutral-800 rounded-2xl p-3">
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-neutral-300 font-semibold">Size</span>
+                          <span className="text-pink-400 font-bold tabular-nums">
+                            {activeTextLayer.size}px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={16}
+                          max={64}
+                          value={activeTextLayer.size}
+                          onChange={(e) =>
+                            updateActiveTextLayer((p) => ({ ...p, size: Number(e.target.value) }))
+                          }
+                          className="w-full accent-pink-500 cursor-pointer"
+                        />
                       </div>
-                      <input
-                        type="range"
-                        min={16}
-                        max={54}
-                        value={textLayer.size}
-                        onChange={(e) =>
-                          setTextLayer((p) => ({ ...p, size: Number(e.target.value) }))
-                        }
-                        className="w-full accent-pink-500 cursor-pointer"
-                      />
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-neutral-300 font-semibold">Rotate</span>
+                          <span className="text-amber-300 font-bold tabular-nums">
+                            {activeTextLayer.rotationDeg || 0}°
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={-180}
+                          max={180}
+                          value={activeTextLayer.rotationDeg || 0}
+                          onChange={(e) =>
+                            updateActiveTextLayer((p) => ({
+                              ...p,
+                              rotationDeg: Number(e.target.value),
+                            }))
+                          }
+                          className="w-full accent-amber-400 cursor-pointer"
+                        />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -3323,7 +3928,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                         <input
                           type="range"
                           min={0}
-                          max={100}
+                          max={200}
                           disabled={!hasVideoInTimeline}
                           value={originalVolume}
                           onChange={(e) => setOriginalVolume(Number(e.target.value))}
@@ -3342,7 +3947,7 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                         <input
                           type="range"
                           min={0}
-                          max={100}
+                          max={200}
                           value={bgAudioVolume}
                           onChange={(e) => setBgAudioVolume(Number(e.target.value))}
                           className="w-full accent-pink-500 cursor-pointer"
@@ -3814,6 +4419,53 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                     )}
                   </div>
                 )}
+                {/* 11. CAPCUT PRO MODULAR TOOL PANELS (Captions, Ticker, FX, BG Remove, Volume, Crop, Anim, Keyframe, Enhance) */}
+                <StudioProToolPanels
+                  activeTool={activeTool}
+                  playheadTime={playheadTime}
+                  totalDuration={Math.max(0.5, totalDuration)}
+                  hasVideoInTimeline={hasVideoInTimeline}
+                  hasAttachedMusic={hasAttachedMusic}
+                  exportResolution={exportResolution}
+                  onSetExportResolution={setExportResolution}
+                  captions={captions}
+                  onSetCaptions={setCaptions}
+                  ticker={ticker}
+                  onSetTicker={setTicker}
+                  visualEffect={visualEffect}
+                  onSetVisualEffect={setVisualEffect}
+                  bgRemoval={bgRemoval}
+                  onSetBgRemoval={setBgRemoval}
+                  onPickBgReplacementImage={handlePickBgReplacementImage}
+                  originalVolume={originalVolume}
+                  bgAudioVolume={bgAudioVolume}
+                  onSetOriginalVolume={setOriginalVolume}
+                  onSetBgAudioVolume={setBgAudioVolume}
+                  onOpenMusicDrawer={() => openMusicDrawer('online')}
+                  cropConfig={cropConfig}
+                  onSetCropConfig={setCropConfig}
+                  clipAnimation={clipAnimation}
+                  onSetClipAnimation={setClipAnimation}
+                  textAnimConfig={activeTextLayer.animConfig || DEFAULT_ANIMATION_CONFIG}
+                  onSetTextAnimConfig={(next) =>
+                    updateActiveTextLayer((t) => ({ ...t, animConfig: next }))
+                  }
+                  hasActiveText={activeTextLayer.text.trim().length > 0}
+                  keyframes={keyframes}
+                  onAddOrUpdateKeyframe={handleAddOrUpdateKeyframe}
+                  onUpdateKeyframe={(id, patch) =>
+                    setKeyframes((prev) =>
+                      prev.map((k) => (k.id === id ? { ...k, ...patch } : k))
+                    )
+                  }
+                  onDeleteKeyframe={(id) =>
+                    setKeyframes((prev) => prev.filter((k) => k.id !== id))
+                  }
+                  onScrubTo={handleScrub}
+                  enhanceConfig={enhanceConfig}
+                  onSetEnhanceConfig={setEnhanceConfig}
+                  onShowToast={onShowToast}
+                />
               </div>
             </aside>
           </div>
@@ -3831,14 +4483,20 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             audioStartOffset={audioStartOffset}
             audioFadeIn={audioFadeIn}
             audioFadeOut={audioFadeOut}
-            textLayer={textLayer}
+            textLayer={activeTextLayer}
             stickers={stickers}
             overlays={overlays}
             activeMaskShape={currentMaskConfig.shape}
+            keyframes={keyframes}
+            captionsCount={captions.length}
+            hasTicker={ticker.enabled}
+            activeEffectType={visualEffect.type}
             onTogglePlay={handleTogglePlay}
             onScrub={handleScrub}
             onSelectClip={(id) => setSelectedClipId(id)}
             onSplitAtPlayhead={handleSplitAtPlayhead}
+            onDuplicateSelected={handleDuplicateActiveItem}
+            onDeleteSelected={handleDeleteActiveItem}
             onTrimClip={handleTrimClip}
             onZoomChange={setZoomLevel}
             onAddClipClick={() => fileInputRef.current?.click()}
@@ -3856,33 +4514,50 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
             }}
           />
 
-          {/* Complete CapCut-Style Bottom Toolbar */}
+          {/* Complete CapCut-Style Scrollable Bottom Toolbar */}
           <nav
             aria-label="Pro Studio Tools"
-            className="shrink-0 bg-[#08080c] border-t border-neutral-800/90 px-2 py-1.5 flex items-center justify-start sm:justify-center gap-1 overflow-x-auto no-scrollbar"
+            className="shrink-0 bg-[#08080c] border-t border-neutral-800/90 px-2 py-1.5 flex items-center justify-start gap-1 overflow-x-auto no-scrollbar"
           >
             {(
               [
-                { id: 'trim', label: 'Edit/Split', icon: Scissors },
-                { id: 'overlay', label: 'Overlay (PIP)', icon: Layers },
-                { id: 'mask', label: 'Mask', icon: Diamond },
-                { id: 'music', label: 'Audio/Sounds', icon: Music },
-                { id: 'text', label: 'Text/Captions', icon: Type },
+                { id: 'trim', label: 'Split', icon: Scissors },
+                { id: 'text', label: 'Text', icon: Type },
+                { id: 'captions', label: 'Captions', icon: Captions },
+                { id: 'ticker', label: 'Ticker', icon: Megaphone },
+                { id: 'effects', label: 'Effects', icon: Wand2 },
+                { id: 'filters', label: 'Filters', icon: Sliders },
+                { id: 'bg_remove', label: 'BG Remove', icon: Eraser },
+                { id: 'action_duplicate', label: 'Duplicate', icon: Copy },
+                { id: 'action_delete', label: 'Delete', icon: Trash2 },
+                { id: 'speed', label: 'Speed', icon: Gauge },
+                { id: 'volume', label: 'Volume', icon: Volume2 },
+                { id: 'crop', label: 'Crop', icon: Crop },
+                { id: 'animation', label: 'Animation', icon: Sparkles },
+                { id: 'keyframe', label: 'Keyframe', icon: Diamond },
+                { id: 'enhance', label: 'Enhance 4K', icon: Zap },
+                { id: 'music', label: 'Audio', icon: Music },
+                { id: 'overlay', label: 'Overlay', icon: Layers },
+                { id: 'mask', label: 'Mask', icon: RotateCw },
                 { id: 'stickers', label: 'Stickers', icon: Smile },
-                { id: 'filters', label: 'Filters & LUTs', icon: Sliders },
-                { id: 'speed', label: 'Speed (0.5x–2x)', icon: Gauge },
                 { id: 'transitions', label: 'Transitions', icon: ArrowLeftRight },
-                { id: 'post', label: 'Publish', icon: Sparkles },
+                { id: 'post', label: 'Publish', icon: Send },
               ] as const
             ).map((tool) => {
               const Icon = tool.icon;
-              const active = activeTool === tool.id;
+              const isActionBtn =
+                tool.id === 'action_duplicate' || tool.id === 'action_delete';
+              const active = !isActionBtn && activeTool === tool.id;
               return (
                 <button
                   key={tool.id}
                   type="button"
                   onClick={() => {
-                    if (tool.id === 'music') {
+                    if (tool.id === 'action_duplicate') {
+                      handleDuplicateActiveItem();
+                    } else if (tool.id === 'action_delete') {
+                      handleDeleteActiveItem();
+                    } else if (tool.id === 'music') {
                       activateEditorTool('music');
                       openMusicDrawer('online');
                     } else if (tool.id === 'trim' && activeTool === 'trim') {
@@ -3891,13 +4566,23 @@ export const PhotoVideoEditorModal: React.FC<PhotoVideoEditorModalProps> = ({
                       activateEditorTool(tool.id);
                     }
                   }}
-                  className={`min-w-[68px] min-h-[48px] px-2.5 py-1.5 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 transition-all cursor-pointer ${
+                  className={`min-w-[66px] min-h-[48px] px-2.5 py-1.5 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 transition-all cursor-pointer ${
                     active
                       ? 'bg-pink-600/20 border border-pink-500/60 text-white'
+                      : tool.id === 'action_delete'
+                      ? 'border border-transparent text-rose-300/85 hover:text-rose-200 hover:bg-rose-950/35'
                       : 'border border-transparent text-neutral-400 hover:text-white hover:bg-neutral-900'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 ${active ? 'text-pink-400' : 'text-neutral-300'}`} />
+                  <Icon
+                    className={`w-4 h-4 ${
+                      active
+                        ? 'text-pink-400'
+                        : tool.id === 'action_delete'
+                        ? 'text-rose-400'
+                        : 'text-neutral-300'
+                    }`}
+                  />
                   <span className="text-[10px] font-bold leading-none whitespace-nowrap">
                     {tool.label}
                   </span>

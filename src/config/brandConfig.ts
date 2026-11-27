@@ -132,6 +132,23 @@ export function parseExpiryEndMs(dateStr: string): number {
 }
 
 /**
+ * Resolves the effective configured expiry date so updating either `expiryDate`
+ * or `licenseExpiryDate` for a rental client works cleanly without shadowing.
+ */
+export function resolveConfiguredExpiryDate(config: BrandConfig = BRAND_CONFIG): string {
+  const primary = (config.expiryDate || '').trim();
+  const alias = (config.licenseExpiryDate || '').trim();
+  if (!primary) return alias;
+  if (!alias || primary === alias) return primary;
+  const primaryMs = parseExpiryEndMs(primary);
+  const aliasMs = parseExpiryEndMs(alias);
+  if (primaryMs > 0 && aliasMs > 0) {
+    return primaryMs < aliasMs ? primary : alias;
+  }
+  return primary || alias;
+}
+
+/**
  * Evaluates whether the white-label rental instance is:
  * - 'active': `now <= new Date(licenseExpiryDate + "T23:59:59")`
  * - 'grace': 1 to gracePeriodDays (default 3) days past expiryDate
@@ -145,8 +162,7 @@ export function checkLicenseStatus(
   const safeNowMs = Number.isFinite(nowMs) && nowMs > 0 ? nowMs : Date.now();
   const cleanDate = (
     overrides?.expiryDate ||
-    config.licenseExpiryDate ||
-    config.expiryDate ||
+    resolveConfiguredExpiryDate(config) ||
     ''
   ).trim();
   const effectiveStatus = overrides?.status ?? config.status;
@@ -242,7 +258,7 @@ export function checkLicenseStatus(
  */
 export function getWhatsAppRenewalUrl(config: BrandConfig = BRAND_CONFIG): string {
   const digits = (config.supportWhatsApp || '').replace(/[^\d]/g, '');
-  const activeExpiry = config.licenseExpiryDate || config.expiryDate;
+  const activeExpiry = resolveConfiguredExpiryDate(config);
   const message = `Hello, I need to renew the monthly license for ${config.appName} (Expiry: ${activeExpiry}).`;
   if (!digits) return 'https://wa.me/';
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;

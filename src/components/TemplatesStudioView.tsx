@@ -2186,6 +2186,8 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                             <img
                               src={clip.url}
                               alt={`Slot ${idx + 1}`}
+                              loading="lazy"
+                              decoding="async"
                               style={{
                                 transform: `scale(${clip.cropZoom || 1}) translate(${
                                   (clip.cropPanX || 0) * 18
@@ -2507,7 +2509,7 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
 
       {/* Interactive Slot Crop & Framing Modal */}
       {croppingSlotIndex !== null && croppingClip && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/92 flex items-center justify-center p-4">
           <div className="w-full max-w-sm rounded-2xl bg-neutral-900 border border-neutral-800 p-4 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -2554,6 +2556,8 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
                 <img
                   src={croppingClip.url}
                   alt="Crop preview"
+                  loading="lazy"
+                  decoding="async"
                   draggable={false}
                   style={{
                     transform: `scale(${croppingClip.cropZoom || 1}) translate(${
@@ -2638,7 +2642,7 @@ const TemplatesStudioViewComponent: React.FC<TemplatesStudioViewProps> = ({
 
       {/* Export & Publish Action Sheet Modal */}
       {isExportSheetOpen && activeTemplate && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl bg-neutral-900 border-t sm:border border-neutral-800 p-5 space-y-4 shadow-2xl pb-safe">
             <div className="flex items-center justify-between gap-2">
               <div>

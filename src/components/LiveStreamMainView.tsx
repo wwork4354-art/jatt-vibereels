@@ -1835,6 +1835,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                     <img
                       src={displayedHostAvatar}
                       alt={displayedHostName}
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 rounded-full object-cover border-2 border-pink-500 shadow-xl"
                       referrerPolicy="no-referrer"
                     />
@@ -1847,7 +1849,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
                 <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/50 pointer-events-none" />
 
-                <div className="absolute top-16 left-3 z-20 flex items-center gap-1.5 bg-black/65 backdrop-blur-md px-2.5 py-1 rounded-full border border-pink-500/40">
+                <div className="absolute top-16 left-3 z-20 flex items-center gap-1.5 bg-black/80 px-2.5 py-1 rounded-full border border-pink-500/40">
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse" />
                   <span className="text-[11px] font-bold text-white">{displayedHostName}</span>
                   <span className="text-[9px] uppercase font-black text-pink-300 bg-pink-500/20 px-1.5 py-0.5 rounded-sm">
@@ -1879,6 +1881,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                     <img
                       src={coHostInfo.avatar}
                       alt={coHostInfo.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 rounded-full object-cover border-2 border-cyan-400 shadow-xl"
                       referrerPolicy="no-referrer"
                     />
@@ -1889,7 +1893,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
                 <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/50 pointer-events-none" />
 
-                <div className="absolute top-16 right-3 z-20 flex items-center gap-1.5 bg-black/65 backdrop-blur-md px-2.5 py-1 rounded-full border border-cyan-500/40">
+                <div className="absolute top-16 right-3 z-20 flex items-center gap-1.5 bg-black/80 px-2.5 py-1 rounded-full border border-cyan-500/40">
                   <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
                   <span className="text-[11px] font-bold text-white">{coHostInfo.name}</span>
                   <span className="text-[9px] uppercase font-black text-cyan-300 bg-cyan-500/20 px-1.5 py-0.5 rounded-sm">
@@ -1919,6 +1923,8 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   <img
                     src={displayedHostAvatar}
                     alt={displayedHostName}
+                    loading="lazy"
+                    decoding="async"
                     className="w-24 h-24 rounded-full object-cover border-4 border-pink-500 shadow-2xl"
                     referrerPolicy="no-referrer"
                   />
@@ -1978,10 +1984,12 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         <div className="relative z-20 p-2 sm:p-3 bg-gradient-to-b from-black/75 via-black/30 to-transparent flex flex-col gap-1 pointer-events-auto">
           <div className="flex items-center justify-between gap-1.5 flex-wrap">
             {/* Compact Host Card */}
-            <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-md p-0.5 pr-2 rounded-full border border-white/15">
+            <div className="flex items-center gap-1.5 bg-black/80 p-0.5 pr-2 rounded-full border border-white/15">
               <img
                 src={displayedHostAvatar}
                 alt={displayedHostName}
+                loading="lazy"
+                decoding="async"
                 className="w-7 h-7 rounded-full object-cover border border-pink-500 shrink-0"
                 referrerPolicy="no-referrer"
               />
@@ -2022,13 +2030,13 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
             {/* Right Status Badges: Compact LIVE Timer + Viewer Count */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {effectiveBroadcast?.isLive && (
-                <div className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-full bg-black/60 border border-white/15 text-[10px] font-semibold text-emerald-300 backdrop-blur-md">
+                <div className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-full bg-black/80 border border-white/15 text-[10px] font-semibold text-emerald-300">
                   <Wifi className="w-2.5 h-2.5" />
                   <span>{effectiveBroadcast.resolutionLabel}</span>
                 </div>
               )}
 
-              <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-rose-600/25 border border-rose-500/45 text-white backdrop-blur-md shadow-sm">
+              <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-rose-950/85 border border-rose-500/45 text-white shadow-sm">
                 <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
                 <span className="text-[10px] font-black uppercase tracking-wider text-rose-300">
                   {effectiveBroadcast?.isLive ? 'LIVE' : 'STAGE'}
@@ -2052,16 +2060,12 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
           {/* Compact Stream Title + Sync Pill */}
           <div className="flex items-center justify-between gap-1.5 flex-wrap">
-            <div className="inline-flex items-center gap-1.5 bg-black/55 border border-white/10 px-2 py-0.5 rounded-full backdrop-blur-md text-[10px] text-neutral-100 max-w-full">
+            <div className="inline-flex items-center gap-1.5 bg-black/75 border border-white/10 px-2 py-0.5 rounded-full text-[10px] text-neutral-100 max-w-full">
               <Sparkles className="w-2.5 h-2.5 text-pink-400 shrink-0" />
               <span className="truncate font-semibold max-w-[180px] sm:max-w-[300px]">{displayedTitle}</span>
             </div>
 
-            <div
-              className={`hidden sm:inline-flex items-center gap-1 bg-black/55 border border-white/10 px-2 py-0.5 rounded-full text-[9px] font-semibold text-neutral-300 ${
-                isRamSaverMode ? '' : 'backdrop-blur-md'
-              }`}
-            >
+            <div className="hidden sm:inline-flex items-center gap-1 bg-black/75 border border-white/10 px-2 py-0.5 rounded-full text-[9px] font-semibold text-neutral-300">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   connectionStatus === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
@@ -2082,12 +2086,14 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
               {coHostRequests.map((req) => (
                 <div
                   key={req.id}
-                  className="bg-neutral-900/95 border border-cyan-500/50 rounded-2xl p-2.5 flex items-center justify-between gap-3 shadow-xl backdrop-blur-md animate-in slide-in-from-top-3 duration-200"
+                  className="bg-neutral-900/95 border border-cyan-500/50 rounded-2xl p-2.5 flex items-center justify-between gap-3 shadow-xl animate-in slide-in-from-top-3 duration-200"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <img
                       src={req.avatar}
                       alt={req.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-9 h-9 rounded-full object-cover border border-cyan-400 shrink-0"
                       referrerPolicy="no-referrer"
                     />
@@ -2128,7 +2134,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
         {/* ========================================================= */}
         {activeGiftBanner && (
           <div className="absolute top-28 left-4 right-4 z-40 pointer-events-none animate-in slide-in-from-top-6 duration-300">
-            <div className="p-3.5 bg-gradient-to-r from-pink-600/95 via-purple-600/95 to-amber-500/95 rounded-2xl shadow-2xl border border-white/30 backdrop-blur-md flex items-center justify-between text-white max-w-md mx-auto">
+            <div className="p-3.5 bg-gradient-to-r from-pink-600/95 via-purple-600/95 to-amber-500/95 rounded-2xl shadow-2xl border border-white/30 flex items-center justify-between text-white max-w-md mx-auto">
               <div className="flex items-center gap-3">
                 <span className="text-3xl animate-bounce">{activeGiftBanner.giftIcon}</span>
                 <div>
@@ -2645,7 +2651,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
           {/* Virtual Gifts Tray */}
           {isGiftTrayOpen && (
-            <div className="mt-3 bg-neutral-900/95 border border-neutral-800 rounded-2xl p-3 shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-4 duration-200">
+            <div className="mt-3 bg-neutral-900/95 border border-neutral-800 rounded-2xl p-3 shadow-2xl animate-in slide-in-from-bottom-4 duration-200">
               <div className="flex items-center justify-between pb-2 border-b border-neutral-800">
                 <div className="flex items-center gap-2">
                   <Gift className="w-4 h-4 text-amber-400" />
@@ -2687,7 +2693,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       {/* "GO LIVE" PRE-BROADCAST CREATOR STUDIO MODAL */}
       {/* ========================================================= */}
       {isSetupModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
           <div className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="px-5 py-4 border-b border-neutral-800 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -2751,9 +2757,9 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   <button
                     type="button"
                     onClick={handleToggleMic}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center border backdrop-blur-md ${
+                    className={`w-10 h-10 rounded-full flex items-center justify-center border ${
                       micEnabled
-                        ? 'bg-black/70 text-white border-white/20'
+                        ? 'bg-black/80 text-white border-white/20'
                         : 'bg-rose-600 text-white border-rose-400'
                     }`}
                     title={micEnabled ? 'Mute Mic' : 'Unmute Mic'}
@@ -2763,9 +2769,9 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   <button
                     type="button"
                     onClick={handleToggleCamera}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center border backdrop-blur-md ${
+                    className={`w-10 h-10 rounded-full flex items-center justify-center border ${
                       cameraEnabled
-                        ? 'bg-black/70 text-white border-white/20'
+                        ? 'bg-black/80 text-white border-white/20'
                         : 'bg-rose-600 text-white border-rose-400'
                     }`}
                     title={cameraEnabled ? 'Turn Camera Off' : 'Turn Camera On'}
@@ -2775,7 +2781,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                   <button
                     type="button"
                     onClick={handleSwapCamera}
-                    className="w-10 h-10 rounded-full bg-black/70 text-white border border-white/20 flex items-center justify-center backdrop-blur-md"
+                    className="w-10 h-10 rounded-full bg-black/80 text-white border border-white/20 flex items-center justify-center"
                     title="Switch Front / Back Camera"
                   >
                     <RefreshCw className="w-4 h-4 text-cyan-400" />
@@ -2854,7 +2860,7 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
       {/* END LIVE SUMMARY MODAL */}
       {/* ========================================================= */}
       {liveSummary && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-center space-y-5 animate-in zoom-in-95 duration-200">
             <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-rose-600 to-pink-500 text-white flex items-center justify-center mx-auto shadow-xl shadow-rose-600/30">
               <Radio className="w-8 h-8" />

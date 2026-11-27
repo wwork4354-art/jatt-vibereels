@@ -722,7 +722,31 @@ const DownloadHubComponent: React.FC<DownloadHubProps> = ({
       void videoEl.play().catch(() => {});
     }
 
+    const pauseDirectVideo = () => {
+      videoEl.muted = true;
+      if (!videoEl.paused) {
+        videoEl.pause();
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        pauseDirectVideo();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    document.addEventListener('freeze', pauseDirectVideo as EventListener);
+    window.addEventListener('pagehide', pauseDirectVideo);
+    window.addEventListener('blur', pauseDirectVideo);
+    window.addEventListener('jatt-app-backgrounded', pauseDirectVideo as EventListener);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      document.removeEventListener('freeze', pauseDirectVideo as EventListener);
+      window.removeEventListener('pagehide', pauseDirectVideo);
+      window.removeEventListener('blur', pauseDirectVideo);
+      window.removeEventListener('jatt-app-backgrounded', pauseDirectVideo as EventListener);
       if (hlsInstance) {
         hlsInstance.destroy();
         hlsInstance = null;

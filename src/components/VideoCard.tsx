@@ -310,11 +310,12 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     }
 
     const el = videoRef.current;
-    if (!shouldBePlaying || !el) {
+    if (!shouldBePlaying || !el || (typeof document !== 'undefined' && document.hidden)) {
       if (bgAudioRef.current) {
         bgAudioRef.current.pause();
+        bgAudioRef.current.muted = true;
       }
-      if (!isActive) {
+      if (!isActive || (typeof document !== 'undefined' && document.hidden)) {
         soundEngine.stopTrack();
       }
       setIsPlaying(false);
@@ -378,28 +379,57 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     bgVol,
   ]);
 
-  // Preserve exact timestamp & resume automatically when app is minimized/backgrounded & reopened
+  // Immediately pause & mute all active playback when app is minimized/screen-locked, and preserve exact timestamp
   useEffect(() => {
-    if (!isActive || video.mediaType === 'image') return;
+    if (!isActive) return;
 
-    const persistNow = () => {
+    const pauseAndPersistNow = () => {
       const el = videoRef.current;
-      if (!el) return;
-      const nowSec = el.currentTime || 0;
-      wasPlayingBeforeHideRef.current = !el.paused;
-      if (nowSec > 0) {
-        pendingResumeTimeRef.current = nowSec;
-        saveVideoTimestamp(video.id, nowSec, !el.paused);
+      const bgAudio = bgAudioRef.current;
+
+      if (video.mediaType === 'image') {
+        wasPlayingBeforeHideRef.current = isPlaying;
+      } else if (el) {
+        const nowSec = el.currentTime || 0;
+        wasPlayingBeforeHideRef.current = !el.paused || isPlaying;
+        if (nowSec > 0) {
+          pendingResumeTimeRef.current = nowSec;
+          saveVideoTimestamp(video.id, nowSec, !el.paused);
+        }
+        el.muted = true;
+        if (!el.paused) {
+          el.pause();
+        }
       }
+
+      if (bgAudio) {
+        bgAudio.muted = true;
+        if (!bgAudio.paused) {
+          bgAudio.pause();
+        }
+      }
+
+      soundEngine.suspendAll();
+      setIsPlaying(false);
     };
 
     const handleVisibilityChange = () => {
-      const el = videoRef.current;
-      if (!el) return;
+      if (document.hidden || document.visibilityState === 'hidden') {
+        pauseAndPersistNow();
+        return;
+      }
 
-      if (document.visibilityState === 'hidden') {
-        persistNow();
-      } else if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && isInViewport) {
+        if (video.mediaType === 'image') {
+          if (wasPlayingBeforeHideRef.current) {
+            setIsPlaying(true);
+            syncBackgroundAudio(true);
+          }
+          return;
+        }
+
+        const el = videoRef.current;
+        if (!el) return;
         const savedSec =
           pendingResumeTimeRef.current > 0.2
             ? pendingResumeTimeRef.current
@@ -416,30 +446,40 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             pendingResumeTimeRef.current = savedSec;
           }
         }
-        if (wasPlayingBeforeHideRef.current || isPlaying) {
+        if (wasPlayingBeforeHideRef.current) {
+          el.volume = Math.max(0, Math.min(1, originalVol));
           el.muted = isMuted || originalVol <= 0.01;
           el.play()
             .then(() => {
               setIsPlaying(true);
               syncBackgroundAudio(true);
             })
-            .catch(() => {});
+            .catch(() => {
+              setIsPlaying(false);
+              syncBackgroundAudio(false);
+            });
         }
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('pagehide', persistNow);
-    window.addEventListener('beforeunload', persistNow);
+    document.addEventListener('freeze', pauseAndPersistNow as EventListener);
+    window.addEventListener('pagehide', pauseAndPersistNow);
+    window.addEventListener('blur', pauseAndPersistNow);
+    window.addEventListener('beforeunload', pauseAndPersistNow);
+    window.addEventListener('jatt-app-backgrounded', pauseAndPersistNow as EventListener);
 
     return () => {
-      persistNow();
+      pauseAndPersistNow();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pagehide', persistNow);
-      window.removeEventListener('beforeunload', persistNow);
+      document.removeEventListener('freeze', pauseAndPersistNow as EventListener);
+      window.removeEventListener('pagehide', pauseAndPersistNow);
+      window.removeEventListener('blur', pauseAndPersistNow);
+      window.removeEventListener('beforeunload', pauseAndPersistNow);
+      window.removeEventListener('jatt-app-backgrounded', pauseAndPersistNow as EventListener);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, video.id, video.videoUrl, video.mediaType, isMuted, originalVol]);
+  }, [isActive, isInViewport, video.id, video.videoUrl, video.mediaType, isMuted, originalVol]);
 
   // Clean up decoder & audio on unmount
   useEffect(() => {
@@ -874,7 +914,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 {isNext && !isActive && video.videoUrl && (
                   <video
                     src={video.videoUrl}
-                    preload={isRamSaverMode ? 'metadata' : 'auto'}
+                    preload={isRamSaverMode ? 'none' : 'metadata'}
                     muted
                     playsInline
                     crossOrigin="anonymous"
@@ -970,10 +1010,10 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
           {/* Floating Quick-Action Pill: (1) Hide/Show UI  (2) Swap Left/Right */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className={`inline-flex items-center rounded-full border backdrop-blur-md shadow-lg transition-all [transform:translateZ(0)] ${
+            className={`inline-flex items-center rounded-full border shadow-lg transition-all [transform:translateZ(0)] ${
               cleanMode
-                ? 'bg-neutral-950/65 border-white/25 hover:bg-neutral-900/90'
-                : 'bg-neutral-900/90 border-white/15'
+                ? 'bg-neutral-950/85 border-white/25 hover:bg-neutral-900'
+                : 'bg-neutral-900/95 border-white/15'
             }`}
           >
             <button
@@ -1120,7 +1160,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
       {/* Creator Download Privacy Warning Popup */}
       {isDownloadBlockedOpen && (
         <div
-          className="absolute inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+          className="absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-4 animate-in fade-in duration-150"
           onClick={(e) => {
             e.stopPropagation();
             setIsDownloadBlockedOpen(false);

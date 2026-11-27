@@ -299,7 +299,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-55 bg-black/90 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-hidden"
+      className="fixed inset-0 z-55 bg-black/95 flex items-center justify-center p-2 sm:p-4 overflow-hidden"
       onClick={onClose}
     >
       <input
@@ -562,6 +562,8 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                   <img
                     src={refImage.previewUrl}
                     alt="Reference"
+                    loading="lazy"
+                    decoding="async"
                     className="w-11 h-11 rounded-xl object-cover border border-neutral-700 shrink-0"
                   />
                   <div className="min-w-0">
@@ -661,6 +663,8 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                 <img
                   src={generatedImage.dataUrl}
                   alt={generatedImage.prompt}
+                  loading="lazy"
+                  decoding="async"
                   className="max-h-[420px] w-auto max-w-full rounded-xl object-contain"
                 />
               ) : mode === 'video' && generatedVideo ? (

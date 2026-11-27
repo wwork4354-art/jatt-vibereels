@@ -399,7 +399,7 @@ const LiveStoriesBarComponent: React.FC<LiveStoriesBarProps> = ({
               setExpanded(true);
             }
           }}
-          className="group touch-none select-none flex flex-col items-center gap-0.5 px-3 py-1 rounded-full bg-neutral-950/70 hover:bg-neutral-900/90 backdrop-blur-md border border-white/15 shadow-lg shadow-black/40 cursor-grab active:cursor-grabbing active:scale-95 transition-transform"
+          className="group touch-none select-none flex flex-col items-center gap-0.5 px-3 py-1 rounded-full bg-neutral-950/90 hover:bg-neutral-900 border border-white/15 shadow-lg shadow-black/40 cursor-grab active:cursor-grabbing active:scale-95 transition-transform"
           title="Swipe down or tap to open Live Snaps & 24h Stories"
           aria-label="Open Live Snaps bar"
         >
@@ -465,7 +465,7 @@ const LiveStoriesBarComponent: React.FC<LiveStoriesBarProps> = ({
             : 'transform 340ms cubic-bezier(0.22, 1.15, 0.36, 1)',
         }}
         aria-hidden={!isExpanded && !isActivelyDragging}
-        className={`absolute top-0 inset-x-0 z-30 bg-neutral-950/92 backdrop-blur-xl border-b border-neutral-800/90 shadow-2xl shadow-black/70 gpu-accelerated ${
+        className={`absolute top-0 inset-x-0 z-30 bg-neutral-950/95 border-b border-neutral-800/90 shadow-2xl shadow-black/70 ${
           isExpanded || isActivelyDragging ? 'pointer-events-auto' : 'pointer-events-none'
         }`}
       >

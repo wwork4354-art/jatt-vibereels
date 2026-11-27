@@ -180,7 +180,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
   return (
     <>
       {/* Mobile Top Header (Notch/Status-bar safe + Never clips Profile/Logout on narrow phones + Swap Left/Right) */}
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 w-full max-w-full overflow-x-hidden bg-neutral-950/95 backdrop-blur-md border-b border-neutral-800/80 pt-[max(0.65rem,env(safe-area-inset-top))] pb-1.5 px-3 flex flex-col gap-1.5 [transform:translateZ(0)]">
+      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 w-full max-w-full overflow-x-hidden bg-neutral-950/95 border-b border-neutral-800/80 pt-[max(0.65rem,env(safe-area-inset-top))] pb-1.5 px-3 flex flex-col gap-1.5">
         {/* Top Row: Swappable Profile/Logout cluster & Brand Logo with overflow-safe utility strip */}
         {(() => {
           const isLeftHeaderProfile = feedControlsSide === 'left';
@@ -643,7 +643,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
       {/* Collapsible Mobile Bottom Tab Bar */}
       <nav
         aria-hidden={!isBottomNavOpen}
-        className={`lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800/80 px-1 py-1.5 flex items-center justify-between gap-0.5 pb-safe transition-[transform,opacity] duration-200 ease-out gpu-accelerated ${
+        className={`lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-neutral-950/95 border-t border-neutral-800/80 px-1 py-1.5 flex items-center justify-between gap-0.5 pb-safe transition-[transform,opacity] duration-200 ease-out ${
           isBottomNavOpen
             ? 'translate-y-0 opacity-100 pointer-events-auto'
             : 'translate-y-full opacity-0 pointer-events-none'

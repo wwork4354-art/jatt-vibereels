@@ -14,6 +14,11 @@ import {
   Image as ImageIcon,
   Layers,
   Sparkles,
+  Copy,
+  Trash2,
+  Captions,
+  Megaphone,
+  Wand2,
 } from 'lucide-react';
 import {
   ComputedClipSpan,
@@ -22,6 +27,7 @@ import {
   EditorTextLayer,
   EditorOverlayLayer,
   EditorMaskShape,
+  KeyframeMarker,
 } from '../utils/proEditorEngine';
 
 interface ProTimelineProps {
@@ -40,15 +46,23 @@ interface ProTimelineProps {
   stickers: EditorStickerLayer[];
   overlays?: EditorOverlayLayer[];
   activeMaskShape?: EditorMaskShape;
+  keyframes?: KeyframeMarker[];
+  captionsCount?: number;
+  hasTicker?: boolean;
+  activeEffectType?: string;
   onTogglePlay: () => void;
   onScrub: (timeSec: number) => void;
   onSelectClip: (clipId: string) => void;
   onSplitAtPlayhead: () => void;
+  onDuplicateSelected?: () => void;
+  onDeleteSelected?: () => void;
   onTrimClip: (clipId: string, nextTrimStart: number, nextTrimEnd: number) => void;
   onZoomChange: (nextZoom: number) => void;
   onAddClipClick: () => void;
   onOpenTransitionForClip: (clipId: string) => void;
-  onFocusTrackTool: (tool: 'music' | 'text' | 'stickers' | 'overlay' | 'mask') => void;
+  onFocusTrackTool: (
+    tool: 'music' | 'text' | 'stickers' | 'overlay' | 'mask' | 'captions' | 'ticker' | 'effects' | 'keyframe'
+  ) => void;
   onAudioBarClick?: () => void;
 }
 
@@ -91,10 +105,16 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
   stickers,
   overlays = [],
   activeMaskShape = 'none',
+  keyframes = [],
+  captionsCount = 0,
+  hasTicker = false,
+  activeEffectType = 'none',
   onTogglePlay,
   onScrub,
   onSelectClip,
   onSplitAtPlayhead,
+  onDuplicateSelected,
+  onDeleteSelected,
   onTrimClip,
   onZoomChange,
   onAddClipClick,
@@ -223,18 +243,44 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
           </span>
         </div>
 
-        {/* Center/Right: One-Tap Split, Zoom -, Zoom +, Add Clip */}
-        <div className="flex items-center gap-1.5">
+        {/* Center/Right: Split, Duplicate, Delete, Zoom -, Zoom +, Add Clip */}
+        <div className="flex items-center gap-1 sm:gap-1.5">
           <button
             type="button"
             onClick={onSplitAtPlayhead}
             disabled={spans.length === 0}
-            className="min-h-[36px] px-2.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 border border-neutral-700/80 text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer active:scale-95"
+            className="min-h-[34px] px-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 border border-neutral-700/80 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer active:scale-95"
             title="Split clip at playhead needle"
           >
             <Scissors className="w-3.5 h-3.5 text-pink-400" />
             <span>Split</span>
           </button>
+
+          {onDuplicateSelected && (
+            <button
+              type="button"
+              onClick={onDuplicateSelected}
+              disabled={spans.length === 0}
+              className="min-w-[34px] min-h-[34px] px-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 border border-neutral-700/80 text-neutral-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer active:scale-95"
+              title="Duplicate selected clip or layer"
+            >
+              <Copy className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden md:inline">Duplicate</span>
+            </button>
+          )}
+
+          {onDeleteSelected && (
+            <button
+              type="button"
+              onClick={onDeleteSelected}
+              disabled={spans.length === 0}
+              className="min-w-[34px] min-h-[34px] px-2 rounded-lg bg-neutral-900 hover:bg-rose-950/60 disabled:opacity-40 border border-neutral-700/80 text-rose-400 text-[11px] font-bold flex items-center gap-1 cursor-pointer active:scale-95"
+              title="Delete selected layer or clip"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Delete</span>
+            </button>
+          )}
 
           <div className="hidden sm:flex items-center bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden">
             <button
@@ -263,7 +309,7 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
           <button
             type="button"
             onClick={onAddClipClick}
-            className="min-h-[36px] px-2.5 rounded-lg bg-gradient-to-r from-pink-600 to-rose-500 hover:brightness-110 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer active:scale-95"
+            className="min-h-[34px] px-2.5 rounded-lg bg-gradient-to-r from-pink-600 to-rose-500 hover:brightness-110 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer active:scale-95"
             title="Add video or photo clip"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -420,6 +466,23 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
                   </React.Fragment>
                 );
               })}
+
+              {/* Diamond Keyframe Markers directly on the clip track */}
+              {keyframes.map((kf) => (
+                <button
+                  key={kf.id}
+                  type="button"
+                  data-no-scrub="true"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onScrub(kf.timeSec);
+                    onFocusTrackTool('keyframe');
+                  }}
+                  style={{ left: `${Math.max(4, kf.timeSec * pxPerSec)}px` }}
+                  className="absolute bottom-0.5 -translate-x-1/2 z-25 w-3.5 h-3.5 rotate-45 bg-amber-400 border border-black shadow-[0_0_6px_rgba(251,191,36,0.9)] cursor-pointer hover:scale-125 transition-transform"
+                  title={`Keyframe (${kf.target}) @ ${kf.timeSec.toFixed(1)}s`}
+                />
+              ))}
             </div>
           </div>
 
@@ -579,6 +642,59 @@ export const ProTimeline: React.FC<ProTimelineProps> = React.memo(({
                 <Sparkles className="w-3 h-3 shrink-0 text-purple-400" />
                 <span className="capitalize">
                   {activeMaskShape !== 'none' ? `Mask: ${activeMaskShape}` : '+ Mask'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                data-no-scrub="true"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFocusTrackTool('captions');
+                }}
+                className={`h-7 rounded-md border px-2.5 flex items-center gap-1 text-[10px] font-bold cursor-pointer shrink-0 active:scale-95 transition-all ${
+                  captionsCount > 0
+                    ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                    : 'bg-neutral-900/80 border-neutral-700 text-neutral-200 hover:border-emerald-500/60'
+                }`}
+              >
+                <Captions className="w-3 h-3 shrink-0 text-emerald-400" />
+                <span>{captionsCount > 0 ? `${captionsCount} Captions` : '+ Captions'}</span>
+              </button>
+
+              <button
+                type="button"
+                data-no-scrub="true"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFocusTrackTool('ticker');
+                }}
+                className={`h-7 rounded-md border px-2.5 flex items-center gap-1 text-[10px] font-bold cursor-pointer shrink-0 active:scale-95 transition-all ${
+                  hasTicker
+                    ? 'bg-rose-500/20 border-rose-400/50 text-rose-200'
+                    : 'bg-neutral-900/80 border-neutral-700 text-neutral-200 hover:border-rose-500/60'
+                }`}
+              >
+                <Megaphone className="w-3 h-3 shrink-0 text-rose-400" />
+                <span>{hasTicker ? 'Ticker ON' : '+ Ticker'}</span>
+              </button>
+
+              <button
+                type="button"
+                data-no-scrub="true"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFocusTrackTool('effects');
+                }}
+                className={`h-7 rounded-md border px-2.5 flex items-center gap-1 text-[10px] font-bold cursor-pointer shrink-0 active:scale-95 transition-all ${
+                  activeEffectType !== 'none'
+                    ? 'bg-violet-500/25 border-violet-400/60 text-violet-200'
+                    : 'bg-neutral-900/80 border-neutral-700 text-neutral-200 hover:border-violet-500/60'
+                }`}
+              >
+                <Wand2 className="w-3 h-3 shrink-0 text-violet-400" />
+                <span className="capitalize">
+                  {activeEffectType !== 'none' ? `FX: ${activeEffectType.replace('_', ' ')}` : '+ FX'}
                 </span>
               </button>
             </div>
