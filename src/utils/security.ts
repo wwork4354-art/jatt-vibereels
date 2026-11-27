@@ -722,14 +722,20 @@ export function recordRateLimitEvent(action: RateLimitAction, now = Date.now()):
 // 5. Upload Security: Strict Media & Audio File Validation
 // =========================================================================
 
-export const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.webm'] as const;
+export const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.3gp', '.m4v'] as const;
 export const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'] as const;
 export const ALLOWED_MEDIA_EXTENSIONS = [
   ...ALLOWED_VIDEO_EXTENSIONS,
   ...ALLOWED_IMAGE_EXTENSIONS,
 ] as const;
 
-export const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm'] as const;
+export const ALLOWED_VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/3gpp',
+  'video/x-m4v',
+] as const;
 export const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
 export const ALLOWED_AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.ogg'] as const;

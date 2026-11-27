@@ -747,70 +747,19 @@ export async function acquireLiveCameraStream(options: {
 
   const { facingMode, audioEnabled = true } = options;
 
-  const audioConstraints: MediaTrackConstraints | boolean = audioEnabled
-    ? {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      }
-    : false;
-
   const attempts: MediaStreamConstraints[] = [
-    // 1. True 4K Ultra HD @ 60fps when hardware supports it
     {
-      video: {
-        facingMode: { ideal: facingMode },
-        width: { ideal: 3840 },
-        height: { ideal: 2160 },
-        frameRate: { ideal: 60 },
-      },
-      audio: audioConstraints,
+      video: { facingMode },
+      audio: audioEnabled,
     },
-    // 2. 1080p Full HD @ 60fps smooth fallback
     {
-      video: {
-        facingMode: { ideal: facingMode },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 60 },
-      },
-      audio: audioConstraints,
+      video: true,
+      audio: audioEnabled,
     },
-    // 3. 720p HD @ 30fps fallback
     {
-      video: {
-        facingMode: { ideal: facingMode },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 },
-      },
-      audio: audioConstraints,
-    },
-    // 4. 480p fallback for constrained cameras
-    {
-      video: {
-        facingMode: { ideal: facingMode },
-        width: { ideal: 854 },
-        height: { ideal: 480 },
-        frameRate: { ideal: 30 },
-      },
-      audio: audioConstraints,
-    },
-    // 5. Video-only 1080p fallback (when mic permission is blocked/missing)
-    {
-      video: {
-        facingMode: { ideal: facingMode },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      },
+      video: { facingMode },
       audio: false,
     },
-    // 6. Basic facingMode video-only fallback
-    {
-      video: { facingMode: { ideal: facingMode } },
-      audio: false,
-    },
-    // 7. Guaranteed generic camera fallback
     {
       video: true,
       audio: false,
@@ -826,19 +775,28 @@ export async function acquireLiveCameraStream(options: {
       break;
     } catch (err) {
       lastError = err;
-      const errName = err instanceof Error ? err.name : '';
-      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errName === 'SecurityError') {
-        throw new Error('Camera or microphone permission was denied. Please allow access in your browser settings.');
-      }
     }
   }
 
   if (!stream) {
-    const message = lastError instanceof Error ? lastError.message : 'Unable to access device camera.';
-    throw new Error(message);
+    const errName = lastError instanceof Error && lastError.name ? lastError.name : 'CameraError';
+    const errMessage =
+      lastError instanceof Error && lastError.message
+        ? lastError.message
+        : 'Unable to access device camera.';
+    throw new Error(`${errName}: ${errMessage}`);
   }
 
   const videoTrack = stream.getVideoTracks()[0];
+  if (videoTrack && typeof videoTrack.applyConstraints === 'function') {
+    await videoTrack
+      .applyConstraints({
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+      })
+      .catch(() => {});
+  }
+
   const settings = videoTrack?.getSettings?.() || {};
   const width = settings.width || 1280;
   const height = settings.height || 720;
