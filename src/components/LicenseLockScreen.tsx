@@ -48,7 +48,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
   const paymentNumber = BRAND_CONFIG.paymentNumber || '03214383976';
   const isSuspended = licenseStatus.reason === 'suspended';
 
-  if (licenseStatus.isValid && licenseStatus.phase !== 'locked') {
+  if (!BRAND_CONFIG.enableRentalLock || (licenseStatus.isValid && licenseStatus.phase !== 'locked')) {
     return null;
   }
 

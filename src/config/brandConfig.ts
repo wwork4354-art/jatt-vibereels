@@ -37,6 +37,8 @@ export interface BrandConfig {
   licenseExpiryDate: string;
   /** Master kill-switch for remote rental licensing; set false to lock instance immediately */
   isLicenseActive: boolean;
+  /** Enables the rental lock / grace UI; set false on the main owner build so no lock screen ever renders */
+  enableRentalLock: boolean;
 }
 
 /**
@@ -81,6 +83,7 @@ export const BRAND_CONFIG: BrandConfig = {
   status: 'active',
   gracePeriodDays: 3,
   isLicenseActive: true,
+  enableRentalLock: false,
 };
 
 export type PaymentPlanOption = 'Standard Monthly' | 'VIP Exclusive';
@@ -169,6 +172,23 @@ export function checkLicenseStatus(
   const graceDays = Math.max(0, Math.floor(config.gracePeriodDays ?? 3));
   const clockTamperDetected = Boolean(overrides?.clockTamperDetected);
   const source = overrides?.source ?? 'config';
+
+  if (!config.enableRentalLock) {
+    const endMs = parseExpiryEndMs(cleanDate);
+    const daysRemaining =
+      endMs > safeNowMs ? Math.max(1, Math.ceil((endMs - safeNowMs) / 86_400_000)) : 365;
+    return {
+      phase: 'active',
+      isValid: true,
+      reason: 'active',
+      expiryDateLabel: cleanDate || '2030-12-31',
+      daysRemaining,
+      graceDaysRemaining: graceDays,
+      daysOverdue: 0,
+      clockTamperDetected: false,
+      source: 'config',
+    };
+  }
 
   if (!config.isLicenseActive || effectiveStatus === 'suspended') {
     return {

@@ -406,6 +406,9 @@ export async function fetchMasterProviderLicense(): Promise<StoredMasterCache | 
  * Uses ONLY BRAND_CONFIG + optional cached master provider JSON + verified activation key grants.
  */
 export function evaluateLicenseSync(): LicenseCheckResult {
+  if (!BRAND_CONFIG.enableRentalLock) {
+    return checkLicenseStatus(BRAND_CONFIG, Date.now());
+  }
   const localNow = Date.now();
   const hwmMs = readLocalHighWaterMark();
   const masterEndpoint = isAllowedMasterUrl(BRAND_CONFIG.masterLicenseUrl);
@@ -457,6 +460,9 @@ export function evaluateLicenseSync(): LicenseCheckResult {
  * Master Provider `masterLicenseUrl` state (if configured), and verified 30-day activation keys.
  */
 export async function evaluateFullLicenseState(): Promise<LicenseCheckResult> {
+  if (!BRAND_CONFIG.enableRentalLock) {
+    return checkLicenseStatus(BRAND_CONFIG, Date.now());
+  }
   const [clock, masterState, unlockGrant] = await Promise.all([
     fetchAuthoritativeClock(),
     fetchMasterProviderLicense(),

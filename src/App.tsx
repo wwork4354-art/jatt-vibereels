@@ -411,6 +411,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!BRAND_CONFIG.enableRentalLock) return;
     void refreshRemoteLicense();
     const interval = window.setInterval(() => {
       void refreshRemoteLicense();
@@ -2588,7 +2589,7 @@ export default function App() {
     [videos]
   );
 
-  if (!licenseStatus.isValid || licenseStatus.phase === 'locked') {
+  if (BRAND_CONFIG.enableRentalLock && (!licenseStatus.isValid || licenseStatus.phase === 'locked')) {
     return (
       <LicenseLockScreen
         licenseStatus={licenseStatus}
@@ -2637,10 +2638,12 @@ export default function App() {
       <OfflineBanner onOpenSavedOffline={handleOpenSavedDownloadsOffline} />
 
       {/* Non-Dismissible 3-Day Grace Period Billing Warning Banner */}
-      <GraceWarningBanner
-        licenseStatus={licenseStatus}
-        onOpenPayRent={() => setIsGracePaymentOpen(true)}
-      />
+      {BRAND_CONFIG.enableRentalLock && (
+        <GraceWarningBanner
+          licenseStatus={licenseStatus}
+          onOpenPayRent={() => setIsGracePaymentOpen(true)}
+        />
+      )}
 
       {/* Floating PWA Install App Banner (auto-hides when installed) */}
       <PWAInstallButton variant="banner" onShowToast={showToast} />
