@@ -1,3 +1,9 @@
+import { useEffect, useState } from 'react';
+
+export const DEFAULT_BRAND_LOGO_SRC = '/assets/aistudio/image_137fba56_4a00493d.jpg';
+const CUSTOM_BRAND_LOGO_STORAGE_KEY = 'jatt_custom_brand_logo_v1';
+const BRAND_LOGO_CHANGE_EVENT = 'jatt-brand-logo-changed';
+
 export interface BrandConfig {
   /** Primary application brand name shown across headers, auth, and PWA prompts */
   appName: string;
@@ -66,7 +72,7 @@ export interface BrandConfig {
 export const BRAND_CONFIG: BrandConfig = {
   appName: 'JATT VibeReels',
   tagline: 'Create & Share AI Reels',
-  logoUrl: '/src/assets/images/jatt_vibereels_neon_logo.png',
+  logoUrl: '/assets/aistudio/image_137fba56_4a00493d.jpg',
   brandBadge: 'Official',
   accentColor: '#ec4899',
   secondaryAccentColor: '#06b6d4',
@@ -85,6 +91,87 @@ export const BRAND_CONFIG: BrandConfig = {
   isLicenseActive: true,
   enableRentalLock: false,
 };
+
+function isValidLogoString(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('https://') || lower.startsWith('http://')) return true;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
+  if (/^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(trimmed)) return true;
+  return false;
+}
+
+export function hasCustomBrandLogo(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const saved = window.localStorage.getItem(CUSTOM_BRAND_LOGO_STORAGE_KEY) || '';
+    return isValidLogoString(saved);
+  } catch {
+    return false;
+  }
+}
+
+export function getBrandLogoSrc(): string {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = window.localStorage.getItem(CUSTOM_BRAND_LOGO_STORAGE_KEY) || '';
+      if (isValidLogoString(saved)) {
+        return saved.trim();
+      }
+    } catch {
+      // ignore storage access errors
+    }
+  }
+  return BRAND_CONFIG.logoUrl || DEFAULT_BRAND_LOGO_SRC;
+}
+
+export function setCustomBrandLogo(nextLogoUrl: string): string {
+  const trimmed = (nextLogoUrl || '').trim();
+  if (!isValidLogoString(trimmed)) {
+    return getBrandLogoSrc();
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(CUSTOM_BRAND_LOGO_STORAGE_KEY, trimmed);
+      window.dispatchEvent(new CustomEvent(BRAND_LOGO_CHANGE_EVENT));
+    } catch {
+      // ignore quota/private mode errors
+    }
+  }
+  return trimmed;
+}
+
+export function resetCustomBrandLogo(): string {
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.removeItem(CUSTOM_BRAND_LOGO_STORAGE_KEY);
+      window.dispatchEvent(new CustomEvent(BRAND_LOGO_CHANGE_EVENT));
+    } catch {
+      // ignore
+    }
+  }
+  return BRAND_CONFIG.logoUrl || DEFAULT_BRAND_LOGO_SRC;
+}
+
+export function useBrandLogo(): string {
+  const [logoSrc, setLogoSrc] = useState<string>(() => getBrandLogoSrc());
+
+  useEffect(() => {
+    const syncLogo = () => {
+      setLogoSrc(getBrandLogoSrc());
+    };
+    syncLogo();
+    window.addEventListener(BRAND_LOGO_CHANGE_EVENT, syncLogo);
+    window.addEventListener('storage', syncLogo);
+    return () => {
+      window.removeEventListener(BRAND_LOGO_CHANGE_EVENT, syncLogo);
+      window.removeEventListener('storage', syncLogo);
+    };
+  }, []);
+
+  return logoSrc;
+}
 
 export type PaymentPlanOption = 'Standard Monthly' | 'VIP Exclusive';
 export type PaymentMethodOption = 'JazzCash' | 'EasyPaisa' | 'Bank Transfer';

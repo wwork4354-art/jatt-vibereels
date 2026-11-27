@@ -17,6 +17,7 @@ import {
   LicenseCheckResult,
   getBrandNameParts,
   getWhatsAppRenewalUrl,
+  useBrandLogo,
 } from '../config/brandConfig';
 import { activateWithRenewalKey } from '../lib/licenseService';
 import { EasyPaymentModal } from './EasyPaymentModal';
@@ -32,6 +33,7 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
   onLicenseUpdated,
   onRefreshRemoteStatus,
 }) => {
+  const activeLogoSrc = useBrandLogo();
   const [logoError, setLogoError] = useState(false);
   const [copiedProvider, setCopiedProvider] = useState<'jazzcash' | 'easypaisa' | null>(null);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
@@ -106,9 +108,9 @@ export const LicenseLockScreen: React.FC<LicenseLockScreenProps> = ({
         {/* Brand Identity Header */}
         <div className="flex items-center justify-between gap-3 pb-4 border-b border-neutral-800">
           <div className="flex items-center gap-3 min-w-0">
-            {!logoError && BRAND_CONFIG.logoUrl ? (
+            {!logoError && activeLogoSrc ? (
               <img
-                src={BRAND_CONFIG.logoUrl}
+                src={activeLogoSrc}
                 alt={BRAND_CONFIG.appName}
                 loading="lazy"
                 decoding="async"

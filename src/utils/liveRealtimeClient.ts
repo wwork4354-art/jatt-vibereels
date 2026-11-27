@@ -756,34 +756,63 @@ export async function acquireLiveCameraStream(options: {
     : false;
 
   const attempts: MediaStreamConstraints[] = [
-    // 1. Capped 720p @ 30fps for smooth 3GB RAM & mobile data WebRTC streaming
+    // 1. True 4K Ultra HD @ 60fps when hardware supports it
     {
       video: {
         facingMode: { ideal: facingMode },
-        width: { ideal: 1280, max: 1280 },
-        height: { ideal: 720, max: 720 },
-        frameRate: { ideal: 30, max: 30 },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 60 },
       },
       audio: audioConstraints,
     },
-    // 2. 480p 30fps fallback for ultra-constrained cameras
+    // 2. 1080p Full HD @ 60fps smooth fallback
     {
       video: {
         facingMode: { ideal: facingMode },
-        width: { ideal: 854, max: 1280 },
-        height: { ideal: 480, max: 720 },
-        frameRate: { ideal: 30, max: 30 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 60 },
       },
       audio: audioConstraints,
     },
-    // 3. Standard camera + audio
+    // 3. 720p HD @ 30fps fallback
     {
-      video: { facingMode, width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 30 } },
+      video: {
+        facingMode: { ideal: facingMode },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30 },
+      },
       audio: audioConstraints,
     },
-    // 4. Camera-only fallback (in case mic permission/device missing)
+    // 4. 480p fallback for constrained cameras
     {
-      video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 30 } },
+      video: {
+        facingMode: { ideal: facingMode },
+        width: { ideal: 854 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 30 },
+      },
+      audio: audioConstraints,
+    },
+    // 5. Video-only 1080p fallback (when mic permission is blocked/missing)
+    {
+      video: {
+        facingMode: { ideal: facingMode },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    },
+    // 6. Basic facingMode video-only fallback
+    {
+      video: { facingMode: { ideal: facingMode } },
+      audio: false,
+    },
+    // 7. Guaranteed generic camera fallback
+    {
+      video: true,
       audio: false,
     },
   ];
@@ -798,7 +827,7 @@ export async function acquireLiveCameraStream(options: {
     } catch (err) {
       lastError = err;
       const errName = err instanceof Error ? err.name : '';
-      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errName === 'SecurityError') {
         throw new Error('Camera or microphone permission was denied. Please allow access in your browser settings.');
       }
     }
@@ -810,24 +839,19 @@ export async function acquireLiveCameraStream(options: {
   }
 
   const videoTrack = stream.getVideoTracks()[0];
-  // Strictly enforce max 720p 30fps if hardware delivered a higher profile
-  if (videoTrack && typeof videoTrack.applyConstraints === 'function') {
-    try {
-      await videoTrack.applyConstraints({
-        width: { max: 1280 },
-        height: { max: 720 },
-        frameRate: { max: 30 },
-      });
-    } catch {
-      // ignore if browser locks current track constraints
-    }
-  }
-
   const settings = videoTrack?.getSettings?.() || {};
-  const height = Math.min(720, settings.height || 720);
-  const fps = Math.min(30, settings.frameRate ? Math.round(settings.frameRate) : 30);
+  const width = settings.width || 1280;
+  const height = settings.height || 720;
+  const fps = settings.frameRate ? Math.round(settings.frameRate) : 30;
 
-  const resolutionLabel = height >= 700 ? `720p · ${fps}fps` : `${height}p · ${fps}fps`;
+  const resolutionLabel =
+    width >= 3800 || height >= 2100
+      ? `4K UHD · ${fps}fps`
+      : width >= 1900 || height >= 1080
+      ? `1080p HD · ${fps}fps`
+      : height >= 700
+      ? `720p · ${fps}fps`
+      : `${height}p · ${fps}fps`;
 
   return {
     stream,

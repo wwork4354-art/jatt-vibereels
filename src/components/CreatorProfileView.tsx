@@ -51,6 +51,7 @@ import {
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { PWAInstallButton } from './PWAInstallButton';
 import { EasyPaymentModal } from './EasyPaymentModal';
+import { VideoThumbnail } from './VideoThumbnail';
 import { BRAND_CONFIG } from '../config/brandConfig';
 import {
   uploadMediaToReelsBucket,
@@ -1590,26 +1591,15 @@ const CreatorProfileViewComponent: React.FC<CreatorProfileViewProps> = ({
                     onClick={() => handleOpenSavedOfflineItem(vid)}
                     className="w-full h-full text-left cursor-pointer block"
                   >
-                    {vid.mediaType === 'image' || vid.posterUrl ? (
-                      <img
-                        src={optimizeThumbnailUrl(
-                          vid.mediaType === 'image' ? vid.videoUrl : vid.posterUrl,
-                          'grid'
-                        )}
-                        alt={vid.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ) : (
-                      <video
-                        src={vid.videoUrl}
-                        muted
-                        playsInline
-                        preload="metadata"
-                        className="w-full h-full object-cover"
-                      />
-                    )}
+                    <VideoThumbnail
+                      videoUrl={vid.videoUrl}
+                      posterUrl={vid.posterUrl}
+                      mediaType={vid.mediaType}
+                      title={vid.title}
+                      mode="grid"
+                      fallbackGradient={vid.fallbackGradient}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
 
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-transparent pointer-events-none" />
 

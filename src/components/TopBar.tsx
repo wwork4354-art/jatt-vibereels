@@ -36,12 +36,13 @@ import { PWAInstallButton } from './PWAInstallButton';
 import { soundEngine } from '../utils/soundEngine';
 import { isMainAdminAccount } from '../data/mockUsers';
 import { sanitizeSearchQuery } from '../utils/security';
-import { BRAND_CONFIG } from '../config/brandConfig';
+import { BRAND_CONFIG, DEFAULT_BRAND_LOGO_SRC, useBrandLogo } from '../config/brandConfig';
+import { VideoThumbnail } from './VideoThumbnail';
 
 /**
  * Linked directly to centralized white-label brand config (src/config/brandConfig.ts).
  */
-export const BRAND_LOGO_SRC = BRAND_CONFIG.logoUrl;
+export const BRAND_LOGO_SRC = DEFAULT_BRAND_LOGO_SRC;
 
 interface TopBarProps {
   currentUser: UserAccount | null;
@@ -101,6 +102,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
   onToggleFeedControlsSide,
 }) => {
   const { isRamSaverMode, toggleRamSaverMode } = useRamSaverMode();
+  const activeLogoSrc = useBrandLogo();
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -372,11 +374,16 @@ const TopBarComponent: React.FC<TopBarProps> = ({
       <div className="flex items-center gap-3 shrink-0">
         {isProfileOnLeft && profileAuthCluster}
         <img
-          src={BRAND_CONFIG.logoUrl || BRAND_LOGO_SRC}
+          src={activeLogoSrc || BRAND_LOGO_SRC}
           alt={BRAND_CONFIG.appName}
           loading="lazy"
           decoding="async"
-          className="h-8 sm:h-9 w-auto max-w-[155px] object-contain rounded-md shadow-sm"
+          onError={(e) => {
+            if (e.currentTarget.src !== DEFAULT_BRAND_LOGO_SRC) {
+              e.currentTarget.src = DEFAULT_BRAND_LOGO_SRC;
+            }
+          }}
+          className="h-8 sm:h-9 w-auto max-w-[155px] object-contain bg-black rounded-lg px-1 shadow-sm"
         />
       </div>
 
@@ -506,23 +513,15 @@ const TopBarComponent: React.FC<TopBarProps> = ({
                         >
                           <div className="flex items-center gap-2.5 min-w-0 flex-1">
                             <div className="w-9 h-9 rounded-lg overflow-hidden bg-neutral-800 shrink-0 border border-neutral-700/80 relative flex items-center justify-center">
-                              {post.mediaType === 'image' ? (
-                                <img
-                                  src={optimizeThumbnailUrl(post.videoUrl, 'grid')}
-                                  alt={post.title}
-                                  loading="lazy"
-                                  decoding="async"
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                <img
-                                  src={optimizeThumbnailUrl(post.posterUrl, 'grid')}
-                                  alt={post.title}
-                                  loading="lazy"
-                                  decoding="async"
-                                  className="w-full h-full object-cover"
-                                />
-                              )}
+                              <VideoThumbnail
+                                videoUrl={post.videoUrl}
+                                posterUrl={post.posterUrl}
+                                mediaType={post.mediaType}
+                                title={post.title}
+                                mode="grid"
+                                fallbackGradient={post.fallbackGradient}
+                                className="w-full h-full object-cover"
+                              />
                               <span className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/70 text-white">
                                 {post.mediaType === 'image' ? (
                                   <ImageIcon className="w-2.5 h-2.5" />

@@ -32,6 +32,12 @@ import {
 } from '../lib/playbackPersistence';
 import { useRamSaverMode } from '../lib/ramSaverMode';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import { VideoThumbnail } from './VideoThumbnail';
+import {
+  captureVideoFrameDataUrl,
+  getCachedVideoThumbnail,
+  setCachedVideoThumbnail,
+} from '../utils/videoThumbnail';
 
 interface VideoCardProps {
   video: VideoPost;
@@ -136,6 +142,9 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
   const [floatingHearts, setFloatingHearts] = useState<FloatingHeart[]>([]);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [isDownloadingReel, setIsDownloadingReel] = useState(false);
+  const [cachedThumb, setCachedThumb] = useState<string>(() =>
+    getCachedVideoThumbnail(video.videoUrl)
+  );
   const isDownloadAllowed = video.allowDownload !== false;
 
   const isOwnPost = Boolean(
@@ -156,10 +165,11 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     setIsLandscape(false);
     setCaptionExpanded(false);
     setVideoError(false);
+    setCachedThumb(getCachedVideoThumbnail(video.videoUrl));
     const savedTime = getSavedVideoTimestamp(video.id);
     pendingResumeTimeRef.current = savedTime;
     setCurrentTime(savedTime);
-  }, [video.id]);
+  }, [video.id, video.videoUrl]);
 
   // IntersectionObserver: strictly play only when card is >=55% visible inside viewport
   useEffect(() => {
@@ -766,6 +776,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
     isRamSaverMode ? 'grid' : 'hero',
     isRamSaverMode
   );
+  const effectivePoster = cachedThumb || optimizedPoster;
 
   // Strict virtualization: unmount video DOM completely for off-screen cards outside [active-1 .. active+1]
   if (!isNearViewport && !isActive && !isNext) {
@@ -776,15 +787,16 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
         className="relative w-full h-full snap-item gpu-accelerated bg-neutral-950 flex items-center justify-center overflow-hidden"
         style={{ contain: 'strict' }}
       >
-        {optimizedPoster && (
-          <img
-            src={optimizedPoster}
-            alt={video.title}
-            loading="lazy"
-            decoding="async"
-            className="w-full h-full object-cover sm:object-contain sm:max-w-md opacity-40"
-          />
-        )}
+        <VideoThumbnail
+          videoUrl={video.videoUrl}
+          posterUrl={effectivePoster}
+          mediaType={video.mediaType}
+          title={video.title}
+          mode="grid"
+          isRamSaverMode={isRamSaverMode}
+          fallbackGradient={video.fallbackGradient}
+          className="w-full h-full object-cover sm:object-contain sm:max-w-md opacity-45"
+        />
       </div>
     );
   }
@@ -865,7 +877,7 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                 <video
                   ref={videoRef}
                   src={video.videoUrl}
-                  poster={optimizedPoster}
+                  poster={effectivePoster || undefined}
                   playsInline
                   loop
                   muted={isMuted}
@@ -875,6 +887,15 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
                   onCanPlay={() => {
                     if (isActive && videoRef.current) {
                       applySavedTimestampIfNeeded(videoRef.current);
+                    }
+                  }}
+                  onLoadedData={() => {
+                    if (videoRef.current && !effectivePoster && video.videoUrl) {
+                      const captured = captureVideoFrameDataUrl(videoRef.current, 360);
+                      if (captured) {
+                        setCachedVideoThumbnail(video.videoUrl, captured);
+                        setCachedThumb(captured);
+                      }
                     }
                   }}
                   onLoadedMetadata={() => {
@@ -902,15 +923,16 @@ const VideoCardComponent: React.FC<VideoCardProps> = ({
             ) : !videoError ? (
               /* Off-screen adjacent card: strict preloading for Next +1 video ONLY; zero video DOM for prev cards */
               <div className="w-full h-full sm:max-w-[440px] mx-auto flex items-center justify-center bg-neutral-950 gpu-accelerated">
-                {optimizedPoster && (
-                  <img
-                    src={optimizedPoster}
-                    alt={video.title}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-full h-full object-cover sm:object-contain opacity-85 gpu-accelerated"
-                  />
-                )}
+                <VideoThumbnail
+                  videoUrl={video.videoUrl}
+                  posterUrl={effectivePoster}
+                  mediaType={video.mediaType}
+                  title={video.title}
+                  mode={isRamSaverMode ? 'grid' : 'hero'}
+                  isRamSaverMode={isRamSaverMode}
+                  fallbackGradient={video.fallbackGradient}
+                  className="w-full h-full object-cover sm:object-contain opacity-90 gpu-accelerated"
+                />
                 {isNext && !isActive && video.videoUrl && (
                   <video
                     src={video.videoUrl}

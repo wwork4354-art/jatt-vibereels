@@ -37,7 +37,7 @@ import {
   AudioTrackOption,
 } from '../types';
 import { BRAND_LOGO_SRC } from './TopBar';
-import { BRAND_CONFIG } from '../config/brandConfig';
+import { BRAND_CONFIG, DEFAULT_BRAND_LOGO_SRC, useBrandLogo } from '../config/brandConfig';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { advancedSearchAll, AdvancedSearchResults } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
@@ -45,6 +45,7 @@ import { soundEngine } from '../utils/soundEngine';
 import { PWAInstallButton } from './PWAInstallButton';
 import { isMainAdminAccount } from '../data/mockUsers';
 import { sanitizeSearchQuery, validateSafeMediaFile } from '../utils/security';
+import { VideoThumbnail } from './VideoThumbnail';
 
 interface MobileNavigationProps {
   currentTab: FeedTab;
@@ -110,6 +111,7 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
   onToggleFeedControlsSide,
 }) => {
   const { isRamSaverMode, toggleRamSaverMode } = useRamSaverMode();
+  const activeLogoSrc = useBrandLogo();
   const [isMobileProfileOpen, setIsMobileProfileOpen] = useState(false);
   const [isUploadSheetOpen, setIsUploadSheetOpen] = useState(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
@@ -188,11 +190,16 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
           const brandLogoNode = (
             <div className="flex items-center shrink-0">
               <img
-                src={BRAND_CONFIG.logoUrl || BRAND_LOGO_SRC}
+                src={activeLogoSrc || BRAND_LOGO_SRC}
                 alt={BRAND_CONFIG.appName}
                 loading="lazy"
                 decoding="async"
-                className="h-5 min-[380px]:h-6 w-auto max-w-[68px] min-[380px]:max-w-[90px] object-contain rounded-md"
+                onError={(e) => {
+                  if (e.currentTarget.src !== DEFAULT_BRAND_LOGO_SRC) {
+                    e.currentTarget.src = DEFAULT_BRAND_LOGO_SRC;
+                  }
+                }}
+                className="h-5 min-[380px]:h-6 w-auto max-w-[78px] min-[380px]:max-w-[96px] object-contain bg-black rounded-md px-0.5"
               />
             </div>
           );
@@ -564,14 +571,13 @@ const MobileNavigationComponent: React.FC<MobileNavigationProps> = ({
                       >
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <div className="w-9 h-9 rounded-lg overflow-hidden bg-neutral-800 border border-neutral-700/80 shrink-0 relative">
-                            <img
-                              src={optimizeThumbnailUrl(
-                                post.mediaType === 'image' ? post.videoUrl : post.posterUrl,
-                                'grid'
-                              )}
-                              alt={post.title}
-                              loading="lazy"
-                              decoding="async"
+                            <VideoThumbnail
+                              videoUrl={post.videoUrl}
+                              posterUrl={post.posterUrl}
+                              mediaType={post.mediaType}
+                              title={post.title}
+                              mode="grid"
+                              fallbackGradient={post.fallbackGradient}
                               className="w-full h-full object-cover"
                             />
                             <span className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/70 text-white">

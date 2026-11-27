@@ -13,7 +13,8 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         manifestFilename: 'manifest.json',
         includeAssets: [
-          'icon.svg',
+          'assets/aistudio/image_137fba56_4a00493d.jpg',
+          'assets/jatt-vibereels-logo.jpg',
           'apple-touch-icon.png',
           'pwa-192x192.png',
           'pwa-512x512.png',

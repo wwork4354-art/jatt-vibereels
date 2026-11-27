@@ -2255,9 +2255,7 @@ export default function App() {
             ? ['photo', 'vibereels', 'jattstyle', 'trending']
             : ['mobilegallery', 'vibereels', 'jattstyle', 'trending'],
           videoUrl: localPreviewUrl,
-          posterUrl: isImage
-            ? localPreviewUrl
-            : 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=600&q=80',
+          posterUrl: isImage ? localPreviewUrl : undefined,
           fallbackGradient: isLive
             ? 'from-rose-900/50 via-pink-900/40 to-black'
             : 'from-pink-900/40 via-purple-900/30 to-black',

@@ -810,9 +810,18 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
 
   // Attach MediaStreams to video elements cleanly with mobile autoplay fallback & RAM-safe cleanup
   useEffect(() => {
-    if (setupPreviewVideoRef.current && localStream) {
-      setupPreviewVideoRef.current.srcObject = localStream;
-      setupPreviewVideoRef.current.play().catch(() => {});
+    const el = setupPreviewVideoRef.current;
+    if (el && localStream) {
+      el.muted = true;
+      el.defaultMuted = true;
+      el.playsInline = true;
+      el.autoplay = true;
+      el.setAttribute('playsinline', 'true');
+      el.setAttribute('muted', '');
+      if (el.srcObject !== localStream) {
+        el.srcObject = localStream;
+      }
+      el.play().catch(() => {});
     }
   }, [isSetupModalOpen, localStream]);
 
@@ -2734,13 +2743,22 @@ export const LiveStreamMainView: React.FC<LiveStreamMainViewProps> = ({
                         : cameraError || 'Camera preview is paused'}
                     </p>
                     {cameraError && (
-                      <button
-                        type="button"
-                        onClick={() => requestDevicePreview(facingMode)}
-                        className="px-4 py-2 rounded-xl bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold"
-                      >
-                        Retry Camera Access
-                      </button>
+                      <div className="flex flex-wrap items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => requestDevicePreview(facingMode)}
+                          className="px-4 py-2 rounded-xl bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold cursor-pointer"
+                        >
+                          Retry Camera Access
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSwapCamera}
+                          className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-white/15 text-white text-xs font-bold cursor-pointer"
+                        >
+                          Switch {facingMode === 'user' ? 'Back' : 'Front'} Camera
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}

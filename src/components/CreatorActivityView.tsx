@@ -28,6 +28,7 @@ import {
   SUPABASE_SCHEMA_SQL,
 } from '../lib/supabaseService';
 import { optimizeThumbnailUrl } from '../utils/imageOptimize';
+import { VideoThumbnail } from './VideoThumbnail';
 
 interface CreatorActivityPanelProps {
   events: ActivityEvent[];
@@ -240,26 +241,15 @@ const CreatorActivityViewComponent: React.FC<CreatorActivityPanelProps> = ({
                 className="shrink-0 w-56 p-2.5 rounded-2xl bg-neutral-900/90 hover:bg-neutral-900 border border-neutral-800 hover:border-pink-500/50 flex items-center gap-2.5 text-left transition-all cursor-pointer"
               >
                 <div className="w-12 h-16 rounded-xl overflow-hidden bg-neutral-800 shrink-0 relative">
-                  {post.mediaType === 'image' || post.posterUrl ? (
-                    <img
-                      src={optimizeThumbnailUrl(
-                        post.mediaType === 'image' ? post.videoUrl : post.posterUrl,
-                        'grid'
-                      )}
-                      alt={post.title}
-                      loading="lazy"
-                      decoding="async"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <video
-                      src={post.videoUrl}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      className="w-full h-full object-cover"
-                    />
-                  )}
+                  <VideoThumbnail
+                    videoUrl={post.videoUrl}
+                    posterUrl={post.posterUrl}
+                    mediaType={post.mediaType}
+                    title={post.title}
+                    mode="grid"
+                    fallbackGradient={post.fallbackGradient}
+                    className="w-full h-full object-cover"
+                  />
                 </div>
                 <div className="min-w-0 flex-1 space-y-1">
                   <p className="text-xs font-bold text-white truncate">{post.title}</p>
@@ -444,19 +434,20 @@ const CreatorActivityViewComponent: React.FC<CreatorActivityPanelProps> = ({
                 className="w-11 h-14 rounded-xl overflow-hidden bg-neutral-800 border border-neutral-700 hover:border-pink-500 shrink-0 relative group cursor-pointer"
                 title="Watch post"
               >
-                {ev.postThumbnail ? (
-                  <img
-                    src={optimizeThumbnailUrl(ev.postThumbnail, 'grid')}
-                    alt={ev.postTitle}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-tr from-pink-900/60 to-purple-900/60">
-                    <Play className="w-4 h-4 text-white fill-white" />
-                  </div>
-                )}
+                {(() => {
+                  const matchedPost = videos.find((v) => v.id === ev.postId);
+                  return (
+                    <VideoThumbnail
+                      videoUrl={matchedPost?.videoUrl || ''}
+                      posterUrl={ev.postThumbnail || matchedPost?.posterUrl || ''}
+                      mediaType={matchedPost?.mediaType || 'video'}
+                      title={ev.postTitle}
+                      mode="grid"
+                      fallbackGradient={matchedPost?.fallbackGradient}
+                      className="w-full h-full object-cover"
+                    />
+                  );
+                })()}
               </button>
             </div>
           ))}
@@ -566,23 +557,15 @@ export const PostInsightsModal: React.FC<{
             onClick={() => onPlayVideo(post.id)}
             className="w-16 h-24 rounded-xl overflow-hidden bg-black border border-neutral-700 shrink-0 relative group cursor-pointer"
           >
-            {post.mediaType === 'image' || post.posterUrl ? (
-              <img
-                src={post.mediaType === 'image' ? post.videoUrl : post.posterUrl}
-                alt={post.title}
-                loading="lazy"
-                decoding="async"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <video
-                src={post.videoUrl}
-                muted
-                playsInline
-                preload="metadata"
-                className="w-full h-full object-cover"
-              />
-            )}
+            <VideoThumbnail
+              videoUrl={post.videoUrl}
+              posterUrl={post.posterUrl}
+              mediaType={post.mediaType}
+              title={post.title}
+              mode="grid"
+              fallbackGradient={post.fallbackGradient}
+              className="w-full h-full object-cover"
+            />
             <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
               <Play className="w-5 h-5 text-white fill-white" />
             </div>

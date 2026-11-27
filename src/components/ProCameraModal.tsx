@@ -346,6 +346,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isSimulatedFeed, setIsSimulatedFeed] = useState<boolean>(false);
   const [cameraBlockedInWebView, setCameraBlockedInWebView] = useState<boolean>(false);
+  const [cameraErrorReason, setCameraErrorReason] = useState<string>('');
+  const [cameraRetryNonce, setCameraRetryNonce] = useState<number>(0);
   const [isCameraReady, setIsCameraReady] = useState<boolean>(false);
   const hasInitializedOnceRef = useRef<boolean>(false);
   const cameraDeviceCacheRef = useRef<{ user?: string; environment?: string }>({});
@@ -642,8 +644,8 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
 
     async function acquireBestCameraStream(): Promise<MediaStream> {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Live mediaDevices.getUserMedia not supported');
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera access requires HTTPS or a supported modern browser.');
       }
 
       const audioHighQuality: MediaTrackConstraints = {
@@ -670,42 +672,107 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       const hasLiveAudio = Boolean(audioTrackRef.current && audioTrackRef.current.readyState === 'live');
       const cachedDeviceId = cameraDeviceCacheRef.current[facingMode];
 
-      const primaryVideo: MediaTrackConstraints = {
-        ...(cachedDeviceId
-          ? { deviceId: { exact: cachedDeviceId } }
-          : { facingMode: { ideal: facingMode } }),
-        width: { ideal: wantW, max: 3840 },
-        height: { ideal: wantH, max: 2160 },
-        frameRate: { ideal: targetFps },
-      };
-
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: primaryVideo,
+      const attempts: MediaStreamConstraints[] = [
+        // 1. Requested Pro Resolution (default 4K UHD 3840x2160 @ 60fps) + Audio
+        {
+          video: {
+            ...(cachedDeviceId
+              ? { deviceId: { ideal: cachedDeviceId } }
+              : { facingMode: { ideal: facingMode } }),
+            width: { ideal: wantW },
+            height: { ideal: wantH },
+            frameRate: { ideal: targetFps },
+          },
           audio: hasLiveAudio ? false : audioHighQuality,
-        });
-      } catch {
-        // Clear potentially stale cached deviceId and do one fast fallback without audio lock
-        if (cachedDeviceId) {
-          delete cameraDeviceCacheRef.current[facingMode];
-        }
+        },
+        // 2. 4K UHD 30fps + Audio (for devices capping 4K at 30fps)
+        {
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 3840 },
+            height: { ideal: 2160 },
+            frameRate: { ideal: 30 },
+          },
+          audio: hasLiveAudio ? false : audioHighQuality,
+        },
+        // 3. 1080p Full HD 60fps + Audio smooth fallback
+        {
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 60 },
+          },
+          audio: hasLiveAudio ? false : audioHighQuality,
+        },
+        // 4. 720p HD 30fps + Audio fallback
+        {
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+          },
+          audio: hasLiveAudio ? false : audioHighQuality,
+        },
+        // 5. 4K UHD video-only (when mic permission is blocked/absent)
+        {
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 3840 },
+            height: { ideal: 2160 },
+            frameRate: { ideal: 60 },
+          },
+          audio: false,
+        },
+        // 6. 1080p video-only fallback
+        {
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        },
+        // 7. Basic facingMode constraint
+        {
+          video: { facingMode: { ideal: facingMode } },
+          audio: false,
+        },
+        // 8. Guaranteed generic camera fallback
+        {
+          video: true,
+          audio: false,
+        },
+      ];
+
+      let stream: MediaStream | null = null;
+      let lastError: unknown = null;
+
+      for (const constraints of attempts) {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: { ideal: facingMode },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
-              frameRate: { ideal: 60 },
-            },
-            audio: false,
-          });
-        } catch {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false,
-          });
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          break;
+        } catch (err) {
+          lastError = err;
+          if (cachedDeviceId) {
+            delete cameraDeviceCacheRef.current[facingMode];
+          }
+          const errName = err instanceof Error ? err.name : '';
+          if (
+            errName === 'NotAllowedError' ||
+            errName === 'PermissionDeniedError' ||
+            errName === 'SecurityError'
+          ) {
+            // Stop immediately if browser explicitly blocked permission
+            throw err;
+          }
         }
+      }
+
+      if (!stream) {
+        throw lastError instanceof Error ? lastError : new Error('Unable to start live camera.');
       }
 
       const freshAudio = stream.getAudioTracks()[0];
@@ -716,6 +783,20 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
       }
 
       return stream;
+    }
+
+    function attachStreamToPreview(el: HTMLVideoElement | null, stream: MediaStream) {
+      if (!el) return;
+      el.muted = true;
+      el.defaultMuted = true;
+      el.playsInline = true;
+      el.autoplay = true;
+      el.setAttribute('playsinline', 'true');
+      el.setAttribute('muted', '');
+      if (el.srcObject !== stream) {
+        el.srcObject = stream;
+      }
+      el.play().catch(() => {});
     }
 
     async function setupCamera() {
@@ -744,26 +825,45 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
           const settings = videoTrack.getSettings();
           const w = settings.width || 1280;
           const h = settings.height || 720;
-          const fps = Math.round(settings.frameRate || 60);
+          const fps = Math.round(settings.frameRate || 30);
           setIsHighFpsActive(fps >= 45);
-          setStreamInfoLabel(`${w}x${h} · ${fps}fps`);
+          const tierTag = w >= 3800 || h >= 2100 ? '4K UHD' : w >= 1900 || h >= 1080 ? '1080p HD' : `${w}x${h}`;
+          setStreamInfoLabel(`${tierTag} · ${fps}fps`);
           void cacheAvailableCameras(videoTrack);
         }
 
-        if (videoPreviewRef.current) {
-          videoPreviewRef.current.srcObject = stream;
-          videoPreviewRef.current.play().catch(() => {});
-        }
+        setCameraErrorReason('');
         setIsCameraReady(true);
         hasInitializedOnceRef.current = true;
         setIsSimulatedFeed(false);
         setCameraBlockedInWebView(false);
+
+        attachStreamToPreview(videoPreviewRef.current, stream);
+        requestAnimationFrame(() => {
+          if (isMounted && mediaStreamRef.current === stream) {
+            attachStreamToPreview(videoPreviewRef.current, stream);
+          }
+        });
       } catch (err) {
         console.warn('Live camera access blocked or unavailable:', err);
         if (isMounted) {
+          const errName = err instanceof Error ? err.name : '';
+          let friendlyReason =
+            'Allow camera & microphone permissions in your browser address bar, switch Front/Back lens, or open your phone native camera.';
+          if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+            friendlyReason =
+              'Camera permission is currently blocked by your browser or preview frame. Tap the Lock/Camera icon in your browser bar to Allow Camera, then tap Retry.';
+          } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+            friendlyReason =
+              'No live camera was detected on this browser session. Switch lens or open your phone native camera below.';
+          } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+            friendlyReason =
+              'Your camera is currently in use by another app or tab. Close the other camera app and tap Retry.';
+          }
+          setCameraErrorReason(friendlyReason);
           setIsSimulatedFeed(true);
           setCameraBlockedInWebView(true);
-          onShowToast('Live camera blocked. Tap "Open Phone Camera" below to record.');
+          onShowToast('Camera blocked or unavailable. Tap Retry or Open Phone Camera.');
         }
       }
     }
@@ -784,7 +884,24 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
         mediaStreamRef.current = null;
       }
     };
-  }, [isOpen, facingMode, resFps, sonyPreset, onShowToast, revokeBurstFrames]);
+  }, [isOpen, facingMode, resFps, sonyPreset, cameraRetryNonce, onShowToast, revokeBurstFrames]);
+
+  // Ensure <video> preview element re-attaches active stream whenever view returns from blocked state
+  useEffect(() => {
+    if (!isOpen || isSimulatedFeed) return;
+    const el = videoPreviewRef.current;
+    const stream = mediaStreamRef.current;
+    if (el && stream) {
+      el.muted = true;
+      el.defaultMuted = true;
+      el.playsInline = true;
+      el.autoplay = true;
+      if (el.srcObject !== stream) {
+        el.srcObject = stream;
+      }
+      el.play().catch(() => {});
+    }
+  }, [isOpen, isSimulatedFeed, isCameraReady]);
 
   // Draw one S-Cinetone/filtered/mirrored/zoomed frame onto offscreen canvas
   const drawVideoFrameToCanvas = useCallback(
@@ -1318,6 +1435,13 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
     }
     soundEngine.playCameraShutter();
     const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    if (cameraBlockedInWebView) {
+      cameraDeviceCacheRef.current = {};
+      setCameraBlockedInWebView(false);
+      setIsSimulatedFeed(false);
+      setIsCameraReady(false);
+      setCameraRetryNonce((n) => n + 1);
+    }
     setFacingMode(nextMode);
     onShowToast(`Switched Camera: ${nextMode === 'environment' ? 'Back (Rear)' : 'Front (Selfie)'}`);
   };
@@ -2493,17 +2617,44 @@ export const ProCameraModal: React.FC<ProCameraModalProps> = ({
                   </div>
                   <div>
                     <h3 className="text-sm font-black text-white tracking-wide">
-                      {cameraBlockedInWebView ? 'LIVE WEBCAM BLOCKED' : 'INITIALIZING HD CAMERA...'}
+                      {cameraBlockedInWebView ? 'CAMERA PERMISSION REQUIRED' : 'INITIALIZING 4K CAMERA...'}
                     </h3>
                     <p className="text-xs text-neutral-300 font-medium mt-1 leading-relaxed">
-                      Allow camera & microphone permissions, or launch your phone&apos;s native camera directly.
+                      {cameraErrorReason ||
+                        'Allow camera & microphone permissions, switch Front/Back lens, or launch your phone native camera directly.'}
                     </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        cameraDeviceCacheRef.current = {};
+                        setCameraBlockedInWebView(false);
+                        setIsSimulatedFeed(false);
+                        setIsCameraReady(false);
+                        setCameraRetryNonce((n) => n + 1);
+                      }}
+                      className="px-4 py-2 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg active:scale-95 transition-all cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Retry Camera</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleFlipCamera}
+                      className="px-4 py-2 rounded-2xl bg-neutral-800 hover:bg-neutral-700 border border-white/15 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg active:scale-95 transition-all cursor-pointer"
+                    >
+                      <SwitchCamera className="w-3.5 h-3.5" />
+                      <span>{facingMode === 'user' ? 'Back Cam' : 'Front Cam'}</span>
+                    </button>
                   </div>
 
                   <button
                     type="button"
                     onClick={() => nativeCameraInputRef.current?.click()}
-                    className="mt-1 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:from-pink-500 hover:to-amber-400 text-white font-bold text-xs flex items-center gap-2 shadow-xl active:scale-95 transition-all"
+                    className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-pink-600 via-rose-500 to-amber-500 hover:from-pink-500 hover:to-amber-400 text-white font-bold text-xs flex items-center gap-2 shadow-xl active:scale-95 transition-all cursor-pointer"
                   >
                     <Camera className="w-4 h-4" />
                     <span>Open Phone Native Camera</span>

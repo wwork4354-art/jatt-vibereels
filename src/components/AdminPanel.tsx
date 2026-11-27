@@ -19,6 +19,8 @@ import {
   EyeOff,
   Wallet,
   CalendarCheck,
+  Image as ImageIcon,
+  RotateCcw,
 } from 'lucide-react';
 import { UserAccount, UserRole, UserStatus } from '../types';
 import {
@@ -28,6 +30,7 @@ import {
 } from '../data/mockUsers';
 import {
   sanitizeInputLive,
+  sanitizeSafeUrl,
   sanitizeText,
   sanitizeUsername,
   verifyAdminPinAsync,
@@ -40,8 +43,17 @@ import {
   formatLockoutCountdown,
   LockoutStatus,
 } from '../utils/security';
-import { BRAND_CONFIG } from '../config/brandConfig';
+import {
+  BRAND_CONFIG,
+  DEFAULT_BRAND_LOGO_SRC,
+  hasCustomBrandLogo,
+  resetCustomBrandLogo,
+  setCustomBrandLogo,
+  useBrandLogo,
+} from '../config/brandConfig';
 import { evaluateLicenseSync } from '../lib/licenseService';
+import { compressImageFile } from '../utils/imageOptimize';
+import { validateSafeMediaFile } from '../utils/security';
 import { EasyPaymentModal } from './EasyPaymentModal';
 
 interface AdminPanelProps {
@@ -83,6 +95,60 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const licenseStatus = evaluateLicenseSync();
+  const activeLogoSrc = useBrandLogo();
+  const [showLogoEditor, setShowLogoEditor] = useState(false);
+  const [logoUrlDraft, setLogoUrlDraft] = useState('');
+  const [isCustomLogoSaved, setIsCustomLogoSaved] = useState(() => hasCustomBrandLogo());
+
+  const handleUploadCustomLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const check = validateSafeMediaFile(file, { allowedKind: 'image' });
+    if (!check.valid) {
+      onShowToast(check.reason || 'Please select a valid PNG, JPG, or WEBP logo image.');
+      return;
+    }
+    try {
+      const optimized = await compressImageFile(file, 512, 0.9);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const safe = sanitizeSafeUrl(result, { allowBlob: false, allowDataImageAudio: true });
+        if (!safe) {
+          onShowToast('Logo format could not be processed. Try PNG or JPG.');
+          return;
+        }
+        setCustomBrandLogo(safe);
+        setIsCustomLogoSaved(true);
+        setShowLogoEditor(false);
+        onShowToast('Custom Jatt VibeReels logo saved! Persisted across app updates.');
+      };
+      reader.readAsDataURL(optimized);
+    } catch {
+      onShowToast('Failed to read selected logo file.');
+    }
+  };
+
+  const handleApplyLogoUrl = () => {
+    const safeUrl = sanitizeSafeUrl(logoUrlDraft, { allowBlob: false, allowDataImageAudio: true });
+    if (!safeUrl) {
+      onShowToast('Enter a valid HTTPS image URL or upload a PNG/JPG file.');
+      return;
+    }
+    setCustomBrandLogo(safeUrl);
+    setIsCustomLogoSaved(true);
+    setLogoUrlDraft('');
+    setShowLogoEditor(false);
+    onShowToast('Custom brand logo URL applied!');
+  };
+
+  const handleResetDefaultLogo = () => {
+    resetCustomBrandLogo();
+    setIsCustomLogoSaved(false);
+    setLogoUrlDraft('');
+    onShowToast('Restored official Jatt VibeReels Neon logo.');
+  };
 
   // Secret Admin PIN Lock Gate states
   const [pinInput, setPinInput] = useState('');
@@ -605,6 +671,85 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <Wallet className="w-4 h-4 shrink-0" />
             <span>Easy Payment &amp; Rent Renewal</span>
           </button>
+        </div>
+
+        {/* Brand Identity & Custom Logo Strip (Preserved across updates) */}
+        <div className="px-5 sm:px-6 py-3 bg-neutral-950/80 border-b border-neutral-800/60 space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-3 min-w-0">
+              <img
+                src={activeLogoSrc || DEFAULT_BRAND_LOGO_SRC}
+                alt={BRAND_CONFIG.appName}
+                onError={(e) => {
+                  if (e.currentTarget.src !== DEFAULT_BRAND_LOGO_SRC) {
+                    e.currentTarget.src = DEFAULT_BRAND_LOGO_SRC;
+                  }
+                }}
+                className="w-10 h-10 rounded-xl object-contain bg-neutral-900 border border-neutral-700 p-0.5 shrink-0"
+              />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-white truncate">
+                  Brand Logo ({BRAND_CONFIG.appName})
+                </p>
+                <p className="text-[11px] text-neutral-400 truncate">
+                  {isCustomLogoSaved
+                    ? 'Custom logo active (saved locally across updates)'
+                    : 'Official Jatt VibeReels Neon Logo active'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <label className="px-3 py-1.5 rounded-xl bg-pink-600 hover:bg-pink-500 text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-colors">
+                <ImageIcon className="w-3.5 h-3.5" />
+                <span>Upload Logo</span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleUploadCustomLogo}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setShowLogoEditor((prev) => !prev)}
+                className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-bold border border-neutral-700 transition-colors cursor-pointer"
+              >
+                {showLogoEditor ? 'Hide URL' : 'Paste URL'}
+              </button>
+
+              {isCustomLogoSaved && (
+                <button
+                  type="button"
+                  onClick={handleResetDefaultLogo}
+                  className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-300 text-[11px] font-bold border border-amber-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Restore Official Logo</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {showLogoEditor && (
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="url"
+                value={logoUrlDraft}
+                onChange={(e) => setLogoUrlDraft(e.target.value)}
+                placeholder="https://example.com/my-custom-logo.png"
+                className="flex-1 bg-neutral-900 border border-neutral-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-pink-500"
+              />
+              <button
+                type="button"
+                onClick={handleApplyLogoUrl}
+                className="px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold cursor-pointer shrink-0"
+              >
+                Save URL
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Search & Filter Toolbar */}

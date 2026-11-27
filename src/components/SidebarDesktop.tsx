@@ -27,7 +27,7 @@ import { BRAND_LOGO_SRC } from './TopBar';
 import { DeveloperCreditBadge } from './DeveloperCreditBadge';
 import { PWAInstallButton } from './PWAInstallButton';
 import { isMainAdminAccount } from '../data/mockUsers';
-import { BRAND_CONFIG, getBrandNameParts } from '../config/brandConfig';
+import { BRAND_CONFIG, DEFAULT_BRAND_LOGO_SRC, getBrandNameParts, useBrandLogo } from '../config/brandConfig';
 
 
 interface SidebarDesktopProps {
@@ -73,17 +73,23 @@ const SidebarDesktopComponent: React.FC<SidebarDesktopProps> = ({
   onOpenLogin,
 }) => {
   const brandParts = getBrandNameParts(BRAND_CONFIG.appName);
+  const activeLogoSrc = useBrandLogo();
   return (
     <aside className="hidden lg:flex flex-col justify-between w-64 h-screen border-r border-neutral-800 bg-neutral-950 px-5 py-6 shrink-0 z-30 select-none">
       <div className="space-y-6">
         {/* Brand Logo */}
         <div className="flex items-center gap-3 px-1">
           <img
-            src={BRAND_CONFIG.logoUrl || BRAND_LOGO_SRC}
+            src={activeLogoSrc || BRAND_LOGO_SRC}
             alt={`${BRAND_CONFIG.appName} Logo`}
             loading="lazy"
             decoding="async"
-            className="w-10 h-10 rounded-full object-cover shrink-0 border border-amber-500/40 shadow-lg shadow-amber-500/20"
+            onError={(e) => {
+              if (e.currentTarget.src !== DEFAULT_BRAND_LOGO_SRC) {
+                e.currentTarget.src = DEFAULT_BRAND_LOGO_SRC;
+              }
+            }}
+            className="w-12 h-10 rounded-xl object-contain bg-black shrink-0 border border-pink-500/40 p-0.5 shadow-lg shadow-pink-500/15"
           />
           <div className="min-w-0">
             <h1 className="text-base font-black tracking-tight text-white flex items-center gap-1 truncate">

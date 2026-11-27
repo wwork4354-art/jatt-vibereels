@@ -9,7 +9,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
-import { BRAND_CONFIG } from '../config/brandConfig';
+import { BRAND_CONFIG, DEFAULT_BRAND_LOGO_SRC, useBrandLogo } from '../config/brandConfig';
 
 interface PWAInstallButtonProps {
   variant?: 'topbar' | 'sidebar' | 'menu' | 'banner' | 'mobile-header';
@@ -23,6 +23,7 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
   onShowToast,
 }) => {
   const { isInstalled, isIos, hasNativePrompt, promptInstall } = usePWAInstall();
+  const activeLogoSrc = useBrandLogo();
   const [guideMode, setGuideMode] = useState<'ios' | 'chrome' | null>(null);
   const [isBannerDismissed, setIsBannerDismissed] = useState<boolean>(() => {
     try {
@@ -74,11 +75,11 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
           <div className="rounded-2xl bg-neutral-950/95 border border-pink-500/45 shadow-2xl shadow-pink-600/20 p-3 flex items-center justify-between gap-2.5 backdrop-blur-md">
             <div className="flex items-center gap-2.5 min-w-0">
               <img
-                src="/pwa-192x192.png"
+                src={activeLogoSrc || DEFAULT_BRAND_LOGO_SRC}
                 alt={BRAND_CONFIG.appName}
                 loading="lazy"
                 decoding="async"
-                className="w-10 h-10 rounded-xl border border-pink-500/40 shrink-0"
+                className="w-12 h-10 rounded-xl bg-black object-contain border border-pink-500/40 shrink-0"
               />
               <div className="min-w-0">
                 <p className="text-xs font-black text-white flex items-center gap-1 truncate">
@@ -169,11 +170,11 @@ const PWAInstallButtonComponent: React.FC<PWAInstallButtonProps> = ({
             <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
               <div className="flex items-center gap-2.5">
                 <img
-                  src="/pwa-192x192.png"
+                  src={activeLogoSrc || DEFAULT_BRAND_LOGO_SRC}
                   alt={BRAND_CONFIG.appName}
                   loading="lazy"
                   decoding="async"
-                  className="w-8 h-8 rounded-lg border border-pink-500/40"
+                  className="w-10 h-8 rounded-lg bg-black object-contain border border-pink-500/40"
                 />
                 <div>
                   <h3 className="text-sm font-black text-white">Install {BRAND_CONFIG.appName}</h3>
